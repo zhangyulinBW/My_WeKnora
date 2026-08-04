@@ -35,6 +35,8 @@ var (
 // 无需认证的API列表
 var noAuthAPI = map[string][]string{
 	"/health":                 {"GET"},
+	//增加"/swagger/*": {"GET", "HEAD"}，允许访问Swagger文档
+	"/swagger/*":              {"GET", "HEAD"},
 	"/api/v1/auth/register":   {"POST"},
 	"/api/v1/auth/login":      {"POST"},
 	"/api/v1/auth/auto-setup": {"POST"},
