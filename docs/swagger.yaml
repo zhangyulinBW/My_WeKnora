@@ -1391,6 +1391,13 @@ definitions:
       created_at:
         description: Creation time of the knowledge
         type: string
+      custom_metadata:
+        description: |-
+          CustomMetadata is user-authored descriptive metadata. It is deliberately
+          separate from Metadata, which contains internal ingestion state and IDs.
+        items:
+          type: integer
+        type: array
       deleted_at:
         allOf:
         - $ref: '#/definitions/gorm.DeletedAt'
@@ -2574,6 +2581,9 @@ definitions:
       mineru_enable_formula:
         type: boolean
       mineru_enable_ocr:
+        description: |-
+          MinerUEnableOCR is retained for compatibility with configurations saved
+          before parse_method supported auto/ocr/txt.
         type: boolean
       mineru_enable_table:
         type: boolean
@@ -2584,6 +2594,8 @@ definitions:
         type: string
       mineru_model:
         description: MinerU 自建解析参数
+        type: string
+      mineru_parse_method:
         type: string
       mineru_vlm_server_url:
         description: vLLM 服务器地址 (vlm-http-client / hybrid-http-client)
@@ -2629,6 +2641,11 @@ definitions:
         items:
           type: string
         type: array
+      xlsx_first_row_as_header:
+        description: |-
+          XLSXFirstRowAsHeader restores row-1 column context for flat XLSX tables.
+          nil preserves the parser default; an explicit false disables the mode.
+        type: boolean
     type: object
   github_com_Tencent_WeKnora_internal_types.QuestionGenerationConfig:
     properties:
@@ -3085,6 +3102,10 @@ definitions:
       knowledge_channel:
         description: KnowledgeChannel indicates through which channel the knowledge
           was ingested (web, api, wechat, etc.)
+        type: string
+      knowledge_custom_metadata:
+        description: KnowledgeCustomMetadata is user-authored context safe to expose
+          to models.
         type: string
       knowledge_description:
         description: KnowledgeDescription is the description of the knowledge document
@@ -5318,22 +5339,12 @@ definitions:
     type: object
   internal_handler.UpdateChunkRequest:
     properties:
-      chunk_index:
-        type: integer
       content:
         type: string
-      embedding:
-        items:
-          type: number
-        type: array
-      end_at:
+      expected_revision:
         type: integer
-      image_info:
-        type: string
       is_enabled:
         type: boolean
-      start_at:
-        type: integer
     type: object
   internal_handler.UpdateKnowledgeBaseRequest:
     properties:
@@ -5601,6 +5612,9 @@ definitions:
         description: Selected custom agent ID (backend resolves shared agent and its
           workspace from share relation)
         type: string
+      agent_source_tenant_id:
+        description: Optional disambiguator; backend still verifies the share relation
+        type: integer
       attachment_ids:
         description: Pre-uploaded session-scoped document IDs
         items:
@@ -6196,33 +6210,6 @@ paths:
       summary: 获取智能体类型预设列表
       tags:
       - 智能体
-  /knowledge/{id}/spans:
-    get:
-      consumes:
-      - application/json
-      description: 返回该知识在解析流水线的 trace tree（root → stage → subspan）：每段状态、耗时、input/output、错误码、langfuse_trace_id。支持
-        ?attempt=N 查看历史尝试；不传则返回最新尝试。前端用于渲染时间线 + 多模态/embedding 子节点 + 一键跳转 Langfuse。
-      parameters:
-      - description: 知识ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: 指定尝试号；省略=最新
-        in: query
-        name: attempt
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-      summary: 获取知识文档解析的 Span 树（含历史尝试）
-      tags:
-      - 知识管理
   /auth/auto-setup:
     post:
       consumes:
@@ -9732,6 +9719,36 @@ paths:
       - Bearer: []
       - ApiKeyAuth: []
       summary: 重新解析知识
+      tags:
+      - 知识管理
+  /knowledge/{id}/spans:
+    get:
+      consumes:
+      - application/json
+      description: 返回该知识在解析流水线的 trace tree（root → stage → subspan）：每段状态、耗时、input/output、错误码、langfuse_trace_id。支持
+        ?attempt=N 查看历史尝试；不传则返回最新尝试。前端用于渲染时间线 + 多模态/embedding 子节点 + 一键跳转 Langfuse。
+      parameters:
+      - description: 知识ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 指定尝试号；省略=最新
+        in: query
+        name: attempt
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - Bearer: []
+      - ApiKeyAuth: []
+      summary: 获取知识文档解析的 Span 树（含历史尝试）
       tags:
       - 知识管理
   /knowledge/batch:

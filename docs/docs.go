@@ -683,45 +683,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/knowledge/{id}/spans": {
-            "get": {
-                "description": "返回该知识在解析流水线的 trace tree（root → stage → subspan）：每段状态、耗时、input/output、错误码、langfuse_trace_id。支持 ?attempt=N 查看历史尝试；不传则返回最新尝试。前端用于渲染时间线 + 多模态/embedding 子节点 + 一键跳转 Langfuse。",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "知识管理"
-                ],
-                "summary": "获取知识文档解析的 Span 树（含历史尝试）",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "知识ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "指定尝试号；省略=最新",
-                        "name": "attempt",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
         "/auth/auto-setup": {
             "post": {
                 "description": "Lite 版专用：首次启动时自动创建默认用户和空间并返回令牌，后续启动直接签发令牌，免除手动注册/登录流程",
@@ -6730,6 +6691,53 @@ const docTemplate = `{
                         "description": "权限不足",
                         "schema": {
                             "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
+        "/knowledge/{id}/spans": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "返回该知识在解析流水线的 trace tree（root → stage → subspan）：每段状态、耗时、input/output、错误码、langfuse_trace_id。支持 ?attempt=N 查看历史尝试；不传则返回最新尝试。前端用于渲染时间线 + 多模态/embedding 子节点 + 一键跳转 Langfuse。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "知识管理"
+                ],
+                "summary": "获取知识文档解析的 Span 树（含历史尝试）",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "知识ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "指定尝试号；省略=最新",
+                        "name": "attempt",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -16369,6 +16377,13 @@ const docTemplate = `{
                     "description": "Creation time of the knowledge",
                     "type": "string"
                 },
+                "custom_metadata": {
+                    "description": "CustomMetadata is user-authored descriptive metadata. It is deliberately\nseparate from Metadata, which contains internal ingestion state and IDs.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "deleted_at": {
                     "description": "Deletion time of the knowledge",
                     "allOf": [
@@ -17926,6 +17941,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "mineru_enable_ocr": {
+                    "description": "MinerUEnableOCR is retained for compatibility with configurations saved\nbefore parse_method supported auto/ocr/txt.",
                     "type": "boolean"
                 },
                 "mineru_enable_table": {
@@ -17940,6 +17956,9 @@ const docTemplate = `{
                 },
                 "mineru_model": {
                     "description": "MinerU 自建解析参数",
+                    "type": "string"
+                },
+                "mineru_parse_method": {
                     "type": "string"
                 },
                 "mineru_vlm_server_url": {
@@ -18001,6 +18020,10 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "xlsx_first_row_as_header": {
+                    "description": "XLSXFirstRowAsHeader restores row-1 column context for flat XLSX tables.\nnil preserves the parser default; an explicit false disables the mode.",
+                    "type": "boolean"
                 }
             }
         },
@@ -18615,6 +18638,10 @@ const docTemplate = `{
                 },
                 "knowledge_channel": {
                     "description": "KnowledgeChannel indicates through which channel the knowledge was ingested (web, api, wechat, etc.)",
+                    "type": "string"
+                },
+                "knowledge_custom_metadata": {
+                    "description": "KnowledgeCustomMetadata is user-authored context safe to expose to models.",
                     "type": "string"
                 },
                 "knowledge_description": {
@@ -21659,29 +21686,14 @@ const docTemplate = `{
         "internal_handler.UpdateChunkRequest": {
             "type": "object",
             "properties": {
-                "chunk_index": {
-                    "type": "integer"
-                },
                 "content": {
                     "type": "string"
                 },
-                "embedding": {
-                    "type": "array",
-                    "items": {
-                        "type": "number"
-                    }
-                },
-                "end_at": {
+                "expected_revision": {
                     "type": "integer"
-                },
-                "image_info": {
-                    "type": "string"
                 },
                 "is_enabled": {
                     "type": "boolean"
-                },
-                "start_at": {
-                    "type": "integer"
                 }
             }
         },
@@ -22075,6 +22087,10 @@ const docTemplate = `{
                 "agent_id": {
                     "description": "Selected custom agent ID (backend resolves shared agent and its workspace from share relation)",
                     "type": "string"
+                },
+                "agent_source_tenant_id": {
+                    "description": "Optional disambiguator; backend still verifies the share relation",
+                    "type": "integer"
                 },
                 "attachment_ids": {
                     "description": "Pre-uploaded session-scoped document IDs",
