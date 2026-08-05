@@ -6196,7 +6196,7 @@ paths:
       summary: 获取智能体类型预设列表
       tags:
       - 智能体
-  /api/v1/knowledge/{id}/spans:
+  /knowledge/{id}/spans:
     get:
       consumes:
       - application/json

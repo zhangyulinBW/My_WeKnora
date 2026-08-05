@@ -208,10 +208,11 @@ start_services() {
     
     # 解析 profile 参数
     shift  # 移除 "start" 命令本身
-    # 默认启动基础设施（postgres / redis / docreader）+ langfuse，
-    # 其余可选服务通过 --minio / --qdrant / --neo4j / --dex / --full 按需开启。
-    PROFILES="--profile langfuse"
-    ENABLED_SERVICES="langfuse"
+    # 默认启动核心基础设施（postgres / redis / docreader），
+    # Langfuse 等可选服务通过 --langfuse / --minio / --qdrant / --neo4j / --dex / --full 按需开启。
+    # 注：国内网络默认不启用 Langfuse（其镜像代理不稳定，容易拉取超时）。
+    PROFILES=""
+    ENABLED_SERVICES=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --minio)

@@ -683,7 +683,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/knowledge/{id}/spans": {
+        "/knowledge/{id}/spans": {
             "get": {
                 "description": "返回该知识在解析流水线的 trace tree（root → stage → subspan）：每段状态、耗时、input/output、错误码、langfuse_trace_id。支持 ?attempt=N 查看历史尝试；不传则返回最新尝试。前端用于渲染时间线 + 多模态/embedding 子节点 + 一键跳转 Langfuse。",
                 "consumes": [

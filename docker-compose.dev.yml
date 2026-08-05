@@ -2,7 +2,7 @@
 services:
   # 只启动依赖的基础设施服务
   postgres:
-    image: paradedb/paradedb:v0.22.2-pg17
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/paradedb/paradedb:v0.22.2-pg17
     container_name: WeKnora-postgres-dev
     ports:
       - "${DB_PORT:-5432}:5432"
@@ -11,7 +11,7 @@ services:
       - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_DB=${DB_NAME}
     volumes:
-      - postgres-data-dev:/var/lib/postgresql/data
+      - my_weknora_postgres-data:/var/lib/postgresql/data
     networks:
       - WeKnora-network-dev
     healthcheck:
@@ -24,7 +24,7 @@ services:
     stop_grace_period: 1m
 
   redis:
-    image: redis:7.0-alpine
+    image: docker.1ms.run/library/redis:7.0-alpine
     container_name: WeKnora-redis-dev
     ports:
       - "${REDIS_PORT:-6379}:6379"
@@ -204,7 +204,7 @@ services:
       - full
 
   neo4j:
-    image: neo4j:latest
+    image: m.daocloud.io/docker.io/library/neo4j:2025.10.1
     container_name: WeKnora-neo4j-dev
     volumes:
       - neo4j-data-dev:/data
@@ -226,7 +226,7 @@ services:
 
   # Sandbox 镜像：仅用于 build/pull，非常驻服务；本地 app 执行 Skills 时按需 docker run 该镜像，用毕即释
   sandbox:
-    image: wechatopenai/weknora-sandbox:${WEKNORA_VERSION:-latest}
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/wechatopenai/weknora-sandbox:v0.7.0
     container_name: WeKnora-sandbox-dev
     build:
       context: .
@@ -237,10 +237,12 @@ services:
     restart: "no"
 
   docreader:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.docreader
-    image: wechatopenai/weknora-docreader:${WEKNORA_VERSION:-latest}
+    # 已替换为国内镜像；如需本地构建，取消注释 build 段并注释 image
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/wechatopenai/weknora-docreader:v0.7.0
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile.docreader
+    # image: wechatopenai/weknora-docreader:${WEKNORA_VERSION:-latest}
     container_name: WeKnora-docreader-dev
     ports:
       - "${DOCREADER_PORT:-50051}:50051"
@@ -381,7 +383,7 @@ services:
   # ---------------------------------------------------------------------------
   # 复用 dev 已有的 ParadeDB 镜像，不额外拉 postgres 镜像
   langfuse-db-init:
-    image: paradedb/paradedb:v0.22.2-pg17
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/paradedb/paradedb:v0.22.2-pg17
     container_name: WeKnora-langfuse-db-init-dev
     depends_on:
       postgres:
@@ -413,7 +415,7 @@ services:
       - full
 
   langfuse-clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: docker.1ms.run/clickhouse/clickhouse-server:24.8
     container_name: WeKnora-langfuse-clickhouse-dev
     restart: unless-stopped
     user: "101:101"
@@ -437,7 +439,7 @@ services:
       - full
 
   langfuse-minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: docker.1ms.run/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: WeKnora-langfuse-minio-dev
     restart: unless-stopped
     entrypoint: sh
@@ -462,7 +464,7 @@ services:
       - full
 
   langfuse-worker:
-    image: langfuse/langfuse-worker:3
+    image: docker.1ms.run/langfuse/langfuse-worker:3
     container_name: WeKnora-langfuse-worker-dev
     restart: unless-stopped
     depends_on: &langfuse-dev-depends-on
@@ -528,7 +530,7 @@ services:
       - full
 
   langfuse-web:
-    image: langfuse/langfuse:3
+    image: docker.1ms.run/langfuse/langfuse:3
     container_name: WeKnora-langfuse-web-dev
     restart: unless-stopped
     depends_on: *langfuse-dev-depends-on
@@ -574,6 +576,8 @@ networks:
 
 volumes:
   postgres-data-dev:
+  my_weknora_postgres-data:
+    external: true
   redis_data_dev:
   minio_data_dev:
   neo4j-data-dev:
