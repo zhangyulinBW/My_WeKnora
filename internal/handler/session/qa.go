@@ -50,6 +50,7 @@ type qaRequestContext struct {
 	attachments           types.MessageAttachments // Processed base64 file attachments (legacy inline uploads)
 	attachmentIDs         []string                 // Pre-uploaded session-scoped document IDs, resolved after SSE starts
 	attachmentMetas       types.MessageAttachments // Metadata-only view of attachmentIDs for the persisted user message
+	metadata              types.JSON               // Caller-supplied structured context injected into the agent prompt
 	suggestionAttribution *types.SuggestionAttribution
 
 	// Snapshot of the request fields needed to persist the input-bar state
@@ -79,6 +80,7 @@ func (rc *qaRequestContext) buildQARequest() *types.QARequest {
 		UserMessageID:       rc.userMessageID,
 		WebSearchEnabled:    rc.webSearchEnabled,
 		Attachments:         rc.attachments,
+		Metadata:            rc.metadata,
 	}
 }
 
@@ -357,6 +359,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		attachments:           processedAttachments,
 		attachmentIDs:         attachmentIDs,
 		attachmentMetas:       attachmentMetas,
+		metadata:              request.Metadata,
 		suggestionAttribution: request.SuggestionAttribution,
 		reqAgentEnabled:       request.AgentEnabled,
 		reqAgentID:            request.AgentID,

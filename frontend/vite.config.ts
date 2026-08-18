@@ -130,6 +130,15 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // 允许通过隧道/内网域名访问 dev 服务器（Vite 7 默认只允许 localhost）。
+    // 前缀是随机 hash 会变，故用通配符匹配整个域名段；可通过逗号分隔的环境变量追加。
+    allowedHosts: [
+      '.takin.cc',
+      ...(process.env.VITE_ALLOWED_HOSTS || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ],
     // 代理配置，用于开发环境
     proxy: {
       '/api': {

@@ -21,4 +21,9 @@ type QARequest struct {
 	WebSearchEnabled    bool               // Whether web search is enabled for this request
 	QuotedContext       string             // Quoted message content from IM quote-reply (appended at LLM prompt stage, not used for retrieval)
 	Attachments         MessageAttachments // File attachments (processed and ready for prompt injection)
+	// Metadata is caller-supplied structured context (JSON) attached to this
+	// request. It is injected verbatim into the agent context so the model can
+	// consume custom data (page, search fields, condition rules, ...) that is
+	// not backed by a knowledge base. It is not persisted on the user message.
+	Metadata JSON `json:"metadata,omitempty"`
 }

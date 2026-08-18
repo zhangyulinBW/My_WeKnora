@@ -183,6 +183,15 @@ func (s *sessionService) AgentQA(
 		agentQuery += req.Attachments.BuildPrompt()
 		logger.Infof(ctx, "Appended %d attachment(s) to agent query", len(req.Attachments))
 	}
+	// Inject caller-supplied structured metadata (page, search fields, condition
+	// rules, ...) so the agent can consume custom request context that is not
+	// backed by a knowledge base. Mirrors the attachment/image injection above
+	// and is intentionally not persisted on the user message.
+	meta := string(req.Metadata)
+	if meta != "" && meta != "{}" && meta != "null" {
+		agentQuery += "\n\n[用户提供的结构化上下文]\n" + meta
+		logger.Infof(ctx, "Injected %d byte(s) of request metadata into agent query", len(meta))
+	}
 
 	// Scope envelopes (runtime_context / must_use) are injected per LLM call inside
 	// the agent engine only; we intentionally do not persist them on user messages

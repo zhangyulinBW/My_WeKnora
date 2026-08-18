@@ -1,4 +1,7 @@
 import { createI18n } from 'vue-i18n'
+import zhTW from './locales/zh-TW'
+
+const zhTWEmbedPublish = { embedPublish: zhTW.embedPublish }
 
 const messages = {
   "zh-CN": {
@@ -1184,7 +1187,7 @@ const ruEmbedPublish = {
   },
 } as const
 
-const SUPPORTED_LOCALES = ['zh-CN', 'en-US', 'ko-KR', 'ru-RU'] as const
+const SUPPORTED_LOCALES = ['zh-CN', 'zh-TW', 'en-US', 'ko-KR', 'ru-RU'] as const
 export type EmbedLocale = (typeof SUPPORTED_LOCALES)[number]
 
 /** Isolated from the main app `locale` key so embed preview never hijacks admin UI language. */
@@ -1196,6 +1199,7 @@ export function normalizeEmbedLocale(raw: string): EmbedLocale {
   if (s.startsWith('en')) return 'en-US'
   if (s.startsWith('ko')) return 'ko-KR'
   if (s.startsWith('ru')) return 'ru-RU'
+  if (s === 'zh-tw' || s === 'zh-hk' || s.startsWith('zh-hant')) return 'zh-TW'
   if (s.startsWith('zh')) return 'zh-CN'
   const exact = SUPPORTED_LOCALES.find((l) => l.toLowerCase() === s)
   return exact || 'zh-CN'
@@ -1237,6 +1241,7 @@ const i18n = createI18n({
   warnHtmlMessage: false,
   messages: {
     'zh-CN': messages['zh-CN'],
+    'zh-TW': deepMerge(messages['zh-CN'], zhTWEmbedPublish),
     'en-US': messages['en-US'],
     'ko-KR': deepMerge(messages['en-US'], koEmbedPublish),
     'ru-RU': deepMerge(messages['en-US'], ruEmbedPublish),
