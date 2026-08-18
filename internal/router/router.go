@@ -73,6 +73,7 @@ type RouterParams struct {
 	FAQHandler                   *handler.FAQHandler
 	TagHandler                   *handler.TagHandler
 	CustomAgentHandler           *handler.CustomAgentHandler
+	AIChatHandler                *handler.AIChatHandler
 	UserFavoriteHandler          *handler.UserResourceFavoriteHandler
 	SkillHandler                 *handler.SkillHandler
 	OrganizationHandler          *handler.OrganizationHandler
@@ -246,6 +247,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterChunkRoutes(v1, params.ChunkHandler, rbacGuards)
 		RegisterSessionRoutes(v1, params.SessionHandler, params.MessageSuggestionHandler, rbacGuards)
 		RegisterChatRoutes(v1, params.SessionHandler, rbacGuards)
+		RegisterAIRoutes(v1, params.AIChatHandler, rbacGuards)
 		RegisterMessageRoutes(v1, params.MessageHandler, rbacGuards)
 		RegisterModelRoutes(v1, params.ModelHandler, params.ModelCredentialsHandler, rbacGuards)
 		RegisterEvaluationRoutes(v1, params.EvaluationHandler, rbacGuards)

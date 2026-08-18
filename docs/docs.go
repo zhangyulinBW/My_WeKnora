@@ -739,6 +739,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/ai/chat": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "自定义 AI 接口协议（OPLink），支持普通问答与大表格搜索任务，SSE 流式响应",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "AI"
+                ],
+                "summary": "AI 自定义聊天",
+                "parameters": [
+                    {
+                        "description": "AI 聊天请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.AIChatRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "AI 聊天结果（SSE流）",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/auth/auto-setup": {
             "post": {
                 "description": "Lite 版专用：首次启动时自动创建默认用户和空间并返回令牌，后续启动直接签发令牌，免除手动注册/登录流程",
@@ -20479,6 +20529,194 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.AIChatRequest": {
+            "type": "object",
+            "properties": {
+                "actionId": {
+                    "description": "search task id, only for search_context",
+                    "type": "string"
+                },
+                "conditionRules": {
+                    "$ref": "#/definitions/internal_handler.AIConditionRules"
+                },
+                "conversationId": {
+                    "description": "opaque frontend-managed session id",
+                    "type": "string"
+                },
+                "message": {
+                    "description": "user text (message only)",
+                    "type": "string"
+                },
+                "page": {
+                    "description": "page the user is on",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_handler.AIPageContext"
+                        }
+                    ]
+                },
+                "requestId": {
+                    "description": "per-send correlation id (echoed back)",
+                    "type": "string"
+                },
+                "searchFields": {
+                    "description": "searchable table headers (search_context only)",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handler.AISearchField"
+                    }
+                },
+                "type": {
+                    "description": "\"message\" | \"search_context\"",
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handler.AIConditionOperator": {
+            "type": "object",
+            "properties": {
+                "apiValue": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handler.AIConditionRules": {
+            "type": "object",
+            "properties": {
+                "dateContext": {
+                    "$ref": "#/definitions/internal_handler.AIDateContext"
+                },
+                "noFieldMatch": {
+                    "$ref": "#/definitions/internal_handler.AINoFieldMatch"
+                },
+                "operators": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/internal_handler.AIConditionOperator"
+                    }
+                },
+                "operatorsByType": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "resultShape": {
+                    "$ref": "#/definitions/internal_handler.AIResultShape"
+                },
+                "skill": {
+                    "description": "natural-language conversion spec",
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handler.AIDateContext": {
+            "type": "object",
+            "properties": {
+                "currentDate": {
+                    "type": "string"
+                },
+                "relativeMonthMode": {
+                    "type": "string"
+                },
+                "timezone": {
+                    "type": "string"
+                },
+                "valueFormat": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handler.AIFieldOption": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handler.AINoFieldMatch": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handler.AIPageContext": {
+            "type": "object",
+            "properties": {
+                "contextVersion": {
+                    "type": "string"
+                },
+                "itemTypeId": {
+                    "type": "string"
+                },
+                "itemTypeName": {
+                    "type": "string"
+                },
+                "pageType": {
+                    "description": "e.g. \"largeTable\"",
+                    "type": "string"
+                },
+                "tabId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handler.AIResultShape": {
+            "type": "object",
+            "properties": {
+                "required": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_handler.AISearchField": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "description": "human-readable display name",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "field name used by the search API",
+                    "type": "string"
+                },
+                "options": {
+                    "description": "legal enum values for select fields",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handler.AIFieldOption"
+                    }
+                },
+                "type": {
+                    "description": "text | number | date | select | boolean",
+                    "type": "string"
+                }
+            }
+        },
         "internal_handler.AddFavoriteRequest": {
             "type": "object",
             "properties": {
@@ -22147,6 +22385,13 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/internal_handler_session.MentionedItemRequest"
+                    }
+                },
+                "metadata": {
+                    "description": "Custom structured context injected into the agent prompt",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
                     }
                 },
                 "query": {
