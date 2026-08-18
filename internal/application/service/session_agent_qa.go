@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/event"
@@ -14,6 +15,30 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/rerank"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+// detectReplyLanguage classifies a query as Traditional Chinese, Simplified
+// Chinese, or English so the agent can reply in the user's language. Detection is
+// heuristic: a single Traditional-only character marks the query as Traditional
+// (these characters never appear in Simplified Chinese).
+func detectReplyLanguage(query string) string {
+	const traditionalOnly = "這個頁麼數據嗎們說為對時單價報條資訊現請幫辦體裡點會還來國學間開關問見讓給從後過種樣長門頭實應務區號語詢發"
+	if strings.ContainsAny(query, traditionalOnly) {
+		return "繁体中文"
+	}
+	hasCJK, hasLatin := false, false
+	for _, r := range query {
+		switch {
+		case r >= 0x4E00 && r <= 0x9FFF:
+			hasCJK = true
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			hasLatin = true
+		}
+	}
+	if !hasCJK && hasLatin {
+		return "English"
+	}
+	return "简体中文"
+}
 
 // AgentQA performs agent-based question answering with conversation history and streaming support
 // customAgent is optional - if provided, uses custom agent configuration instead of tenant defaults
@@ -192,6 +217,12 @@ func (s *sessionService) AgentQA(
 		agentQuery += "\n\n[用户提供的结构化上下文]\n" + meta
 		logger.Infof(ctx, "Injected %d byte(s) of request metadata into agent query", len(meta))
 	}
+	// Steer the reply language to match the user's input. Detected from the query
+	// itself (Traditional/Simplified/English) — more reliable than asking the model
+	// to distinguish 繁/简 on its own.
+	lang := detectReplyLanguage(req.Query)
+	agentQuery += "\n\n[回复语言：" + lang + "]"
+	logger.Infof(ctx, "Detected reply language: %s", lang)
 
 	// Scope envelopes (runtime_context / must_use) are injected per LLM call inside
 	// the agent engine only; we intentionally do not persist them on user messages
