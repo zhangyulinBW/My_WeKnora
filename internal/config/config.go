@@ -33,6 +33,7 @@ type Config struct {
 	PromptTemplates *PromptTemplatesConfig `yaml:"prompt_templates" json:"prompt_templates"`
 	IM              *IMConfig              `yaml:"im"               json:"im"`
 	Agent           *AgentConfig           `yaml:"agent"            json:"agent"`
+	AIChat          *AIChatConfig          `yaml:"ai_chat"          json:"ai_chat"`
 	// FrontendBaseURL is the externally-visible origin of the SPA, used
 	// to compose absolute share-link URLs. Empty falls back to a host-
 	// relative URL ("/register?token=…") which the SPA then resolves
@@ -49,6 +50,16 @@ type AgentConfig struct {
 	// ToolApprovalTimeoutSeconds is how long the agent waits for human approval on a flagged MCP tool.
 	// 0 means default 600 (10 minutes).
 	ToolApprovalTimeoutSeconds int `yaml:"tool_approval_timeout_seconds" json:"tool_approval_timeout_seconds"`
+}
+
+// AIChatConfig configures the custom /api/v1/ai/chat endpoint.
+type AIChatConfig struct {
+	// AgentID is the custom agent whose system prompt drives the endpoint.
+	// Empty falls back to a built-in default.
+	AgentID string `yaml:"agent_id" json:"agent_id"`
+	// ModelID optionally overrides the agent's configured chat model.
+	// Empty uses the agent's own model.
+	ModelID string `yaml:"model_id" json:"model_id"`
 }
 
 // IMConfig configures the IM integration service.

@@ -111,3 +111,10 @@ extract:
 tenant:
   # Enable cross-tenant access (can be enabled for intranet environments)
   enable_cross_tenant_access: false
+
+# 自定义 AI 接口 /api/v1/ai/chat 配置
+ai_chat:
+  # 使用的智能体 ID（其 system_prompt 驱动该接口）；留空则用代码内置默认值
+  agent_id: "6a188aae-b3fb-45c7-b59b-1d0a4620a113"
+  # 可选：覆盖 agent 自己配置的对话模型；留空则用 agent 的模型
+  model_id: ""
