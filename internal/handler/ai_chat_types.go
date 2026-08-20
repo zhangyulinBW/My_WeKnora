@@ -99,18 +99,20 @@ type AISearchResult struct {
 // AIEvent is the SSE event payload emitted by this endpoint. Fields are
 // optional so each event kind carries only the fields it needs.
 type AIEvent struct {
-	Version        string          `json:"version"`
-	Type           string          `json:"type"`
-	ConversationID string          `json:"conversationId"`
-	RequestID      string          `json:"requestId"`
-	ActionID       string          `json:"actionId,omitempty"`
-	Content        string          `json:"content,omitempty"`
-	Message        string          `json:"message,omitempty"`
-	Required       []string        `json:"required,omitempty"`
-	Conditions     []AICondition   `json:"conditions,omitempty"`
-	SearchBody     json.RawMessage `json:"searchBody,omitempty"`
-	NeedConfirm    *bool           `json:"needConfirm,omitempty"`
-	Unmatched      []AIUnmatched   `json:"unmatchedConditions,omitempty"`
+	Version        string                 `json:"version"`
+	Type           string                 `json:"type"`
+	ConversationID string                 `json:"conversationId"`
+	RequestID      string                 `json:"requestId"`
+	ActionID       string                 `json:"actionId,omitempty"`
+	Content        string                 `json:"content,omitempty"`
+	Message        string                 `json:"message,omitempty"`
+	Done           bool                   `json:"done,omitempty"` // stream-end marker for answer/thinking chunks
+	Data           map[string]interface{} `json:"data,omitempty"` // tool metadata / references / step info
+	Required       []string               `json:"required,omitempty"`
+	Conditions     []AICondition          `json:"conditions,omitempty"`
+	SearchBody     json.RawMessage        `json:"searchBody,omitempty"`
+	NeedConfirm    *bool                  `json:"needConfirm,omitempty"`
+	Unmatched      []AIUnmatched          `json:"unmatchedConditions,omitempty"`
 }
 
 // AIUnmatched describes a condition fragment that could not be safely mapped.
@@ -123,6 +125,11 @@ type AIUnmatched struct {
 const (
 	AIEventAnswerChunk       = "answer_chunk"
 	AIEventAnswerDone        = "answer_done"
+	AIEventThinking          = "thinking"    // agent reasoning step
+	AIEventToolCall          = "tool_call"   // agent tool invocation
+	AIEventToolResult        = "tool_result" // agent tool result
+	AIEventReferences        = "references"  // knowledge references
+	AIEventReflection        = "reflection"  // agent reflection step
 	AIEventNeedSearchContext = "need_search_context"
 	AIEventSearchDraft       = "search_draft"
 	AIEventNeedClarification = "need_clarification"

@@ -118,3 +118,5 @@ ai_chat:
   agent_id: "6a188aae-b3fb-45c7-b59b-1d0a4620a113"
   # 可选：覆盖 agent 自己配置的对话模型；留空则用 agent 的模型
   model_id: ""
+  # 意图分析智能体 ID（custom_agents 表里已建立的意图识别智能体）；留空则回退到 agent_id
+  intent_agent_id: "751a5a48-e861-430c-9069-7a92681ee2af"
