@@ -625,19 +625,27 @@ func buildAIMetadata(req *AIChatRequest) types.JSON {
 // getOrCreateSession maps the opaque conversationId to a WeKnora session,
 // creating it on first use. The session owner is derived from
 // SessionOwnerIDFromContext so it matches the scope used by CreateMessage's
-// session lookup (fixes "session not found" for API-key / embed / external users).
+// session lookup. A pre-existing session created with a mismatched owner (e.g.
+// by the earlier synthetic-user bug) is repaired in place so the scoped lookup
+// succeeds on every subsequent turn.
 func (h *AIChatHandler) getOrCreateSession(
 	ctx context.Context,
 	conversationID string,
 	tenantID uint64,
 ) (*types.Session, error) {
+	ownerID := types.SessionOwnerIDFromContext(ctx)
 	if session, err := h.sessionService.GetSessionByID(ctx, tenantID, conversationID); err == nil && session != nil {
+		if session.UserID != ownerID {
+			if err := h.sessionService.SetSessionOwnerID(ctx, tenantID, conversationID, ownerID); err == nil {
+				session.UserID = ownerID
+			}
+		}
 		return session, nil
 	}
 	return h.sessionService.CreateSession(ctx, &types.Session{
 		ID:       conversationID,
 		TenantID: tenantID,
-		UserID:   types.SessionOwnerIDFromContext(ctx),
+		UserID:   ownerID,
 	})
 }
 
