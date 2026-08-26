@@ -27,7 +27,7 @@ func TestSanitizeToolDataForPersist_knowledgeChunksList(t *testing.T) {
 		"total_chunks":    282,
 		"chunks":          []map[string]interface{}{{"content": "secret"}},
 	}
-	out := SanitizeToolDataForPersist(data)
+	out := SanitizeToolDataForPersist(ToolListKnowledgeChunks, data)
 	if _, ok := out["chunks"]; ok {
 		t.Fatal("chunk bodies should be stripped from persisted tool data")
 	}
@@ -85,5 +85,71 @@ func TestSanitizeToolResultForClient_omitsOutput(t *testing.T) {
 	}
 	if meta["fetched_chunks"] != 1 {
 		t.Fatalf("summary metadata should remain, got %#v", meta["fetched_chunks"])
+	}
+}
+
+func TestSandboxToolPersistenceStripsDuplicatePayloadsAndCompactsHistory(t *testing.T) {
+	rawOutput := strings.Repeat("shell output ", 1000)
+	steps := []types.AgentStep{{
+		ToolCalls: []types.ToolCall{{
+			Name: ToolShellExec,
+			Result: &types.ToolResult{
+				Success: true,
+				Output:  rawOutput,
+				Data: map[string]interface{}{
+					"stdout":                strings.Repeat("x", 10000),
+					"stderr":                strings.Repeat("y", 10000),
+					"content":               strings.Repeat("z", 10000),
+					"content_base64":        strings.Repeat("A", 10000),
+					"exit_code":             0,
+					"stdout_original_bytes": 10000,
+					"stdout_truncated":      true,
+				},
+			},
+		}},
+	}}
+
+	sanitized := SanitizeAgentStepsForStorage(steps)
+	result := sanitized[0].ToolCalls[0].Result
+
+	assert := func(condition bool, message string) {
+		t.Helper()
+		if !condition {
+			t.Fatal(message)
+		}
+	}
+	assert(len(result.Output) <= historicalSandboxOutputChars, "persisted shell output must be capped")
+	for _, key := range []string{"stdout", "stderr", "content", "content_base64"} {
+		_, exists := result.Data[key]
+		assert(!exists, key+" should be stripped")
+	}
+	assert(result.Data["exit_code"] == 0, "exit metadata should remain")
+	assert(len(CompactToolOutputForHistory(ToolShellExec, steps[0].ToolCalls[0].Result)) <= historicalSandboxOutputChars,
+		"historical replay must independently cap legacy raw output")
+}
+
+func TestSanitizeToolResultForClientKeepsShellStreams(t *testing.T) {
+	meta := SanitizeToolResultForClient(ToolShellExec, &types.ToolResult{
+		Success: true,
+		Output:  "=== Shell Exec ===\n**Command**: `ls`\n",
+		Data: map[string]interface{}{
+			"display_type": "shell_exec",
+			"command":      "ls",
+			"exit_code":    0,
+			"stdout":       "README.md\n",
+			"stderr":       "",
+		},
+	})
+	if _, ok := meta["output"]; ok {
+		t.Fatal("structured shell_exec should omit the markdown Output from client metadata")
+	}
+	if meta["stdout"] != "README.md\n" {
+		t.Fatalf("live UI needs stdout, got %#v", meta["stdout"])
+	}
+	if meta["command"] != "ls" {
+		t.Fatalf("command should remain, got %#v", meta["command"])
+	}
+	if meta["display_type"] != "shell_exec" {
+		t.Fatalf("display_type should remain, got %#v", meta["display_type"])
 	}
 }

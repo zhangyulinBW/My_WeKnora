@@ -42,6 +42,7 @@ func NewChunkRepository(db *gorm.DB) interfaces.ChunkRepository {
 func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chunk) error {
 	for _, chunk := range chunks {
 		chunk.Content = common.CleanInvalidUTF8(chunk.Content)
+		chunk.ContextHeader = common.CleanInvalidUTF8(chunk.ContextHeader)
 		if chunk.SourceContent == "" {
 			chunk.SourceContent = chunk.Content
 		}
@@ -152,6 +153,26 @@ func (r *chunkRepository) ListChunksByKnowledgeID(
 	var chunks []*types.Chunk
 	if err := r.db.WithContext(ctx).
 		Where("tenant_id = ? AND knowledge_id = ? and chunk_type = ?", tenantID, knowledgeID, "text").
+		Order("chunk_index ASC").
+		Find(&chunks).Error; err != nil {
+		return nil, err
+	}
+	return chunks, nil
+}
+
+// ListChunksByKnowledgeIDAndTypes lists a knowledge's chunks restricted to the
+// given chunk types. ListChunksByKnowledgeID is text-only by design, so callers
+// that also need summary / parent_text / image chunks come through here rather
+// than widening that query underneath its existing callers.
+func (r *chunkRepository) ListChunksByKnowledgeIDAndTypes(
+	ctx context.Context, tenantID uint64, knowledgeID string, chunkTypes []types.ChunkType,
+) ([]*types.Chunk, error) {
+	if len(chunkTypes) == 0 {
+		return nil, nil
+	}
+	var chunks []*types.Chunk
+	if err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_id = ? AND chunk_type IN ?", tenantID, knowledgeID, chunkTypes).
 		Order("chunk_index ASC").
 		Find(&chunks).Error; err != nil {
 		return nil, err
@@ -735,10 +756,20 @@ func (r *chunkRepository) FindFAQChunkWithDuplicateQuestion(
 		return nil, nil
 	}
 
+	// Every non-deleted status counts, including ChunkStatusStored: a chunk that
+	// is written but not yet indexed is a sibling create still in flight, and
+	// skipping it lets a retried request insert a second row for the same
+	// question. Soft-deleted rows are excluded by GORM.
 	db := r.db.WithContext(ctx).
 		Select("id, metadata").
-		Where("tenant_id = ? AND knowledge_base_id = ? AND chunk_type = ? AND status = ? AND id != ?",
-			tenantID, kbID, types.ChunkTypeFAQ, types.ChunkStatusIndexed, excludeChunkID)
+		Where("tenant_id = ? AND knowledge_base_id = ? AND chunk_type = ? AND status IN (?) AND id != ?",
+			tenantID, kbID, types.ChunkTypeFAQ,
+			[]int{
+				int(types.ChunkStatusDefault),
+				int(types.ChunkStatusStored),
+				int(types.ChunkStatusIndexed),
+			},
+			excludeChunkID)
 
 	switch r.db.Name() {
 	case "mysql":

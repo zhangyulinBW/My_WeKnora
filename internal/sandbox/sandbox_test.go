@@ -122,6 +122,39 @@ echo "Args: $@"
 	t.Logf("Duration: %v", result.Duration)
 }
 
+func TestManagerMergesWorkspaceEnvironmentVariables(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "env.sh")
+	scriptContent := "#!/bin/sh\nprintf '%s|%s' \"$WORKSPACE_VALUE\" \"$OVERRIDE_VALUE\"\n"
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	config := DefaultConfig()
+	config.Type = SandboxTypeLocal
+	config.EnvVars = map[string]string{
+		"WORKSPACE_VALUE": "from-workspace",
+		"OVERRIDE_VALUE":  "workspace-default",
+	}
+	manager, err := NewManager(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := manager.Execute(context.Background(), &ExecuteConfig{
+		Script:        scriptPath,
+		ScriptContent: scriptContent,
+		Env:           map[string]string{"OVERRIDE_VALUE": "per-execution"},
+		Timeout:       10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stdout != "from-workspace|per-execution" {
+		t.Fatalf("unexpected environment output %q", result.Stdout)
+	}
+}
+
 func TestLocalSandboxTimeout(t *testing.T) {
 	// Create a temporary script that sleeps
 	tmpDir, err := os.MkdirTemp("", "sandbox-test")
@@ -195,6 +228,24 @@ func TestNewDisabledManager(t *testing.T) {
 	}
 }
 
+func TestIsNamedSandboxBackendType(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want bool
+	}{
+		{"cube", true},
+		{"e2b", true},
+		{"docker", true},
+		{"local", true},
+		{"disabled", false},
+		{"", false},
+	} {
+		if got := IsNamedSandboxBackendType(tc.raw); got != tc.want {
+			t.Fatalf("IsNamedSandboxBackendType(%q) = %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+}
+
 func TestExecuteResultHelpers(t *testing.T) {
 	// Test IsSuccess
 	successResult := &ExecuteResult{
@@ -221,14 +272,6 @@ func TestExecuteResultHelpers(t *testing.T) {
 		t.Error("Expected IsSuccess() to return false when killed")
 	}
 
-	// Test GetOutput
-	if successResult.GetOutput() != "output" {
-		t.Errorf("Expected GetOutput() to return stdout, got %s", successResult.GetOutput())
-	}
-
-	if failResult.GetOutput() != "error" {
-		t.Errorf("Expected GetOutput() to return stderr when stdout is empty, got %s", failResult.GetOutput())
-	}
 }
 
 func TestPythonScriptExecution(t *testing.T) {
@@ -272,44 +315,4 @@ print(f"Arguments: {sys.argv[1:]}")
 	}
 
 	t.Logf("Python script output: %s", result.Stdout)
-}
-
-// TestDockerSandbox_BuildArgsStdin guards the -i flag: docker wires the
-// container's stdin to /dev/null unless -i is passed, so a script reading
-// stdin would silently see EOF even though ExecuteConfig.Stdin was set.
-func TestDockerSandbox_BuildArgsStdin(t *testing.T) {
-	s := NewDockerSandbox(DefaultConfig())
-
-	tests := []struct {
-		name         string
-		stdin        string
-		wantInteract bool
-	}{
-		{name: "with stdin", stdin: `{"items": [1, 2, 3]}`, wantInteract: true},
-		{name: "without stdin", stdin: "", wantInteract: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			args := s.buildDockerArgs(&ExecuteConfig{
-				Script: "/workspace/analyze.py",
-				Stdin:  tt.stdin,
-			})
-
-			got := false
-			for _, a := range args {
-				if a == "-i" || a == "--interactive" {
-					got = true
-				}
-				// -t would merge stdout into stderr and fail without a TTY
-				if a == "-t" || a == "--tty" {
-					t.Errorf("docker args must not request a TTY, got %v", args)
-				}
-			}
-
-			if got != tt.wantInteract {
-				t.Errorf("interactive flag = %v, want %v. args: %v", got, tt.wantInteract, args)
-			}
-		})
-	}
 }

@@ -109,6 +109,9 @@ const messages = {
       "unableToGetKnowledgeBaseId": "无法获取知识库ID",
       "summaryInProgress": "正在总结答案……",
       "thinkingAlt": "正在思考",
+      "preparingAnswer": "正在准备回答…",
+      "connectingModelAndGeneratingAnswer": "正在连接模型并生成回答…",
+      "modelStillResponding": "模型响应较慢，仍在等待…",
       "deepThoughtCompleted": "已深度思考",
       "deepThoughtAlt": "深度思考完成",
       "referencesTitle": "参考了{count}个相关内容",
@@ -335,9 +338,20 @@ const messages = {
         "queryKnowledgeGraph": "知识图谱查询",
         "readSkill": "读取技能",
         "executeSkillScript": "执行技能脚本",
+        "shellExec": "执行沙箱命令",
         "dataAnalysis": "数据分析",
         "dataSchema": "数据结构",
         "databaseQuery": "数据库查询"
+      },
+      "shellExec": {
+        "workDir": "目录",
+        "exitCode": "退出码",
+        "stdout": "标准输出",
+        "stderr": "标准错误",
+        "emptyOutput": "无输出",
+        "truncated": "输出已截断",
+        "killed": "已超时终止",
+        "binarySuppressed": "二进制输出已省略，请将文件写入产物目录后下载"
       },
       "summary": {
         "searchKb": "检索知识库 <strong>{count}</strong> 次",
@@ -369,6 +383,7 @@ const messages = {
       },
       "search": {
         "noResults": "未找到匹配的内容",
+        "candidatesBelowThreshold": "命中 {count} 条候选，相关性不足，未用于回答",
         "foundResultsFromFiles": "找到 {count} 个结果，来自 {files} 个文件",
         "foundResults": "找到 {count} 个结果",
         "foundMixedResults": "找到 {count} 个结果（{docCount} 篇文档，{webCount} 条网页）",
@@ -431,7 +446,8 @@ const messages = {
         "queryUnderstanding": "正在理解问题...",
         "queryUnderstandDone": "已完成问题理解",
         "called": "调用 {name}",
-        "calledFailed": "调用 {name} 失败"
+        "calledFailed": "调用 {name} 失败",
+        "shellExecRunning": "正在执行沙箱命令..."
       },
       "copy": {
         "emptyContent": "当前回答为空，无法复制",
@@ -486,6 +502,8 @@ const messages = {
     "knowledgeEditor": {
       "wikiBrowser": {
         "viewInGraph": "在图谱中查看",
+        "editingBadge": "编辑中",
+        "pageActions": "页面操作",
         "version": "v{ver}",
         "filterSummary": "摘要",
         "filterEntity": "实体",
@@ -599,6 +617,9 @@ const messages = {
       "unableToGetKnowledgeBaseId": "Unable to get knowledge base ID",
       "summaryInProgress": "Summarizing answer…",
       "thinkingAlt": "Thinking in progress",
+      "preparingAnswer": "Preparing an answer…",
+      "connectingModelAndGeneratingAnswer": "Connecting to the model and generating an answer…",
+      "modelStillResponding": "The model is taking longer than usual, still waiting…",
       "deepThoughtCompleted": "Deep thinking completed",
       "deepThoughtAlt": "Deep thinking finished",
       "referencesTitle": "Referenced {count} related item(s)",
@@ -826,9 +847,20 @@ const messages = {
         "queryKnowledgeGraph": "Knowledge Graph Query",
         "readSkill": "Read Skill",
         "executeSkillScript": "Execute Skill Script",
+        "shellExec": "Run sandbox command",
         "dataAnalysis": "Data Analysis",
         "dataSchema": "Data Schema",
         "databaseQuery": "Database Query"
+      },
+      "shellExec": {
+        "workDir": "Directory",
+        "exitCode": "Exit code",
+        "stdout": "Stdout",
+        "stderr": "Stderr",
+        "emptyOutput": "No output",
+        "truncated": "Output truncated",
+        "killed": "Timed out",
+        "binarySuppressed": "Binary output omitted. Write files to the artifact directory to download them."
       },
       "summary": {
         "searchKb": "Searched knowledge base <strong>{count}</strong> time(s)",
@@ -860,6 +892,7 @@ const messages = {
       },
       "search": {
         "noResults": "No matching content found",
+        "candidatesBelowThreshold": "Matched {count} candidate(s), none relevant enough to use",
         "foundResultsFromFiles": "Found {count} result(s) from {files} file(s)",
         "foundResults": "Found {count} result(s)",
         "foundMixedResults": "Found {count} result(s) ({docCount} documents, {webCount} web results)",
@@ -922,7 +955,8 @@ const messages = {
         "queryUnderstanding": "Understanding query...",
         "queryUnderstandDone": "Query understood",
         "called": "Called {name}",
-        "calledFailed": "Failed to call {name}"
+        "calledFailed": "Failed to call {name}",
+        "shellExecRunning": "Running sandbox command..."
       },
       "copy": {
         "emptyContent": "Current response is empty, cannot copy",
@@ -977,6 +1011,8 @@ const messages = {
     "knowledgeEditor": {
       "wikiBrowser": {
         "viewInGraph": "View in Graph",
+        "editingBadge": "Editing",
+        "pageActions": "Page actions",
         "version": "v{ver}",
         "filterSummary": "Summaries",
         "filterEntity": "Entities",
@@ -1051,6 +1087,9 @@ const koEmbedPublish = {
     followUpQuestions: '이어서 질문',
     followUpQuestionsLoading: '추천 질문 로딩 중',
     thinkingAlt: '생각 중',
+    preparingAnswer: '답변을 준비하고 있습니다…',
+    connectingModelAndGeneratingAnswer: '모델에 연결하여 답변을 생성하고 있습니다…',
+    modelStillResponding: '모델 응답이 평소보다 오래 걸리고 있습니다. 계속 기다리는 중…',
     refreshSuggestedQuestions: '다른 질문',
     imageTooMany: '이미지는 최대 5장까지 업로드할 수 있습니다',
     imageTypeSizeError: 'JPG/PNG/GIF/WEBP만 지원하며, 각 파일은 10MB 이하여야 합니다',
@@ -1139,6 +1178,9 @@ const ruEmbedPublish = {
     followUpQuestions: 'Спрашивайте дальше',
     followUpQuestionsLoading: 'Загрузка рекомендуемых вопросов',
     thinkingAlt: 'Обдумывание...',
+    preparingAnswer: 'Подготовка ответа…',
+    connectingModelAndGeneratingAnswer: 'Подключение к модели и создание ответа…',
+    modelStillResponding: 'Модель отвечает дольше обычного, продолжаем ждать…',
     refreshSuggestedQuestions: 'Ещё',
     imageTooMany: 'Можно загрузить не более 5 изображений',
     imageTypeSizeError: 'Поддерживаются только JPG/PNG/GIF/WEBP, каждый файл до 10 МБ',
