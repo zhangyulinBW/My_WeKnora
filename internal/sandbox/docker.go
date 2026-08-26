@@ -104,6 +104,13 @@ func (s *DockerSandbox) Execute(ctx context.Context, config *ExecuteConfig) (*Ex
 func (s *DockerSandbox) buildDockerArgs(config *ExecuteConfig) []string {
 	args := []string{"run", "--rm"}
 
+	// Keep stdin attached when input is provided. Without -i, docker wires the
+	// container's stdin to /dev/null and the script reads EOF immediately.
+	// Note: no -t here, there is no TTY and it would merge stdout into stderr.
+	if config.Stdin != "" {
+		args = append(args, "-i")
+	}
+
 	// Security: run as non-root user
 	args = append(args, "--user", "1000:1000")
 

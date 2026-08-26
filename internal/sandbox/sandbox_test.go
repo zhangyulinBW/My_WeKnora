@@ -273,3 +273,43 @@ print(f"Arguments: {sys.argv[1:]}")
 
 	t.Logf("Python script output: %s", result.Stdout)
 }
+
+// TestDockerSandbox_BuildArgsStdin guards the -i flag: docker wires the
+// container's stdin to /dev/null unless -i is passed, so a script reading
+// stdin would silently see EOF even though ExecuteConfig.Stdin was set.
+func TestDockerSandbox_BuildArgsStdin(t *testing.T) {
+	s := NewDockerSandbox(DefaultConfig())
+
+	tests := []struct {
+		name         string
+		stdin        string
+		wantInteract bool
+	}{
+		{name: "with stdin", stdin: `{"items": [1, 2, 3]}`, wantInteract: true},
+		{name: "without stdin", stdin: "", wantInteract: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := s.buildDockerArgs(&ExecuteConfig{
+				Script: "/workspace/analyze.py",
+				Stdin:  tt.stdin,
+			})
+
+			got := false
+			for _, a := range args {
+				if a == "-i" || a == "--interactive" {
+					got = true
+				}
+				// -t would merge stdout into stderr and fail without a TTY
+				if a == "-t" || a == "--tty" {
+					t.Errorf("docker args must not request a TTY, got %v", args)
+				}
+			}
+
+			if got != tt.wantInteract {
+				t.Errorf("interactive flag = %v, want %v. args: %v", got, tt.wantInteract, args)
+			}
+		})
+	}
+}
