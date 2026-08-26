@@ -64,6 +64,9 @@ type AIChatConfig struct {
 	// start of a message turn. It lives in the same custom_agents table as the
 	// main agent. Empty falls back to AgentID.
 	IntentAgentID string `yaml:"intent_agent_id" json:"intent_agent_id"`
+	// RecommendAgentID is the custom agent used to generate candidate questions
+	// for the "start" flow. Empty falls back to AgentID.
+	RecommendAgentID string `yaml:"recommend_agent_id" json:"recommend_agent_id"`
 }
 
 // IMConfig configures the IM integration service.

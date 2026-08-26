@@ -120,3 +120,5 @@ ai_chat:
   model_id: ""
   # 意图分析智能体 ID（custom_agents 表里已建立的意图识别智能体）；留空则回退到 agent_id
   intent_agent_id: "751a5a48-e861-430c-9069-7a92681ee2af"
+  # 推荐问题智能体 ID（custom_agents 表里已建立的推荐问题智能体）；留空则回退到 agent_id
+  recommend_agent_id: "3598cc20-d892-47c0-a0a8-34f5cec66997"

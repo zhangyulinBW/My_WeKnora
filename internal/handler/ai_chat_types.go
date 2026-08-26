@@ -108,6 +108,7 @@ type AIEvent struct {
 	Message        string                 `json:"message,omitempty"`
 	Done           bool                   `json:"done,omitempty"` // stream-end marker for answer/thinking chunks
 	Data           map[string]interface{} `json:"data,omitempty"` // tool metadata / references / step info
+	Suggestions    []AISuggestionItem     `json:"suggestions,omitempty"`
 	Required       []string               `json:"required,omitempty"`
 	Conditions     []AICondition          `json:"conditions,omitempty"`
 	SearchBody     json.RawMessage        `json:"searchBody,omitempty"`
@@ -119,6 +120,13 @@ type AIEvent struct {
 type AIUnmatched struct {
 	SourceText string `json:"sourceText"`
 	Reason     string `json:"reason"`
+}
+
+// AISuggestionItem is one recommended/candidate question returned by the
+// "start" flow so the user can pick a follow-up.
+type AISuggestionItem struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
 }
 
 // AI event `type` values.
@@ -133,11 +141,13 @@ const (
 	AIEventNeedSearchContext = "need_search_context"
 	AIEventSearchDraft       = "search_draft"
 	AIEventNeedClarification = "need_clarification"
+	AIEventSuggestions       = "suggestions"
 	AIEventError             = "error"
 )
 
 // AI request `type` values.
 const (
+	AIRequestTypeStart         = "start"
 	AIRequestTypeMessage       = "message"
 	AIRequestTypeSearchContext = "search_context"
 )
