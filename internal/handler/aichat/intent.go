@@ -1,8 +1,8 @@
 package aichat
 
-// 本文件实现 ai_chat 的「意图注册表」：把意图分类结果从脆弱的字符串二分类
-// 改造成可扩展的类型化分发。新增意图只需三步——新增一个 Intent 常量、实现一个
-// intentHandler、在 NewAIChatHandler 里注册它，无需改动分类与分发的主干逻辑。
+// 本文件实现 ai_chat 的意图分析与分发：把用户消息分类为类型化 Intent，
+// 再经意图注册表分发到对应处理逻辑（search 结构化搜索 / normal 智能体问答）。
+// 搜索意图是否走结构化流程由 shouldSearch 控制（config 开关 + largeTable 页面）。
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 // 保证新增意图不会破坏已有会话里已持久化的意图记录。
 type Intent string
 
-// 已注册的意图。normal 是默认/回退意图，search 是搜索任务意图。
+// 已识别的意图。normal 是默认/回退意图，search 是搜索任务意图。
 const (
 	IntentNormal Intent = "normal"
 	IntentSearch Intent = "search"
@@ -37,11 +37,9 @@ type intentHandler interface {
 	Handle(ctx context.Context, c *gin.Context, req *AIChatRequest, agent *types.CustomAgent, tenantID uint64)
 }
 
-// intentRegistry 按 Intent 分发到对应的 intentHandler；未注册的意图回退到
-// defaultHandler，从而保证分类模型输出未知意图时不会中断对话。
+// intentRegistry 按 Intent 分发到对应的 intentHandler；未注册的意图由调用方兜底到 normal。
 type intentRegistry struct {
-	handlers       map[Intent]intentHandler
-	defaultHandler intentHandler
+	handlers map[Intent]intentHandler
 }
 
 // newIntentRegistry 创建空注册表。
@@ -54,14 +52,9 @@ func (r *intentRegistry) register(h intentHandler) {
 	r.handlers[h.Intent()] = h
 }
 
-// resolve 返回指定意图对应的 handler，未命中返回 defaultHandler。
-// 若尚未设置默认 handler（理论上不会，构造时已注册 normal），则返回 nil，
-// 由调用方兜底。
+// resolve 返回指定意图对应的 handler，未命中返回 nil（由调用方兜底 normal）。
 func (r *intentRegistry) resolve(intent Intent) intentHandler {
-	if h, ok := r.handlers[intent]; ok {
-		return h
-	}
-	return r.defaultHandler
+	return r.handlers[intent]
 }
 
 // searchIntentHandler 是搜索意图的适配器，委托给 AIChatHandler.handleSearchMessage。
@@ -94,8 +87,8 @@ func (n *normalIntentHandler) Handle(
 	n.h.handleAgentTurn(ctx, c, req, agent, tenantID)
 }
 
-// handleMessage 通过意图分析智能体对消息进行分类，持久化意图，
-// 然后经意图注册表分发到对应的处理逻辑（替代原来的 if intent == "search" 硬编码分发）。
+// handleMessage 通过意图分析智能体对消息进行分类、持久化意图，
+// 然后经意图注册表分发到对应的处理逻辑。
 func (h *AIChatHandler) handleMessage(
 	ctx context.Context,
 	c *gin.Context,
@@ -108,23 +101,47 @@ func (h *AIChatHandler) handleMessage(
 		logger.Warnf(ctx, "AI chat intent classification failed, defaulting to normal: %v", err)
 		intent = IntentNormal
 	}
+
+	// 搜索开关：search 意图只在「开关开启 + 页面为 largeTable」时才走结构化搜索流程；
+	// 否则回退 normal（singleData 等场景答案就在 itemdata 里，直接让 Agent 流式回答）。
+	if intent == IntentSearch && !h.shouldSearch(ctx, req, tenantID) {
+		intent = IntentNormal
+	}
+
 	h.persistIntent(ctx, req, tenantID, intent)
 
 	// 意图注册表分发：新增意图无需改这里。
 	handler := h.intents.resolve(intent)
 	if handler == nil {
-		// 理论上不可达（normal 已作为默认 handler 注册），兜底走智能体问答。
+		// 未知意图兜底走智能体问答。
 		handler = &normalIntentHandler{h: h}
 	}
 	handler.Handle(ctx, c, req, agent, tenantID)
+}
+
+// shouldSearch 判断当前请求是否应走结构化搜索流程：
+// 仅当 config 开启搜索开关、且页面类型为 largeTable 时返回 true。
+// 页面优先取当前请求的 page，未携带时回退到 start 上下文里的 page。
+func (h *AIChatHandler) shouldSearch(ctx context.Context, req *AIChatRequest, tenantID uint64) bool {
+	if h.config == nil || h.config.AIChat == nil || !h.config.AIChat.SearchEnabled {
+		return false
+	}
+	page := req.Page
+	if page == nil || page.PageType == "" {
+		if session, err := h.getOrCreateSession(ctx, req.ConversationID, tenantID); err == nil && session != nil {
+			if p, _, _, _ := h.loadStartContext(ctx, session.ID); p != nil {
+				page = p
+			}
+		}
+	}
+	return page != nil && page.PageType == "largeTable"
 }
 
 // classifyIntent 使用意图分析智能体的系统提示词 + 模型（来自 ai_chat.intent_agent_id）
 // 返回类型化的 Intent。若意图智能体未声明自身模型，则回退到 ai_chat.model_id，
 // 再回退到主智能体的模型。
 //
-// 分类结果与注册表已注册的意图键比对：命中则返回对应 Intent，未命中回退 IntentNormal。
-// 这样分类模型只需输出意图名，具体「意图名 -> 处理逻辑」的映射由注册表统一维护。
+// 模型输出被归一化后与已知意图比对：命中则返回对应 Intent，未命中回退 IntentNormal。
 func (h *AIChatHandler) classifyIntent(
 	ctx context.Context,
 	message string,
@@ -160,7 +177,7 @@ func (h *AIChatHandler) classifyIntent(
 		return "", err
 	}
 
-	// 归一化模型输出，映射到已注册意图；无法识别时由调用方回退到 normal。
+	// 归一化模型输出，映射到已知意图；无法识别时回退 normal。
 	key := strings.ToLower(strings.TrimSpace(resp.Content))
 	switch key {
 	case string(IntentSearch):

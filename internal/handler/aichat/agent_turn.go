@@ -43,7 +43,7 @@ func (h *AIChatHandler) handleAgentTurn(
 
 	// 若本轮请求未携带页面/筛选数据，则回填 start 阶段持久化的基础数据，
 	// 保证后续 normal 对话仍能获得会话基础上下文（而非只依赖当轮请求）。
-	page, searchFields, searchBody := h.loadStartContext(ctx, session.ID)
+	page, searchFields, searchBody, itemData := h.loadStartContext(ctx, session.ID)
 	if req.Page == nil {
 		req.Page = page
 	}
@@ -52,6 +52,9 @@ func (h *AIChatHandler) handleAgentTurn(
 	}
 	if len(req.SearchBody) == 0 {
 		req.SearchBody = searchBody
+	}
+	if len(req.ItemData) == 0 {
+		req.ItemData = itemData
 	}
 
 	if _, err := h.messageService.CreateMessage(ctx, &types.Message{
@@ -327,7 +330,7 @@ func (t *aiStreamTranslator) subscribe(bus *event.EventBus) {
 			if final != "" {
 				conversation += "\n\n" + final
 			}
-			if suggestions, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.req.Page, t.req.SearchFields, t.req.SearchBody, conversation); serr == nil && len(suggestions) > 0 {
+			if suggestions, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.req.Page, t.req.SearchFields, t.req.SearchBody, t.req.ItemData, conversation); serr == nil && len(suggestions) > 0 {
 				t.writeSuggestions(suggestions)
 			}
 		}
@@ -359,6 +362,9 @@ func buildAIMetadata(req *AIChatRequest) types.JSON {
 	}
 	if len(req.SearchBody) > 0 {
 		ctxObj["searchBody"] = req.SearchBody
+	}
+	if len(req.ItemData) > 0 {
+		ctxObj["itemdata"] = req.ItemData
 	}
 	b, _ := json.Marshal(ctxObj)
 	return types.JSON(b)

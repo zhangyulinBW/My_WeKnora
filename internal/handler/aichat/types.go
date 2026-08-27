@@ -21,13 +21,14 @@ type AIChatRequest struct {
 	Page           *AIPageContext    `json:"page,omitempty"`         // page the user is on
 	SearchFields   []AISearchField   `json:"searchFields,omitempty"` // searchable table headers (search_context only)
 	SearchBody     json.RawMessage   `json:"searchBody,omitempty"`   // current applied search state (for "what is being queried" questions)
+	ItemData       json.RawMessage   `json:"itemdata,omitempty"`     // pageType=singleData 场景下单条记录的原始 JSON
 	ConditionRules *AIConditionRules `json:"conditionRules,omitempty"`
 }
 
 // AIPageContext identifies the page/tab the user is interacting with.
 type AIPageContext struct {
 	TabID          string `json:"tabId"`
-	PageType       string `json:"pageType"` // e.g. "largeTable"
+	PageType       string `json:"pageType"` // e.g. "largeTable", "singleData"
 	ItemTypeID     string `json:"itemTypeId"`
 	ItemTypeName   string `json:"itemTypeName"`
 	ContextVersion string `json:"contextVersion"`

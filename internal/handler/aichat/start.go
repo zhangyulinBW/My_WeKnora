@@ -32,10 +32,12 @@ func (h *AIChatHandler) handleStart(
 	}
 
 	// 将数据作为本次会话的基础数据持久化。
+	// singleData 场景下 itemdata 是核心载荷，必须一并落库，否则后续轮次会丢失。
 	if payload, err := json.Marshal(map[string]interface{}{
 		"page":         req.Page,
 		"searchBody":   req.SearchBody,
 		"searchFields": req.SearchFields,
+		"itemdata":     req.ItemData,
 	}); err == nil {
 		_, _ = h.messageService.CreateMessage(ctx, &types.Message{
 			SessionID:   session.ID,
@@ -53,7 +55,7 @@ func (h *AIChatHandler) handleStart(
 		return
 	}
 
-	questions, err := h.generateRecommendQuestions(ctx, recommendAgent, req.Page, req.SearchFields, req.SearchBody, "")
+	questions, err := h.generateRecommendQuestions(ctx, recommendAgent, req.Page, req.SearchFields, req.SearchBody, req.ItemData, "")
 	if err != nil {
 		h.writeEvent(c, h.errorEvent(req, "failed to generate recommendations: "+err.Error()))
 		return
@@ -74,6 +76,7 @@ func (h *AIChatHandler) generateRecommendQuestions(
 	page *AIPageContext,
 	searchFields []AISearchField,
 	searchBody json.RawMessage,
+	itemData json.RawMessage,
 	conversation string,
 ) ([]AISuggestionItem, error) {
 	modelID := recommendAgent.Config.ModelID
@@ -85,7 +88,7 @@ func (h *AIChatHandler) generateRecommendQuestions(
 		return nil, err
 	}
 
-	user := "会话基础数据：\n" + formatStartData(page, searchFields, searchBody)
+	user := "会话基础数据：\n" + formatStartData(page, searchFields, searchBody, itemData)
 	if strings.TrimSpace(conversation) != "" {
 		user += "\n\n当前对话内容：\n" + conversation
 	}
@@ -129,7 +132,7 @@ func parseRecommendQuestions(content string) ([]AISuggestionItem, error) {
 
 // formatStartData 将 start 数据上下文渲染为可读的文本描述，
 // 以便推荐生成器基于此生成问题。
-func formatStartData(page *AIPageContext, searchFields []AISearchField, searchBody json.RawMessage) string {
+func formatStartData(page *AIPageContext, searchFields []AISearchField, searchBody json.RawMessage, itemData json.RawMessage) string {
 	var sb strings.Builder
 	if page != nil {
 		sb.WriteString("页面类型：" + page.PageType)
@@ -161,6 +164,12 @@ func formatStartData(page *AIPageContext, searchFields []AISearchField, searchBo
 	if len(searchBody) > 0 {
 		sb.WriteString("当前筛选：")
 		sb.WriteString(string(searchBody))
+		sb.WriteString("\n")
+	}
+	// singleData 场景：直接给出这条记录的原始 JSON，供推荐模型基于数据生成问题。
+	if len(itemData) > 0 {
+		sb.WriteString("单条数据：")
+		sb.WriteString(string(itemData))
 		sb.WriteString("\n")
 	}
 	return strings.TrimSpace(sb.String())

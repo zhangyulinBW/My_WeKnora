@@ -67,6 +67,15 @@ type AIChatConfig struct {
 	// RecommendAgentID is the custom agent used to generate candidate questions
 	// for the "start" flow. Empty falls back to AgentID.
 	RecommendAgentID string `yaml:"recommend_agent_id" json:"recommend_agent_id"`
+	// SearchAgentID is the custom agent used to generate structured search
+	// conditions for the search intent. Its system prompt defines the search
+	// rules. Empty falls back to AgentID.
+	SearchAgentID string `yaml:"search_agent_id" json:"search_agent_id"`
+	// SearchEnabled controls whether the search intent takes the "structured
+	// search draft" path. When true (and the page is a largeTable), the search
+	// intent generates structured search conditions; otherwise it falls back to
+	// normal streaming Q&A (e.g. singleData, where the answer lives in itemdata).
+	SearchEnabled bool `yaml:"search_enabled" json:"search_enabled"`
 }
 
 // IMConfig configures the IM integration service.

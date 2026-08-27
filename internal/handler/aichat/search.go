@@ -2,6 +2,7 @@ package aichat
 
 // 本文件实现搜索意图的两阶段流程：识别搜索任务 -> 若缺少搜索字段则向前端索取，
 // 否则生成搜索条件草稿、硬校验后发出 search_draft 或 need_clarification 事件。
+// 该流程只在「搜索开关开启 + 页面为 largeTable」时被触发（见 intent.go 的 shouldSearch）。
 
 import (
 	"context"
@@ -54,7 +55,7 @@ func (h *AIChatHandler) handleSearchMessage(
 	})
 
 	// 若 start 阶段已提供 searchFields，则直接生成条件（conditionRules 包含在智能体系统提示词中）。
-	page, searchFields, searchBody := h.loadStartContext(ctx, session.ID)
+	page, searchFields, searchBody, _ := h.loadStartContext(ctx, session.ID)
 	if len(searchFields) > 0 {
 		h.generateAndEmitSearchDraft(ctx, c, req, agent, page, searchFields, searchBody, nil)
 		return
@@ -112,6 +113,15 @@ func (h *AIChatHandler) generateAndEmitSearchDraft(
 	searchBody json.RawMessage,
 	rules *AIConditionRules,
 ) {
+	// 搜索条件生成使用专门的 search agent（其 system_prompt 定义搜索规则），
+	// 若未配置 ai_chat.search_agent_id 则回退到主智能体。
+	searchAgent, err := h.resolveSearchAgent(ctx)
+	if err != nil {
+		h.writeEvent(c, h.errorEvent(req, err.Error()))
+		return
+	}
+	agent = searchAgent
+
 	modelID := agent.Config.ModelID
 	if h.config != nil && h.config.AIChat != nil && h.config.AIChat.ModelID != "" {
 		modelID = h.config.AIChat.ModelID
@@ -160,7 +170,7 @@ func (h *AIChatHandler) generateAndEmitSearchDraft(
 	// 同时基于会话数据和查询生成推荐问题。
 	var suggestions []AISuggestionItem
 	if recommendAgent, rerr := h.resolveRecommendAgent(ctx); rerr == nil {
-		if s, serr := h.generateRecommendQuestions(ctx, recommendAgent, page, searchFields, searchBody, req.Message); serr == nil {
+		if s, serr := h.generateRecommendQuestions(ctx, recommendAgent, page, searchFields, searchBody, req.ItemData, req.Message); serr == nil {
 			suggestions = s
 		}
 	}
@@ -180,15 +190,15 @@ func (h *AIChatHandler) generateAndEmitSearchDraft(
 	})
 }
 
-// loadStartContext 返回会话中最近一条 "start" 消息存储的 page/searchFields/searchBody，
+// loadStartContext 返回会话中最近一条 "start" 消息存储的 page/searchFields/searchBody/itemData，
 // 以便搜索流程复用，无需再次与前端交互。
 func (h *AIChatHandler) loadStartContext(
 	ctx context.Context,
 	sessionID string,
-) (*AIPageContext, []AISearchField, json.RawMessage) {
+) (*AIPageContext, []AISearchField, json.RawMessage, json.RawMessage) {
 	msgs, err := h.messageService.GetRecentMessagesBySession(ctx, sessionID, 50)
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	// 消息按时间升序；从后往前扫描最新的 "start" 消息。
 	for i := len(msgs) - 1; i >= 0; i-- {
@@ -200,16 +210,19 @@ func (h *AIChatHandler) loadStartContext(
 			Page         *AIPageContext  `json:"page"`
 			SearchBody   json.RawMessage `json:"searchBody"`
 			SearchFields []AISearchField `json:"searchFields"`
+			ItemData     json.RawMessage `json:"itemdata"`
 		}
 		if err := json.Unmarshal([]byte(m.Content), &payload); err != nil {
 			continue
 		}
-		return payload.Page, payload.SearchFields, payload.SearchBody
+		return payload.Page, payload.SearchFields, payload.SearchBody, payload.ItemData
 	}
-	return nil, nil, nil
+	return nil, nil, nil, nil
 }
 
 // buildSearchPrompt 组装条件生成所需的用户侧上下文。
+// 搜索规则（字段类型→操作符、操作符语义、输出格式等）由专门的 search agent
+// 的 system_prompt 定义（见 resolveSearchAgent），这里只提供上下文与任务标记。
 func buildSearchPrompt(
 	message string,
 	page *AIPageContext,

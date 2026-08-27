@@ -24,7 +24,8 @@ import (
 const defaultAIAgentID = "6a188aae-b3fb-45c7-b59b-1d0a4620a113"
 
 // AIChatHandler 实现自定义 /api/v1/ai/chat 协议。
-// 它不承担具体意图的处理逻辑，而是通过 intents 注册表把请求分发到对应的意图 handler。
+// 它是协议入口 + 智能体解析/会话/SSE 输出等基础设施；意图分类与分发见 intent.go，
+// 搜索流程见 search.go，Agent 执行见 agent_turn.go，start 流程见 start.go。
 type AIChatHandler struct {
 	sessionService     interfaces.SessionService
 	messageService     interfaces.MessageService
@@ -36,13 +37,12 @@ type AIChatHandler struct {
 	// intents 是意图注册表：意图分类结果 -> 对应处理逻辑（见 intent.go）。
 	intents *intentRegistry
 
+	// mu 保护 actions 的并发读写；actions 记录搜索任务待处理状态（见 search.go）。
 	mu      sync.Mutex
 	actions map[string]*pendingAction
 }
 
 // NewAIChatHandler 创建 AI 聊天处理器。
-// 在这里完成意图注册表的装配：当前注册 search（搜索草稿）与 normal（智能体问答）两个意图，
-// 其中 normal 同时作为未识别意图的回退。新增意图只需在 intent.go 增加实现并在此注册。
 func NewAIChatHandler(
 	sessionService interfaces.SessionService,
 	messageService interfaces.MessageService,
@@ -69,7 +69,7 @@ func NewAIChatHandler(
 
 // Chat godoc
 // @Summary      AI 自定义聊天
-// @Description  自定义 AI 接口协议（OPLink），支持普通问答与大表格搜索任务，SSE 流式响应
+// @Description  自定义 AI 接口协议（OPLink），SSE 流式响应
 // @Tags         AI
 // @Accept       json
 // @Produce      text/event-stream
@@ -105,7 +105,8 @@ func (h *AIChatHandler) Chat(c *gin.Context) {
 		return
 	}
 
-	// 按请求 type 分发到三种协议阶段；message 阶段内部再按意图进一步分发。
+	// 按请求 type 分发到协议阶段：start 建立会话上下文，message 进入意图分析 + 分发，
+	// search_context 是搜索流程的第二阶段（前端回传搜索字段）。
 	switch req.Type {
 	case AIRequestTypeStart:
 		h.handleStart(ctx, c, &req, tenantID)
@@ -142,6 +143,20 @@ func (h *AIChatHandler) resolveIntentAgent(ctx context.Context) (*types.CustomAg
 		agent, err := h.customAgentService.GetAgentByID(ctx, h.config.AIChat.IntentAgentID)
 		if err != nil || agent == nil {
 			return nil, fmt.Errorf("intent agent %s not found", h.config.AIChat.IntentAgentID)
+		}
+		return agent, nil
+	}
+	return h.resolveAgent(ctx)
+}
+
+// resolveSearchAgent 加载用于搜索条件生成的智能体。
+// 其 ID 来自 ai_chat.search_agent_id（其 system_prompt 定义搜索规则），
+// 若未配置则回退到主智能体。
+func (h *AIChatHandler) resolveSearchAgent(ctx context.Context) (*types.CustomAgent, error) {
+	if h.config != nil && h.config.AIChat != nil && h.config.AIChat.SearchAgentID != "" {
+		agent, err := h.customAgentService.GetAgentByID(ctx, h.config.AIChat.SearchAgentID)
+		if err != nil || agent == nil {
+			return nil, fmt.Errorf("search agent %s not found", h.config.AIChat.SearchAgentID)
 		}
 		return agent, nil
 	}

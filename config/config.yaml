@@ -116,9 +116,13 @@ tenant:
 ai_chat:
   # 使用的智能体 ID（其 system_prompt 驱动该接口）；留空则用代码内置默认值
   agent_id: "6a188aae-b3fb-45c7-b59b-1d0a4620a113"
-  # 可选：覆盖 agent 自己配置的对话模型；留空则用 agent 的模型
-  model_id: "bc412a57-c5b3-46fe-b045-20314dccfb36"
+  # 可选：覆盖 agent 自己配置的对话模型；留空则用 agent 的模型(c108a7a9-2f09-4399-ad61-9e90fb6f9ce5 GLM)
+  model_id: "c108a7a9-2f09-4399-ad61-9e90fb6f9ce5"
   # 意图分析智能体 ID（custom_agents 表里已建立的意图识别智能体）；留空则回退到 agent_id
   intent_agent_id: "751a5a48-e861-430c-9069-7a92681ee2af"
   # 推荐问题智能体 ID（custom_agents 表里已建立的推荐问题智能体）；留空则回退到 agent_id
   recommend_agent_id: "3598cc20-d892-47c0-a0a8-34f5cec66997"
+  # 搜索条件生成智能体 ID（其 system_prompt 定义搜索规则）；留空则回退到 agent_id
+  search_agent_id: "f8058b6c-cdbc-4745-b683-99a5ff5dffde"
+  # 搜索开关：true 时 largeTable 页面走结构化搜索条件生成；false 时全部回退流式问答
+  search_enabled: true
