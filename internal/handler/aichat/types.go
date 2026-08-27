@@ -1,4 +1,8 @@
-package handler
+package aichat
+
+// 本文件定义 ai_chat 接口的协议类型与常量。
+// 这些类型对应 /api/v1/ai/chat 的请求体与 SSE 事件负载（协议版本 1.0），
+// 是前后端契约，字段的 json tag 不能随意改动。
 
 import "encoding/json"
 

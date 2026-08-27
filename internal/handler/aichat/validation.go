@@ -1,4 +1,8 @@
-package handler
+package aichat
+
+// 本文件负责校验模型生成的搜索条件是否满足前端提供的 searchFields 与
+// conditionRules 约束。这是「不能只依赖提示词」的硬校验：提示词负责引导，
+// 这里负责拒绝任何违反机器规则的输出，返回无法安全映射的条件片段。
 
 import "strings"
 
