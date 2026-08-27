@@ -101,6 +101,38 @@ func TestResolveEffectiveConfigRejectsIncompleteCube(t *testing.T) {
 	require.Contains(t, err.Error(), "template_id")
 }
 
+func TestResolveEffectiveConfigCopiesCubeDNSServers(t *testing.T) {
+	got, err := ResolveEffectiveConfig(&types.TenantSandboxConfig{
+		SandboxType:           "cube",
+		AllowPrivateEndpoints: true,
+		Cube: &types.CubeSandboxConfig{
+			APIKey: "cube-key", APIURL: "https://203.0.113.20",
+			ProxyURL: "https://203.0.113.21", SandboxDomain: "cube.example",
+			TemplateID: "cube-template",
+			DNSServers: []string{" 8.8.8.8 ", "8.8.8.8", "1.1.1.1"},
+		},
+	}, globalTestConfig())
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"8.8.8.8", "1.1.1.1"}, got.CubeDNSServers)
+}
+
+func TestResolveEffectiveConfigRejectsInvalidCubeDNS(t *testing.T) {
+	_, err := ResolveEffectiveConfig(&types.TenantSandboxConfig{
+		SandboxType:           "cube",
+		AllowPrivateEndpoints: true,
+		Cube: &types.CubeSandboxConfig{
+			APIKey: "cube-key", APIURL: "https://203.0.113.20",
+			ProxyURL: "https://203.0.113.21", SandboxDomain: "cube.example",
+			TemplateID: "cube-template",
+			DNSServers: []string{"dns.google"},
+		},
+	}, globalTestConfig())
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "dns.google")
+}
+
 func TestResolveEffectiveConfigRejectsIncompleteE2B(t *testing.T) {
 	_, err := ResolveEffectiveConfig(&types.TenantSandboxConfig{
 		SandboxType: "e2b",
@@ -271,7 +303,7 @@ func TestEffectiveTemplateIDPerProvider(t *testing.T) {
 	require.Equal(t, "cube-tpl", EffectiveTemplateID(&Config{
 		Type: SandboxTypeCube, E2BTemplate: "e2b-tpl", CubeTemplate: "cube-tpl",
 	}))
-	require.Empty(t, EffectiveTemplateID(&Config{Type: SandboxTypeLocal}))
+	require.Empty(t, EffectiveTemplateID(&Config{Type: SandboxTypeDisabled}))
 	require.Empty(t, EffectiveTemplateID(nil))
 }
 
@@ -368,6 +400,117 @@ func TestResolveEffectiveConfigUsesSkillSnapshotAsE2BTemplate(t *testing.T) {
 	})
 }
 
+func TestResolveEffectiveConfigUsesSkillSnapshotAsDockerImage(t *testing.T) {
+	global := DefaultConfig()
+	base := &types.TenantSandboxConfig{
+		SandboxType: "docker",
+		Docker: &types.DockerSandboxConfig{
+			Image: "weknora/sandbox:base",
+			Host:  "unix:///var/run/docker.sock",
+		},
+	}
+	fp := SkillImageFingerprint("docker", "", "unix:///var/run/docker.sock")
+
+	t.Run("usable snapshot overrides the base image", func(t *testing.T) {
+		cfg := *base
+		cfg.Docker = &types.DockerSandboxConfig{
+			Image: "weknora/sandbox:base", Host: "unix:///var/run/docker.sock",
+		}
+		cfg.SkillImage = &types.SkillImageConfig{
+			SnapshotID: "weknora-skill/weknora-sk-cfg1-g1", OwnerFingerprint: fp,
+		}
+
+		eff, err := ResolveEffectiveConfig(&cfg, global)
+
+		require.NoError(t, err)
+		require.Equal(t, "weknora-skill/weknora-sk-cfg1-g1", eff.DockerImage)
+	})
+
+	t.Run("fingerprint mismatch falls back to the base image", func(t *testing.T) {
+		cfg := *base
+		cfg.Docker = &types.DockerSandboxConfig{
+			Image: "weknora/sandbox:base", Host: "unix:///var/run/docker.sock",
+		}
+		cfg.SkillImage = &types.SkillImageConfig{
+			SnapshotID: "weknora-skill/weknora-sk-cfg1-g1", OwnerFingerprint: "another-daemon",
+		}
+
+		eff, err := ResolveEffectiveConfig(&cfg, global)
+
+		require.NoError(t, err)
+		require.Equal(t, "weknora/sandbox:base", eff.DockerImage,
+			"a snapshot from another daemon is invisible; the session must still boot")
+	})
+
+	// A blank host follows the environment, so binding the fingerprint to the
+	// resolved daemon would make "switch docker context" indistinguishable
+	// from "rotate the credentials": sessions would silently lose every
+	// skill, installs would be refused, and the snapshot prune would skip the
+	// config forever. The images are on the same disk either way.
+	t.Run("blank host survives a change of local daemon", func(t *testing.T) {
+		newConfig := func() *types.TenantSandboxConfig {
+			return &types.TenantSandboxConfig{
+				SandboxType: "docker",
+				Docker:      &types.DockerSandboxConfig{Image: "weknora/sandbox:base"},
+				SkillImage: &types.SkillImageConfig{
+					SnapshotID: "weknora-skill/weknora-sk-cfg1-g1",
+					OwnerFingerprint: SkillOwnerFingerprint(&types.TenantSandboxConfig{
+						SandboxType: "docker",
+						Docker:      &types.DockerSandboxConfig{Image: "weknora/sandbox:base"},
+					}),
+				},
+			}
+		}
+
+		for _, host := range []string{
+			"unix:///tmp/colima.sock",
+			"unix:///tmp/orbstack.sock",
+		} {
+			t.Setenv("DOCKER_HOST", host)
+			cfg := newConfig()
+
+			eff, err := ResolveEffectiveConfig(cfg, global)
+
+			require.NoError(t, err)
+			require.Equal(t, "weknora-skill/weknora-sk-cfg1-g1", eff.DockerImage,
+				"DOCKER_HOST=%s must not retire the config's skill image", host)
+			require.True(t, SkillImageActive(cfg))
+		}
+	})
+
+	// An explicit host is still part of the identity: only an admin editing
+	// the config can change it, and it may well be another machine.
+	t.Run("an explicit host change retires the image", func(t *testing.T) {
+		cfg := *base
+		cfg.Docker = &types.DockerSandboxConfig{
+			Image: "weknora/sandbox:base", Host: "tcp://198.51.100.10:2376",
+			TLSCertPath: "/certs",
+		}
+		cfg.SkillImage = &types.SkillImageConfig{
+			SnapshotID: "weknora-skill/weknora-sk-cfg1-g1", OwnerFingerprint: fp,
+		}
+
+		eff, err := ResolveEffectiveConfig(&cfg, global)
+
+		require.NoError(t, err)
+		require.Equal(t, "weknora/sandbox:base", eff.DockerImage)
+	})
+}
+
+func TestSkillOwnerFingerprintForDocker(t *testing.T) {
+	require.Empty(t, SkillOwnerFingerprint(&types.TenantSandboxConfig{SandboxType: "docker"}),
+		"a docker type with no daemon block cannot own a snapshot")
+	require.Empty(t, SkillOwnerFingerprint(&types.TenantSandboxConfig{SandboxType: "disabled"}))
+
+	got := SkillOwnerFingerprint(&types.TenantSandboxConfig{
+		SandboxType: "docker",
+		Docker: &types.DockerSandboxConfig{
+			Image: "img", Host: "unix:///var/run/docker.sock", TLSCertPath: "/certs",
+		},
+	})
+	require.Equal(t, SkillImageFingerprint("docker", "/certs", "unix:///var/run/docker.sock"), got)
+}
+
 // SkillImageActive is what the agent side asks before telling a model about an
 // installed skill, so it must agree with the template ResolveEffectiveConfig
 // actually boots. Any disagreement means either skills that are announced and
@@ -384,18 +527,6 @@ func TestSkillImageActiveAgreesWithTheResolvedTemplate(t *testing.T) {
 		}
 	}
 	fp := SkillImageFingerprint("cube", "key-1", "https://203.0.113.10")
-
-	dockerFP := SkillImageFingerprint("docker", "/etc/certs/client.pem", "unix:///var/run/docker.sock")
-	docker := func() *types.TenantSandboxConfig {
-		return &types.TenantSandboxConfig{
-			SandboxType: "docker",
-			Docker: &types.DockerSandboxConfig{
-				Image:       "wechatopenai/weknora-sandbox:latest",
-				Host:        "unix:///var/run/docker.sock",
-				TLSCertPath: "/etc/certs/client.pem",
-			},
-		}
-	}
 
 	cases := map[string]struct {
 		config *types.TenantSandboxConfig
@@ -431,45 +562,30 @@ func TestSkillImageActiveAgreesWithTheResolvedTemplate(t *testing.T) {
 			config: cube(),
 			want:   false,
 		},
-		"docker snapshot owned by the live daemon": {
-			config: func() *types.TenantSandboxConfig {
-				cfg := docker()
-				cfg.SkillImage = &types.SkillImageConfig{SnapshotID: "weknora-skill:c1", OwnerFingerprint: dockerFP}
-				return cfg
-			}(),
-			want: true,
-		},
-		"docker snapshot from another daemon": {
-			config: func() *types.TenantSandboxConfig {
-				cfg := docker()
-				cfg.SkillImage = &types.SkillImageConfig{
-					SnapshotID: "weknora-skill:c1", OwnerFingerprint: "another-daemon",
-				}
-				return cfg
-			}(),
-			want: false,
-		},
-		"docker snapshot with no recorded owner": {
-			config: func() *types.TenantSandboxConfig {
-				cfg := docker()
-				cfg.SkillImage = &types.SkillImageConfig{SnapshotID: "weknora-skill:c1"}
-				return cfg
-			}(),
-			want: false,
-		},
-		"docker with no snapshot yet": {
-			config: docker(),
-			want:   false,
-		},
-		"docker with no recorded daemon identity": {
+		"backend that cannot snapshot": {
 			config: &types.TenantSandboxConfig{
-				SandboxType: "docker",
-				Docker:      &types.DockerSandboxConfig{Image: "wechatopenai/weknora-sandbox:latest"},
+				SandboxType: "disabled",
 				SkillImage: &types.SkillImageConfig{
-					SnapshotID: "weknora-skill:c1", OwnerFingerprint: dockerFP,
+					SnapshotID: "snap-1", OwnerFingerprint: fp,
 				},
 			},
 			want: false,
+		},
+		"docker snapshot owned by the live daemon": {
+			config: &types.TenantSandboxConfig{
+				SandboxType: "docker",
+				Docker: &types.DockerSandboxConfig{
+					Image: "weknora/sandbox:base",
+					Host:  "unix:///var/run/docker.sock",
+				},
+				SkillImage: &types.SkillImageConfig{
+					SnapshotID: "weknora-skill/weknora-sk-cfg1-g1",
+					OwnerFingerprint: SkillImageFingerprint(
+						"docker", "", "unix:///var/run/docker.sock",
+					),
+				},
+			},
+			want: true,
 		},
 	}
 

@@ -172,14 +172,17 @@ func (c *CubeRemoteClient) ListTemplates(ctx context.Context) ([]RemoteTemplate,
 			}
 		}
 		result = append(result, RemoteTemplate{
-			ID:        item.TemplateID,
-			Name:      name,
-			Status:    item.Status,
-			Version:   item.Version,
-			Image:     item.ImageInfo,
-			CreatedAt: item.CreatedAt,
-			Standard:  standard,
-			Error:     strings.TrimSpace(item.LastError),
+			ID:                  item.TemplateID,
+			Name:                name,
+			Status:              normalizeCubeTemplateStatus(item.Status),
+			Version:             item.Version,
+			Image:               item.ImageInfo,
+			CreatedAt:           item.CreatedAt,
+			Standard:            standard,
+			Error:               strings.TrimSpace(item.LastError),
+			InstanceType:        item.InstanceType,
+			NetworkType:         item.NetworkType,
+			AllowInternetAccess: item.AllowInternetAccess,
 		})
 	}
 	return result, nil
@@ -217,8 +220,9 @@ func cubeTemplateIsSnapshot(templateID string, snapshotIDs map[string]struct{}) 
 
 // EnsureStandardTemplate makes the cluster hold exactly one WeKnora template.
 // A healthy or still-building one is returned as is; a failed one is rebuilt in
-// place, because building a second template would leave the failed one behind
-// and repeat on every refresh.
+// place. If CubeMaster refuses the redo, the failed card is returned as-is;
+// ReplaceStandardTemplate (the settings-page "delete and rebuild" action) is
+// what actually replaces it.
 func (c *CubeRemoteClient) EnsureStandardTemplate(ctx context.Context) (*RemoteTemplate, error) {
 	items, err := c.ListTemplates(ctx)
 	if err != nil {
@@ -239,21 +243,71 @@ func (c *CubeRemoteClient) EnsureStandardTemplate(ctx context.Context) (*RemoteT
 	if failed != nil {
 		return c.rebuildStandardTemplate(ctx, *failed)
 	}
-	job, err := c.client.BuildTemplate(ctx, cubesandbox.BuildTemplateOptions{
-		Image: DefaultCubeTemplateImage,
-		Extra: cubeStandardTemplateSpec(),
-	})
+	return c.buildStandardTemplate(ctx)
+}
+
+// ReplaceStandardTemplate applies the current spec to the cluster's WeKnora
+// template. Cube bakes DNS into the template, so a READY template only picks
+// up a settings change via rebuild (preferred: same ID) or a replacement.
+//
+// The previous template is left in the catalog. Deleting it here would race
+// persistSpawnTemplateID: sessions would target a missing ID for the rest of
+// the build, and a persist failure would leave every config pointing at a
+// template that no longer exists. Callers persist a READY replacement first,
+// then DeleteSupersededStandardTemplates.
+func (c *CubeRemoteClient) ReplaceStandardTemplate(ctx context.Context) (*RemoteTemplate, error) {
+	items, err := c.ListTemplates(ctx)
 	if err != nil {
-		return nil, normalizeCubeError("EnsureStandardTemplate", err)
+		return nil, err
 	}
-	return &RemoteTemplate{
-		ID:       job.TemplateID,
-		Name:     StandardTemplateName,
-		Status:   job.Status,
-		Image:    DefaultCubeTemplateImage,
-		Standard: true,
-		Error:    strings.TrimSpace(job.ErrorMessage),
-	}, nil
+	var current *RemoteTemplate
+	for i := range items {
+		if !items[i].Standard || strings.TrimSpace(items[i].ID) == "" {
+			continue
+		}
+		item := items[i]
+		if current == nil {
+			current = &item
+			continue
+		}
+		if IsTemplateBuildFailed(current.Status) && !IsTemplateBuildFailed(item.Status) {
+			current = &item
+		}
+	}
+	if current != nil {
+		rebuilt, err := c.tryRebuildStandardTemplate(ctx, *current)
+		if err == nil {
+			return rebuilt, nil
+		}
+		logger.Warnf(ctx,
+			"cube in-place rebuild of standard template %s failed: %v; building a replacement",
+			current.ID, err)
+	}
+	return c.buildStandardTemplate(ctx)
+}
+
+// DeleteSupersededStandardTemplates drops WeKnora templates other than keepID.
+func (c *CubeRemoteClient) DeleteSupersededStandardTemplates(ctx context.Context, keepID string) error {
+	keepID = strings.TrimSpace(keepID)
+	if keepID == "" {
+		return cubeInvalidRequest("DeleteSupersededStandardTemplates", "template ID is required", nil)
+	}
+	items, err := c.ListTemplates(ctx)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if !item.Standard || strings.TrimSpace(item.ID) == "" || item.ID == keepID {
+			continue
+		}
+		logger.Infof(ctx, "cube deleting superseded standard template %s", item.ID)
+		if err := c.client.DeleteTemplate(ctx, item.ID); err != nil {
+			if normalized := normalizeCubeError("DeleteTemplate", err); !IsRemoteNotFound(normalized) {
+				logger.Warnf(ctx, "cube delete of replaced template %s failed: %v", item.ID, err)
+			}
+		}
+	}
+	return nil
 }
 
 // rebuildStandardTemplate restarts the build of a template that already exists,
@@ -262,14 +316,31 @@ func (c *CubeRemoteClient) rebuildStandardTemplate(
 	ctx context.Context,
 	current RemoteTemplate,
 ) (*RemoteTemplate, error) {
-	logger.Infof(ctx, "cube standard template %s failed (%s), rebuilding in place",
-		current.ID, current.Status)
-	job, err := c.client.RebuildTemplate(ctx, current.ID, cubeStandardTemplateSpec())
+	rebuilt, err := c.tryRebuildStandardTemplate(ctx, current)
 	if err != nil {
-		return nil, normalizeCubeError("EnsureStandardTemplate", err)
+		// The failed template is still in the catalog; returning it lets the
+		// settings page show lastError instead of 500ing the whole query.
+		logger.Warnf(ctx, "cube rebuild of standard template %s failed: %v", current.ID, err)
+		return &current, nil
+	}
+	return rebuilt, nil
+}
+
+func (c *CubeRemoteClient) tryRebuildStandardTemplate(
+	ctx context.Context,
+	current RemoteTemplate,
+) (*RemoteTemplate, error) {
+	logger.Infof(ctx, "cube rebuilding standard template %s in place (%s)",
+		current.ID, current.Status)
+	job, err := c.client.RebuildTemplate(ctx, current.ID, c.standardTemplateSpec())
+	if err != nil {
+		return nil, normalizeCubeError("RebuildTemplate", err)
 	}
 	rebuilt := current
-	rebuilt.Status = job.Status
+	rebuilt.Status = normalizeCubeTemplateStatus(job.Status)
+	if rebuilt.Status == "" {
+		rebuilt.Status = "building"
+	}
 	rebuilt.Error = strings.TrimSpace(job.ErrorMessage)
 	if strings.TrimSpace(job.TemplateID) != "" {
 		rebuilt.ID = job.TemplateID
@@ -277,12 +348,68 @@ func (c *CubeRemoteClient) rebuildStandardTemplate(
 	return &rebuilt, nil
 }
 
+func (c *CubeRemoteClient) buildStandardTemplate(ctx context.Context) (*RemoteTemplate, error) {
+	job, err := c.client.BuildTemplate(ctx, cubesandbox.BuildTemplateOptions{
+		Image: DefaultCubeTemplateImage,
+		Extra: c.standardTemplateSpec(),
+	})
+	if err != nil {
+		// Creating is best-effort from the settings query: a 500 here would
+		// hide the catalog, including any other templates the admin could pick.
+		logger.Warnf(ctx, "cube standard template create failed: %v", err)
+		return &RemoteTemplate{
+			Name:     StandardTemplateName,
+			Status:   "failed",
+			Image:    DefaultCubeTemplateImage,
+			Standard: true,
+			Error:    err.Error(),
+		}, nil
+	}
+	status := normalizeCubeTemplateStatus(job.Status)
+	if status == "" {
+		status = "building"
+	}
+	return &RemoteTemplate{
+		ID:       job.TemplateID,
+		Name:     StandardTemplateName,
+		Status:   status,
+		Image:    DefaultCubeTemplateImage,
+		Standard: true,
+		Error:    strings.TrimSpace(job.ErrorMessage),
+	}, nil
+}
+
+// normalizeCubeTemplateStatus projects Cube's catalog verbs onto the same
+// ready/building/failed set the settings UI and the other backends already use.
+// Cube reports an in-progress create-from-image as RUNNING, which would
+// otherwise render as "unknown" and stop the wizard from polling.
+func normalizeCubeTemplateStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "ready", "available", "complete", "completed", "success", "succeeded":
+		return "ready"
+	case "running", "building", "waiting", "pending", "queued", "processing":
+		return "building"
+	case "failed", "failure", "error", "cancelled", "canceled":
+		return "failed"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
+	}
+}
+
+func (c *CubeRemoteClient) standardTemplateSpec() map[string]any {
+	var dns []string
+	if c != nil && c.config != nil {
+		dns, _ = NormalizeCubeDNSServers(c.config.CubeDNSServers)
+	}
+	return cubeStandardTemplateSpec(dns)
+}
+
 // cubeStandardTemplateSpec is the single definition of how the WeKnora template
 // is built. Both the first build and every rebuild send it verbatim — the
 // rebuild endpoint takes a raw payload rather than BuildTemplateOptions, and
 // two hand-kept copies of the spec would eventually disagree.
-func cubeStandardTemplateSpec() map[string]any {
-	return map[string]any{
+func cubeStandardTemplateSpec(dns []string) map[string]any {
+	spec := map[string]any{
 		"image":             DefaultCubeTemplateImage,
 		"name":              StandardTemplateName,
 		"writableLayerSize": "1G",
@@ -291,7 +418,14 @@ func cubeStandardTemplateSpec() map[string]any {
 		// this image must ship envd visible at the call site.
 		"probePort": uint16(CubeEnvdPort),
 		"probePath": CubeEnvdHealthPath,
+		// Without this the template's "公网访问" stays empty and sandboxes
+		// boot with no outbound route, even if Create sets the same flag.
+		"allowInternetAccess": true,
 	}
+	if len(dns) > 0 {
+		spec["dns"] = append([]string(nil), dns...)
+	}
+	return spec
 }
 
 func (c *CubeRemoteClient) Create(
@@ -966,7 +1100,7 @@ func normalizeCubeError(op string, err error) error {
 	case errors.Is(err, cubesandbox.ErrAuthentication):
 		kind = RemoteErrorKindAuthentication
 	case errors.Is(err, cubesandbox.ErrTemplateNotFound):
-		if op == "DeleteSnapshot" {
+		if op == "DeleteSnapshot" || op == "DeleteTemplate" {
 			kind = RemoteErrorKindNotFound
 		} else {
 			kind = RemoteErrorKindInvalidRequest
@@ -1068,5 +1202,6 @@ func cubeCredentialPresence(value string) string {
 var (
 	_ RemoteSandboxClient   = (*CubeRemoteClient)(nil)
 	_ RemoteSnapshotManager = (*CubeRemoteClient)(nil)
+	_ RemoteTemplateCatalog = (*CubeRemoteClient)(nil)
 	_ RemoteSandboxHandle   = (*cubeRemoteHandle)(nil)
 )

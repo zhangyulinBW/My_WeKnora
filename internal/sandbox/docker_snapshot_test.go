@@ -2,143 +2,188 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"testing"
 
-	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/image"
 	"github.com/stretchr/testify/require"
 )
 
-func TestDockerSnapshotTagAndNormalization(t *testing.T) {
-	require.Equal(t, "weknora-skill:abc123", dockerSnapshotTag("abc123"))
-	require.True(t, isDockerSnapshotImage("weknora-skill:abc123"))
-	require.True(t, isDockerSnapshotImage("docker.io/library/weknora-skill:abc123"))
-	require.False(t, isDockerSnapshotImage("wechatopenai/weknora-sandbox:latest"))
-	require.False(t, isDockerSnapshotImage("weknora-skill-other:abc123"))
-
-	require.Equal(t, "weknora-skill:abc123", mustSnapshotID(t, "weknora-skill:abc123"))
-	require.Equal(t, "weknora-skill:abc123",
-		mustSnapshotID(t, "docker.io/library/weknora-skill:abc123"))
-	require.False(t, snapshotIDOK(t, "<none>:<none>"))
-	require.False(t, snapshotIDOK(t, "weknora-skill-other:abc123"))
-}
-
-func mustSnapshotID(t *testing.T, raw string) string {
-	t.Helper()
-	id, ok := dockerSnapshotIDFromTag(raw)
-	require.True(t, ok, "expected a snapshot ID from %q", raw)
-	return id
-}
-
-func snapshotIDOK(t *testing.T, raw string) bool {
-	t.Helper()
-	_, ok := dockerSnapshotIDFromTag(raw)
-	return ok
-}
-
-func TestDockerCreateSnapshotCommitsWithTagAndLabels(t *testing.T) {
+func TestDockerCreateSnapshotTagsASkillImage(t *testing.T) {
 	engine := newFakeDockerEngine()
 	docker := newTestDockerClient(t, engine)
 
-	ref, err := docker.CreateSnapshot(context.Background(), "container-1", "my-skill-image")
+	ref, err := docker.CreateSnapshot(context.Background(), "container-1", "weknora-sk-cfg1-g1")
 	require.NoError(t, err)
-	require.Equal(t, "weknora-skill:container-1", ref.ID)
-
+	require.Equal(t, "weknora-skill/weknora-sk-cfg1-g1", ref.ID)
 	require.Len(t, engine.committed, 1)
-	committed := engine.committed[0]
-	require.Equal(t, "weknora-skill:container-1", committed.Reference)
-	require.Equal(t, "my-skill-image", committed.Comment)
-	require.Contains(t, committed.Changes, "LABEL com.weknora.sandbox.snapshot=true")
-	require.Contains(t, committed.Changes,
-		"LABEL com.weknora.sandbox.snapshot.sandbox=container-1")
-	require.Contains(t, committed.Changes,
-		`LABEL com.weknora.sandbox.snapshot.name="my-skill-image"`)
+	require.Equal(t, "weknora-skill/weknora-sk-cfg1-g1", engine.committed[0].Reference)
+	require.False(t, engine.committed[0].NoPause,
+		"the Engine must pause the container for the duration of the commit")
+	require.Contains(t, engine.committed[0].Changes, "LABEL "+dockerSkillSnapshotLabel+"=true")
+	require.Contains(t, engine.committed[0].Changes,
+		"LABEL "+dockerSkillSnapshotSourceLabel+"=container-1")
 }
 
-func TestDockerCreateSnapshotRejectsEmptySandbox(t *testing.T) {
-	engine := newFakeDockerEngine()
-	docker := newTestDockerClient(t, engine)
-
-	_, err := docker.CreateSnapshot(context.Background(), "  ", "")
-	require.Error(t, err)
-	require.Empty(t, engine.committed, "no commit should reach the daemon")
+func TestDockerCreateSnapshotRejectsEmptySandboxID(t *testing.T) {
+	_, err := newTestDockerClient(t, newFakeDockerEngine()).
+		CreateSnapshot(context.Background(), "  ", "n")
+	require.True(t, IsRemoteInvalidRequest(err))
 }
 
-func TestDockerDeleteSnapshotIsIdempotent(t *testing.T) {
-	engine := newFakeDockerEngine()
-	docker := newTestDockerClient(t, engine)
-
-	require.NoError(t, docker.DeleteSnapshot(context.Background(), "weknora-skill:container-1"))
-	require.Equal(t, []string{"weknora-skill:container-1"}, engine.removedImages)
-
-	engine.imageRemoveErr = cerrdefs.ErrNotFound.WithMessage("no such image")
-	require.NoError(t, docker.DeleteSnapshot(context.Background(), "weknora-skill:container-1"),
-		"a missing snapshot is not an error, so the prune path stays retry-safe")
-
-	engine.imageRemoveErr = nil
-	engine.removedImages = nil
-	require.Error(t, docker.DeleteSnapshot(context.Background(), ""))
-	require.Empty(t, engine.removedImages)
-}
-
-func TestDockerListSnapshotsFiltersAndNormalizes(t *testing.T) {
-	engine := newFakeDockerEngine()
-	engine.images = []image.Summary{
-		{RepoTags: []string{"weknora-skill:container-1"}},
-		{RepoTags: []string{"docker.io/library/weknora-skill:container-2"}},
-		{RepoTags: []string{"wechatopenai/weknora-sandbox:latest"}},
-		{RepoTags: []string{"weknora-skill-other:container-3"}},
-		{RepoTags: []string{"<none>:<none>"}},
-	}
-	docker := newTestDockerClient(t, engine)
-
-	refs, err := docker.ListSnapshots(context.Background(), "")
+func TestDockerDeleteSnapshotTreatsMissingAsSuccess(t *testing.T) {
+	err := newTestDockerClient(t, newFakeDockerEngine()).
+		DeleteSnapshot(context.Background(), "weknora-skill/missing")
 	require.NoError(t, err)
-	require.Len(t, refs, 2)
-	require.Equal(t, "weknora-skill:container-1", refs[0].ID)
-	require.Equal(t, "weknora-skill:container-2", refs[1].ID)
-
-	require.Len(t, engine.imageListFilters, 1)
-	require.True(t, engine.imageListFilters[0]["label"]["com.weknora.sandbox.snapshot=true"])
 }
 
-func TestDockerListSnapshotsScopesToSandbox(t *testing.T) {
+func TestDockerDeleteSnapshotRejectsEmptySnapshotID(t *testing.T) {
+	err := newTestDockerClient(t, newFakeDockerEngine()).
+		DeleteSnapshot(context.Background(), "  ")
+	require.True(t, IsRemoteInvalidRequest(err))
+}
+
+func TestDockerSnapshotRoundTripAndListFilter(t *testing.T) {
+	engine := newFakeDockerEngine()
+	docker := newTestDockerClient(t, engine)
+	ctx := context.Background()
+
+	first, err := docker.CreateSnapshot(ctx, "container-a", "weknora-sk-a-g1")
+	require.NoError(t, err)
+	second, err := docker.CreateSnapshot(ctx, "container-a", "weknora-sk-a-g2")
+	require.NoError(t, err)
+	_, err = docker.CreateSnapshot(ctx, "container-b", "weknora-sk-b-g1")
+	require.NoError(t, err)
+
+	all, err := docker.ListSnapshots(ctx, "")
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+
+	fromA, err := docker.ListSnapshots(ctx, "container-a")
+	require.NoError(t, err)
+	require.Len(t, fromA, 2)
+	ids := map[string]struct{}{fromA[0].ID: {}, fromA[1].ID: {}}
+	require.Contains(t, ids, first.ID)
+	require.Contains(t, ids, second.ID)
+
+	require.NoError(t, docker.DeleteSnapshot(ctx, first.ID))
+	require.NoError(t, docker.DeleteSnapshot(ctx, first.ID), "deleting twice must stay idempotent")
+
+	fromA, err = docker.ListSnapshots(ctx, "container-a")
+	require.NoError(t, err)
+	require.Len(t, fromA, 1)
+	require.Equal(t, second.ID, fromA[0].ID)
+}
+
+// Each generation is committed from a container started off the previous one,
+// so untagging one alone frees nothing while its descendant lives. Without
+// noprune=0 the layers of a fully retired chain would stay on disk forever.
+func TestDockerDeleteSnapshotPrunesUntaggedAncestors(t *testing.T) {
 	engine := newFakeDockerEngine()
 	docker := newTestDockerClient(t, engine)
 
-	_, err := docker.ListSnapshots(context.Background(), "container-1")
+	ref, err := docker.CreateSnapshot(context.Background(), "container-a", "weknora-sk-a-g1")
 	require.NoError(t, err)
-	require.Len(t, engine.imageListFilters, 1)
-	require.True(t, engine.imageListFilters[0]["label"]["com.weknora.sandbox.snapshot.sandbox=container-1"])
+	require.NoError(t, docker.DeleteSnapshot(context.Background(), ref.ID))
+
+	require.True(t, engine.removeImageOptions[0].PruneChildren,
+		"a delete that keeps untagged parents can never reclaim a retired chain")
+	require.False(t, engine.removeImageOptions[0].Force,
+		"force-remove would untag an image a live session container still holds")
 }
 
-// Snapshots must never surface in the admin's template picker: they are not a
-// base image a workspace boots from, they are a skill payload layered on top.
-func TestDockerSnapshotIsNotATemplate(t *testing.T) {
+// A skill snapshot the ledger cannot name is unreachable: snapshots are always
+// addressed by the tag CreateSnapshot mints, never by digest.
+func TestDockerDeleteSnapshotSweepsUntaggedSkillImages(t *testing.T) {
 	engine := newFakeDockerEngine()
 	engine.images = []image.Summary{
 		{
+			ID:       "sha256:retired",
+			RepoTags: []string{"weknora-skill/weknora-sk-a-g1:latest"},
+			Labels:   map[string]string{dockerSkillSnapshotLabel: "true"},
+		},
+		{
+			ID:       "sha256:orphan",
+			RepoTags: []string{"<none>:<none>"},
+			Labels:   map[string]string{dockerSkillSnapshotLabel: "true"},
+		},
+		{
+			ID:       "sha256:live",
+			RepoTags: []string{"weknora-skill/weknora-sk-a-g2:latest"},
+			Labels:   map[string]string{dockerSkillSnapshotLabel: "true"},
+		},
+		{
+			ID:       "sha256:base",
+			RepoTags: []string{"weknora/sandbox:test"},
+			Labels:   map[string]string{dockerTemplateLabel: "true"},
+		},
+	}
+	docker := newTestDockerClient(t, engine)
+
+	require.NoError(t, docker.DeleteSnapshot(
+		context.Background(), "weknora-skill/weknora-sk-a-g1"))
+
+	require.Equal(t,
+		[]string{"weknora-skill/weknora-sk-a-g1", "sha256:orphan"},
+		engine.removedImages,
+		"the sweep must take the untagged snapshot and nothing that is still named")
+}
+
+func TestDockerDeleteSnapshotSweepFailureIsNotAnError(t *testing.T) {
+	engine := newFakeDockerEngine()
+	engine.images = []image.Summary{
+		{
+			ID:       "sha256:orphan",
+			RepoTags: []string{"<none>:<none>"},
+			Labels:   map[string]string{dockerSkillSnapshotLabel: "true"},
+		},
+	}
+	engine.imagePresent["weknora-skill/weknora-sk-a-g1"] = true
+	engine.listImagesErr = errors.New("daemon busy")
+	docker := newTestDockerClient(t, engine)
+
+	require.NoError(t, docker.DeleteSnapshot(
+		context.Background(), "weknora-skill/weknora-sk-a-g1"),
+		"reclaiming storage must not turn a completed delete into a failure")
+}
+
+func TestDockerListTemplatesHidesSkillSnapshots(t *testing.T) {
+	engine := newFakeDockerEngine()
+	engine.images = []image.Summary{
+		{
+			ID:       "sha256:base",
+			RepoTags: []string{"weknora/sandbox:test"},
+			Labels:   map[string]string{dockerTemplateLabel: "true"},
+		},
+		{
 			ID:       "sha256:snap",
-			RepoTags: []string{"weknora-skill:container-1"},
-			Labels:   map[string]string{"com.weknora.sandbox.snapshot": "true"},
+			RepoTags: []string{"weknora-skill/weknora-sk-cfg1-g1:latest"},
+			Labels:   map[string]string{dockerSkillSnapshotLabel: "true"},
 		},
 	}
 	docker := newTestDockerClient(t, engine)
 
 	templates, err := docker.ListTemplates(context.Background())
 	require.NoError(t, err)
-	for _, tmpl := range templates {
-		require.NotEqual(t, "weknora-skill:container-1", tmpl.ID,
-			"a skill snapshot must never appear in the admin's template picker")
-	}
+	require.Len(t, templates, 1)
+	require.Equal(t, "weknora/sandbox:test", templates[0].ID)
 }
 
-func TestDockerEnsureImageDoesNotPullSnapshotTags(t *testing.T) {
+func TestDockerCreateDoesNotPullAMissingSkillSnapshot(t *testing.T) {
 	engine := newFakeDockerEngine()
 	docker := newTestDockerClient(t, engine)
 
-	err := docker.ensureImage(context.Background(), "weknora-skill:container-1")
-	require.Error(t, err)
+	_, err := docker.Create(context.Background(), RemoteCreateRequest{
+		TemplateID: "weknora-skill/weknora-sk-cfg1-g1",
+	})
+	require.True(t, IsRemoteInvalidRequest(err), err)
 	require.Empty(t, engine.pulled,
-		"a local-only snapshot must not fall through to a doomed registry pull")
+		"a local commit must not be fetched from a registry")
+}
+
+func TestDockerSanitizeImageName(t *testing.T) {
+	require.Equal(t, "weknora-sk-cfg1-g1", dockerSanitizeImageName("weknora-sk-cfg1-g1"))
+	require.Equal(t, "abc-def", dockerSanitizeImageName("ABC_DEF"))
+	require.Equal(t, "snap", dockerSanitizeImageName("--snap--"))
+	require.Empty(t, dockerSanitizeImageName("***"))
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -29,6 +30,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,7 +47,7 @@ func TestRunInstallHappyPathSwitchesPointerLast(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"create-session", "prepare-skill-dir", "seed-files", "agent-execute",
-		"chmod", "verify-structure", "verify-smoke", "write-manifest",
+		"chmod", "verify-structure", "verify-python", "write-manifest",
 		"cleanup-workspace", "create-snapshot",
 		"switch-pointer", "mark-stale", "destroy-sandbox",
 	}, fx.events, "the pointer must move only after the snapshot exists")
@@ -60,8 +62,8 @@ func TestRunInstallHappyPathSwitchesPointerLast(t *testing.T) {
 		"the pointer switch must be exactly one config write")
 	require.Empty(t, fx.deletedSnapshots,
 		"a successful install deletes nothing; the previous image stays reachable")
-	require.False(t, fx.smokeRanAsRoot,
-		"smoke must run as the ordinary sandbox user, not install-mode root")
+	require.False(t, fx.loadCheckRanAsRoot,
+		"script verification must run as the ordinary sandbox user, not install-mode root")
 	require.Equal(t, []string{"Skill install"}, fx.sessionTitles)
 
 	skill, err := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
@@ -69,11 +71,50 @@ func TestRunInstallHappyPathSwitchesPointerLast(t *testing.T) {
 	require.Equal(t, types.SkillStatusReady, skill.Status)
 }
 
+func TestRunInstallSucceedsOnDockerConfig(t *testing.T) {
+	fx := newInstallFixture(t)
+	fx.configRepo.entity.SandboxType = "docker"
+	fx.configRepo.entity.Config.SandboxType = "docker"
+	fx.configRepo.entity.Config.E2B = nil
+	fx.configRepo.entity.Config.Docker = &types.DockerSandboxConfig{
+		Image: "weknora/sandbox:base",
+		Host:  "unix:///var/run/docker.sock",
+	}
+	fx.fingerprint = sandbox.SkillImageFingerprint("docker", "", "unix:///var/run/docker.sock")
+
+	err := fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle)
+
+	require.NoError(t, err)
+	require.Contains(t, fx.events, "create-snapshot")
+	require.Equal(t, "snap-1", fx.configRepo.saved.Config.SkillImage.SnapshotID)
+	require.Equal(t, "weknora/sandbox:base", fx.configRepo.saved.Config.SkillImage.BaseTemplateID)
+	require.Equal(t, fx.fingerprint, fx.configRepo.saved.Config.SkillImage.OwnerFingerprint)
+}
+
+func TestSkillSnapshotBuildNameIncludesTenantAndFullConfig(t *testing.T) {
+	a := skillSnapshotBuildName(7, "aaaaaaaa-bbbb-cccc-dddd-eeeeffff0001", 1, "11111111-2222-3333-4444-555555555555")
+	b := skillSnapshotBuildName(8, "aaaaaaaa-bbbb-cccc-dddd-eeeeffff0001", 1, "11111111-2222-3333-4444-555555555555")
+	c := skillSnapshotBuildName(7, "aaaaaaaa-bbbb-cccc-dddd-eeeeffff0002", 1, "11111111-2222-3333-4444-555555555555")
+	d := skillSnapshotBuildName(7, "aaaaaaaa-bbbb-cccc-dddd-eeeeffff0001", 1, "aaaaaaaa-bbbb-cccc-dddd-eeeeffff0001")
+	require.Equal(t, "weknora-sk-t7-aaaaaaaabbbbccccddddeeeeffff0001-g1-11111111", a)
+	require.NotEqual(t, a, b, "the same config in another tenant must not share a tag")
+	require.NotEqual(t, a, c, "two configs must not share a tag")
+	require.NotEqual(t, a, d, "two builds of the same generation must not share a tag")
+}
+
+func TestNextSnapshotGenerationSkipsAbandonedLedgerRows(t *testing.T) {
+	require.Equal(t, 1, nextSnapshotGeneration(0, nil))
+	require.Equal(t, 4, nextSnapshotGeneration(2, []*types.TenantSkillSnapshotEntity{
+		{Generation: 3, State: types.SkillSnapshotStateBuilding},
+		{Generation: 1, State: types.SkillSnapshotStateActive},
+	}))
+}
+
 // TestRunInstallIssuesExactlyTheseCommands pins the order, not just the set.
 // Ownership and permissions are normalised BEFORE verification on purpose: the
 // agent creates the tree as root, so a restrictive root umask would leave the
 // .venv interpreter unreadable and fail a perfectly good install in the
-// non-root smoke run. The smoke test must exercise the same permissions the
+// non-root verification pass, which must exercise the same permissions the
 // snapshot will carry.
 func TestRunInstallIssuesExactlyTheseCommands(t *testing.T) {
 	fx := newInstallFixture(t)
@@ -88,28 +129,20 @@ func TestRunInstallIssuesExactlyTheseCommands(t *testing.T) {
 		"chown -R root:root " + installSkillDir,
 		"test -f " + installSkillDir + "/SKILL.md",
 		"test -f " + installSkillDir + "/scripts/extract.py",
-		installSmokeCommand,
+		installPythonVerifyCommand,
 		"rm -rf /workspace/* /workspace/.[!.]* || true",
+		installWorkspaceRestoreCommand,
 		installCacheCleanupCommand,
 	}, fx.commands)
 }
 
-func TestRunInstallNormalisesPermissionsBeforeTheSmokeRun(t *testing.T) {
+func TestRunInstallNormalisesPermissionsBeforeVerifying(t *testing.T) {
 	fx := newInstallFixture(t)
 
 	require.NoError(t, fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle))
 
-	require.Less(t, indexOfEvent(fx.events, "chmod"), indexOfEvent(fx.events, "verify-smoke"),
-		"the non-root smoke run must execute the permissions that get snapshotted")
-}
-
-func TestRunInstallSmokeCommandKeepsTheInterpreterArgv(t *testing.T) {
-	fx := newInstallFixture(t)
-
-	require.NoError(t, fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle))
-
-	require.Contains(t, fx.commands, installSmokeCommand,
-		"--help must reach the script as its own argument, not /bin/sh -c's")
+	require.Less(t, indexOfEvent(fx.events, "chmod"), indexOfEvent(fx.events, "verify-python"),
+		"the non-root verification pass must execute the permissions that get snapshotted")
 }
 
 func TestRunInstallWipesThePreviousTreeBeforeSeeding(t *testing.T) {
@@ -152,9 +185,9 @@ func TestRunInstallReportsTransportFailureCause(t *testing.T) {
 		"the admin's only diagnostic is this row")
 }
 
-func TestRunInstallReportsSmokeFailureCause(t *testing.T) {
+func TestRunInstallReportsVerificationFailureCause(t *testing.T) {
 	fx := newInstallFixture(t)
-	fx.smokeResult = &sandbox.ExecuteResult{ExitCode: -1, Killed: true, Error: "sandbox unreachable"}
+	fx.loadCheckResult = &sandbox.ExecuteResult{ExitCode: -1, Killed: true, Error: "sandbox unreachable"}
 
 	err := fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle)
 
@@ -243,6 +276,200 @@ func TestRunInstallAbortsWhenTheSkillRowWasRemoved(t *testing.T) {
 	skill, err := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
 	require.NoError(t, err)
 	require.Nil(t, skill)
+}
+
+// declareEnvFile presets the file the installer agent is asked to write, so
+// the fixture exercises the same air gap production uses: bytes in the
+// sandbox, parsing and storage server-side.
+func (f *installFixture) declareEnvFile(body string) {
+	f.t.Helper()
+	if f.sandboxMgr.files == nil {
+		f.sandboxMgr.files = map[string][]byte{}
+	}
+	f.sandboxMgr.files[sandbox.SkillRequirementsPath(f.bundle.Name)] = []byte(body)
+}
+
+// readsTavilyKey makes the bundle actually mention the variable, which is what
+// the bundle-match layer looks for.
+func (f *installFixture) readsTavilyKey() {
+	f.bundle.Files["scripts/extract.py"] = []byte("import os\nos.environ[\"TAVILY_API_KEY\"]\n")
+}
+
+func TestRunInstallRecordsTheDeclaredEnvVars(t *testing.T) {
+	fx := newInstallFixture(t)
+	fx.readsTavilyKey()
+	fx.declareEnvFile(`{"env":[
+		{"name":"TAVILY_API_KEY","description":"search key","required":true,"value":"tvly-invented"},
+		{"name":"OPENAI_API_KEY","required":true}
+	]}`)
+
+	require.NoError(t, fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle))
+
+	skill, err := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
+	require.NoError(t, err)
+	require.Equal(t, types.SkillStatusReady, skill.Status)
+	require.Equal(t, types.SkillEnvVars{
+		{Name: "TAVILY_API_KEY", Description: "search key", Required: true},
+	}, skill.Envs,
+		"the hallucinated name is dropped and no agent-invented value is ever stored")
+}
+
+func TestRunInstallSucceedsWithoutAnEnvDeclaration(t *testing.T) {
+	fx := newInstallFixture(t)
+
+	require.NoError(t, fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle))
+
+	skill, err := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
+	require.NoError(t, err)
+	require.Equal(t, types.SkillStatusReady, skill.Status,
+		"getting the skill into the image is the goal; a missing declaration is not a failure")
+	require.Empty(t, skill.Envs)
+}
+
+func TestRunInstallSucceedsWhenTheEnvDeclarationIsUnparseable(t *testing.T) {
+	fx := newInstallFixture(t)
+	fx.declareEnvFile("I installed the skill, boss!")
+
+	require.NoError(t, fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle))
+
+	skill, err := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
+	require.NoError(t, err)
+	require.Equal(t, types.SkillStatusReady, skill.Status)
+	require.Empty(t, skill.Envs)
+}
+
+func TestRunInstallSucceedsWhenEveryDeclaredEnvVarIsRejected(t *testing.T) {
+	fx := newInstallFixture(t)
+	fx.declareEnvFile(`{"env":[{"name":"OPENAI_API_KEY"},{"name":"PATH"}]}`)
+
+	require.NoError(t, fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle))
+
+	skill, err := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
+	require.NoError(t, err)
+	require.Equal(t, types.SkillStatusReady, skill.Status)
+	require.Empty(t, skill.Envs)
+}
+
+// Re-installing must not destroy a credential an admin typed in, and must not
+// keep asking for a variable the new version no longer reads.
+func TestRunInstallReinstallKeepsTheAdminValueAndDropsStaleVars(t *testing.T) {
+	fx := newInstallFixture(t)
+	fx.readsTavilyKey()
+	require.NoError(t, fx.skillRepo.UpdateSkillEnvs(context.Background(), 7, "cfg-1", "sk-1",
+		types.SkillEnvVars{
+			{Name: "TAVILY_API_KEY", Description: "old text", Value: "tvly-typed-by-admin"},
+			{Name: "LEGACY_TOKEN", Required: true, Value: "stale"},
+		}))
+	fx.declareEnvFile(`{"env":[{"name":"TAVILY_API_KEY","description":"new text","required":true}]}`)
+
+	require.NoError(t, fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle))
+
+	skill, err := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
+	require.NoError(t, err)
+	require.Equal(t, types.SkillEnvVars{{
+		Name: "TAVILY_API_KEY", Description: "new text", Required: true,
+		Value: "tvly-typed-by-admin",
+	}}, skill.Envs)
+}
+
+func TestRunInstallReinstallOnlyClearsEnvsForAnExplicitEmptyDeclaration(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		writeFile bool
+		wantEnvs  types.SkillEnvVars
+	}{
+		{
+			name:     "missing declaration preserves stored value",
+			wantEnvs: storedAdminEnv(),
+		},
+		{
+			name:      "unparseable declaration preserves stored value",
+			body:      "I installed the skill, boss!",
+			writeFile: true,
+			wantEnvs:  storedAdminEnv(),
+		},
+		{
+			name:      "fully rejected declaration preserves stored value",
+			body:      `{"env":[{"name":"tavily_api_key"},{"name":"PATH"}]}`,
+			writeFile: true,
+			wantEnvs:  storedAdminEnv(),
+		},
+		{
+			name:      "explicit empty declaration clears stored value",
+			body:      `{"env":[]}`,
+			writeFile: true,
+			wantEnvs:  nil,
+		},
+		{
+			name:      "missing env field preserves stored value",
+			body:      `{}`,
+			writeFile: true,
+			wantEnvs:  storedAdminEnv(),
+		},
+		{
+			name:      "null env field preserves stored value",
+			body:      `{"env":null}`,
+			writeFile: true,
+			wantEnvs:  storedAdminEnv(),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newInstallFixture(t)
+			require.NoError(t, fx.skillRepo.UpdateSkillEnvs(
+				context.Background(), 7, "cfg-1", "sk-1", storedAdminEnv()))
+			if tc.writeFile {
+				fx.declareEnvFile(tc.body)
+			}
+
+			require.NoError(t, fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle))
+
+			skill, err := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
+			require.NoError(t, err)
+			require.Equal(t, types.SkillStatusReady, skill.Status)
+			require.Equal(t, tc.wantEnvs, skill.Envs)
+		})
+	}
+}
+
+func storedAdminEnv() types.SkillEnvVars {
+	return types.SkillEnvVars{{
+		Name: "TAVILY_API_KEY", Description: "old text", Required: true,
+		Value: "tvly-typed-by-admin",
+	}}
+}
+
+func TestBuildInstallPromptAsksForADeclarationWithoutValues(t *testing.T) {
+	fx := newInstallFixture(t)
+
+	prompt := buildInstallPrompt(installSkillDir, fx.bundle, true)
+
+	require.Contains(t, prompt, sandbox.SkillRequirementsPath(fx.bundle.Name))
+	require.Contains(t, prompt, ".weknora/requirements.json")
+	require.Contains(t, prompt, `{"env":[]}`)
+	require.Contains(t, prompt, "Never write any value",
+		"a value the model invents would be stored as the workspace credential")
+}
+
+func TestInstallSkillRepoNormalizesStoredUserEnvPrincipal(t *testing.T) {
+	repo := &installSkillRepo{}
+	row := &types.TenantUserEnvVar{
+		TenantID: 7, PrincipalType: " web_user ", PrincipalID: " user-1 ",
+		SandboxConfigID: "cfg-1", SkillID: "sk-1", Name: "API_KEY", Value: "secret",
+	}
+
+	require.NoError(t, repo.UpsertUserEnvVar(context.Background(), row))
+
+	got, err := repo.ListUserEnvVars(
+		context.Background(), 7,
+		types.Principal{Type: types.PrincipalWebUser, ID: "user-1"}, "cfg-1", "sk-1",
+	)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, types.PrincipalWebUser, got[0].PrincipalType)
+	require.Equal(t, "user-1", got[0].PrincipalID)
 }
 
 func TestWriteReadySkillStateDoesNotStampANewerBundle(t *testing.T) {
@@ -363,6 +590,76 @@ func TestInstallSkillRetriesAFailedSkillWithTheSameArchive(t *testing.T) {
 	require.NoError(t, getErr)
 	require.Equal(t, types.SkillStatusInstalling, skill.Status,
 		"a failed skill is a retry even when the archive digest is unchanged")
+}
+
+// Most failed installs fail for a reason the archive cannot fix, so the retry
+// runs the bytes already stored rather than asking for them again.
+func TestReinstallSkillRerunsTheStoredArchive(t *testing.T) {
+	fx := newInstallFixture(t)
+	archive := zipBundle(t, map[string]string{
+		"SKILL.md":           validSkillMD,
+		"scripts/extract.py": "print('hi')\n",
+	})
+	bundle, err := ParseSkillBundle(archive)
+	require.NoError(t, err)
+	fx.storedBundles = map[string][]byte{"file://bundle.zip": archive}
+	require.NoError(t, fx.skillRepo.UpdateSkill(context.Background(), &types.TenantSkillEntity{
+		ID: "sk-1", TenantID: 7, SandboxConfigID: "cfg-1",
+		Name: bundle.Name, BundleSHA256: bundle.SHA256, BundleRef: "file://bundle.zip",
+		Status: types.SkillStatusFailed, Error: "python verification failed",
+	}))
+
+	id, err := fx.svc.ReinstallSkill(context.Background(), 7, "cfg-1", "sk-1")
+
+	require.NoError(t, err)
+	require.Equal(t, "sk-1", id, "a retry upgrades the same row, it does not fork a second one")
+	require.Positive(t, fx.getFileCalls.Load(),
+		"the retry must come from the stored archive, not from a re-upload")
+}
+
+// A row that says "installing" while still naming the previous run's session
+// tells every reader that the finished conversation is this run's live output.
+// The frontend believed it and replayed the last attempt's report as though it
+// were the retry's own progress, before the retry's agent had even started.
+func TestTakingARowForInstallDropsThePreviousRunsTranscript(t *testing.T) {
+	row := &types.TenantSkillEntity{
+		ID: "sk-1", Name: "pdf-tools", Status: types.SkillStatusFailed,
+		Error:            "python verification failed",
+		InstallSessionID: "sess-old", InstallMessageID: "msg-old",
+	}
+
+	takeSkillRowForInstall(row, &SkillBundle{Name: "pdf-tools", Version: "2.0.0"}, time.Now())
+
+	require.Equal(t, types.SkillStatusInstalling, row.Status)
+	require.Empty(t, row.InstallSessionID, "the retry has no transcript of its own yet")
+	require.Empty(t, row.InstallMessageID, "the retry has no transcript of its own yet")
+	require.Empty(t, row.Error, "the previous failure is not this run's outcome")
+}
+
+// Nothing a retry does can recover a skill whose archive is gone, and the
+// operator has to be told to upload it rather than to press the button again.
+func TestReinstallSkillRefusesWhenTheArchiveIsGone(t *testing.T) {
+	fx := newInstallFixture(t)
+	require.NoError(t, fx.skillRepo.UpdateSkill(context.Background(), &types.TenantSkillEntity{
+		ID: "sk-1", TenantID: 7, SandboxConfigID: "cfg-1",
+		Name: "pdf-tools", Status: types.SkillStatusFailed, BundleRef: "",
+	}))
+
+	_, err := fx.svc.ReinstallSkill(context.Background(), 7, "cfg-1", "sk-1")
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "no longer stored")
+	require.Empty(t, fx.sessionCalls, "a retry that cannot run must not boot a billed sandbox")
+}
+
+func TestReinstallSkillRejectsAnUnknownSkill(t *testing.T) {
+	fx := newInstallFixture(t)
+
+	_, err := fx.svc.ReinstallSkill(context.Background(), 7, "cfg-1", "nope")
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "skill not found")
+	require.Empty(t, fx.sessionCalls)
 }
 
 func TestInstallSkillReinstallsWhenTheLiveImageNoLongerCarriesTheSkill(t *testing.T) {
@@ -540,6 +837,28 @@ func TestBeatInstallHeartbeatRestampsOnlyAnInstallingRow(t *testing.T) {
 		"a row that left the installing status must not be stamped alive again")
 }
 
+// The heartbeat reloads and rewrites the whole row every 30 seconds while an
+// install runs, and a declaration or an admin value can be stored in between.
+// Writing envs from that stale copy would put the old list back.
+func TestBeatInstallHeartbeatLeavesTheDeclarationAlone(t *testing.T) {
+	fx := newInstallFixture(t)
+	ctx := context.Background()
+	stale := fx.now().Add(-time.Hour)
+	require.NoError(t, fx.svc.updateSkillFields(ctx, 7, "cfg-1", "sk-1",
+		func(e *types.TenantSkillEntity) { e.InstallingSince = &stale }))
+
+	// Stands in for the beat that read the row before the declaration landed.
+	before, err := fx.skillRepo.GetSkill(ctx, 7, "cfg-1", "sk-1")
+	require.NoError(t, err)
+	require.NoError(t, fx.skillRepo.UpdateSkillEnvs(ctx, 7, "cfg-1", "sk-1", storedAdminEnv()))
+	require.NoError(t, fx.skillRepo.UpdateSkill(ctx, before))
+
+	skill, err := fx.skillRepo.GetSkill(ctx, 7, "cfg-1", "sk-1")
+	require.NoError(t, err)
+	require.Equal(t, storedAdminEnv(), skill.Envs,
+		"an install-progress write must not carry an old declaration back")
+}
+
 func TestStartInstallHeartbeatBeatsUntilStopped(t *testing.T) {
 	fx := newInstallFixture(t)
 	ctx := context.Background()
@@ -695,14 +1014,92 @@ func TestRunInstallRequiresVenvWhenRequirementsExist(t *testing.T) {
 	require.Nil(t, fx.configRepo.saved)
 }
 
-func TestPrimaryEntryScriptIsDeterministic(t *testing.T) {
+// Verification used to run one guessed "entry script" with --help. Nothing in
+// the runtime designates an entry script — the model names whichever path it
+// likes in execute_skill_script — so the guess left every other file unchecked
+// while failing installs over the one it happened to pick.
+func TestRunInstallVerifiesEveryScriptOfEveryLanguage(t *testing.T) {
+	fx := newInstallFixture(t)
+	fx.bundle.Files["scripts/__init__.py"] = []byte("from .helper import run\n")
+	fx.bundle.Files["scripts/helper.py"] = []byte("def run():\n    pass\n")
+	fx.bundle.Files["bin/render.mjs"] = []byte("export const x = 1;\n")
+	fx.bundle.Files["bin/setup.sh"] = []byte("echo hi\n")
+
+	require.NoError(t, fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle))
+
+	pythonPass := skillPythonVerifyCommand(installSkillDir, []string{
+		"scripts/__init__.py", "scripts/extract.py", "scripts/helper.py",
+	})
+	require.Contains(t, fx.commands, pythonPass,
+		"every python file must be checked, not the first one in sort order")
+	require.Contains(t, fx.commands,
+		skillNodeVerifyCommand(installSkillDir, []string{"bin/render.mjs"}, nil))
+	require.Contains(t, fx.commands,
+		skillShellVerifyCommand(installSkillDir, []string{"bin/setup.sh"}))
+}
+
+// The pick that broke a real install: "__" sorts before every lowercase
+// letter, so a package marker became the smoke target and was executed as a
+// script, which no relative import can survive.
+func TestRunInstallDoesNotExecuteAnyScriptToVerifyIt(t *testing.T) {
+	fx := newInstallFixture(t)
+	fx.bundle.Files["scripts/__init__.py"] = []byte("from .extract import main\n")
+
+	require.NoError(t, fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle))
+
+	for _, command := range fx.commands {
+		require.NotContains(t, command, "--help",
+			"verification must not invoke a skill script; %q does", command)
+	}
+}
+
+func TestSkillPythonVerifyCommandPrefersTheSkillVenv(t *testing.T) {
+	command := skillPythonVerifyCommand("/opt/skills/demo", []string{"scripts/a.py"})
+
+	require.Contains(t, command, "if [ -x /opt/skills/demo/.venv/bin/python ]; "+
+		"then py=/opt/skills/demo/.venv/bin/python; else py=python3; fi",
+		"the file must be checked by the interpreter that would run it")
+	require.True(t, strings.HasSuffix(command, `"$py" - /opt/skills/demo scripts/a.py`),
+		"the verifier reads from stdin, so the paths are its argv")
+}
+
+// A skill may ship a file whose name needs quoting; the command is assembled
+// by hand, so the shell must never see it as more than one word.
+func TestSkillVerifyCommandsQuoteAwkwardPaths(t *testing.T) {
+	python := skillPythonVerifyCommand("/opt/skills/demo", []string{"scripts/a b'c.py"})
+	require.Contains(t, python, `'scripts/a b'\''c.py'`)
+
+	shell := skillShellVerifyCommand("/opt/skills/demo", []string{"a b.sh"})
+	require.Equal(t, `for f in '/opt/skills/demo/a b.sh'; do sh -n "$f" || exit 1; done`, shell)
+}
+
+func TestSkillNodeVerifyCommandChecksDeclaredDependencies(t *testing.T) {
+	bundle := &SkillBundle{Files: map[string][]byte{
+		"package.json": []byte(`{"dependencies":{"echarts":"^5"},"devDependencies":{"jest":"^29"}}`),
+	}}
+
+	require.Equal(t, []string{"echarts"}, nodeDependencyNames(bundle),
+		"devDependencies are a build-time concern the image is not asked to carry")
+
+	command := skillNodeVerifyCommand("/opt/skills/demo", []string{"a.js"}, []string{"echarts"})
+	require.Contains(t, command, `[ -e /opt/skills/demo/node_modules/"$d" ]`)
+	require.Contains(t, command, `node --check "$f"`)
+}
+
+func TestSortedScriptPathsIsDeterministic(t *testing.T) {
 	bundle := &SkillBundle{Files: map[string][]byte{
 		"scripts/z-helper.py": []byte("x"),
 		"scripts/a-main.py":   []byte("x"),
 		"scripts/mid.js":      []byte("x"),
+		"SKILL.md":            []byte("x"),
+		"data/table.csv":      []byte("x"),
 	}}
-	require.Equal(t, "scripts/a-main.py", primaryEntryScript(bundle),
-		"python is preferred over js, and the name is sorted so the pick is stable")
+
+	require.Equal(t, []string{"scripts/a-main.py", "scripts/z-helper.py"},
+		sortedScriptPaths(bundle, ".py"))
+	require.Equal(t, []string{"scripts/a-main.py", "scripts/mid.js", "scripts/z-helper.py"},
+		sortedScriptPaths(bundle, allScriptExtensions...),
+		"only files the runtime can execute are scripts")
 }
 
 type stubWorkspaceSandboxPolicy struct {
@@ -715,11 +1112,12 @@ func (s stubWorkspaceSandboxPolicy) WorkspaceScriptsDisabled(context.Context, ui
 
 func TestSwitchImagePointerRefusesAnUnusableFingerprint(t *testing.T) {
 	fx := newInstallFixture(t)
-	// A config whose provider carries no credentials produces no fingerprint,
+	// A config whose provider cannot snapshot produces no fingerprint,
 	// and a pointer with an empty fingerprint is discarded at session start.
 	fx.configRepo.entity.SandboxType = "docker"
 	fx.configRepo.entity.Config.SandboxType = "docker"
 	fx.configRepo.entity.Config.E2B = nil
+	fx.configRepo.entity.Config.Docker = nil
 
 	err := fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle)
 
@@ -875,12 +1273,12 @@ func TestRunInstallDoesNotFailASkillThatIsAlreadyServing(t *testing.T) {
 	require.Empty(t, skill.Error)
 }
 
-func TestRunInstallKeepsOldImageWhenSmokeTestFails(t *testing.T) {
+func TestRunInstallKeepsOldImageWhenVerificationFails(t *testing.T) {
 	fx := newInstallFixture(t)
 	fx.configRepo.entity.Config.SkillImage = &types.SkillImageConfig{
 		SnapshotID: "snap-old", Generation: 3, OwnerFingerprint: fx.fingerprint,
 	}
-	fx.smokeExitCode = 1
+	fx.loadCheckExitCode = 1
 
 	err := fx.svc.runInstall(context.Background(), 7, "cfg-1", "sk-1", fx.bundle)
 
@@ -1102,16 +1500,27 @@ const (
 		" && chown user:user /opt/weknora/tenant/skills " + installSkillDir +
 		" && chmod 755 /opt/weknora/tenant/skills " + installSkillDir
 
+	// The scratch wipe removes the base image's own input/output directories,
+	// so the snapshot must carry them back with the ownership the session
+	// account needs. This is the only step of an install that runs with the
+	// privileges required to set that ownership.
+	installWorkspaceRestoreCommand = "mkdir -p /workspace/input /workspace/output" +
+		" && chown user:user /workspace/input /workspace/output" +
+		" && chmod 775 /workspace/input /workspace/output"
+
 	installCacheCleanupCommand = "rm -rf " +
 		"/root/.cache/pip /root/.cache/uv /root/.npm /root/.local/share/pnpm/store " +
 		"/home/user/.cache/pip /home/user/.cache/uv /home/user/.npm " +
 		"/home/user/.local/share/pnpm/store || true"
+)
 
-	installSmokeCommand = `/bin/sh -c 'if [ -x ` + installSkillDir + `/.venv/bin/python ]; ` +
-		`then exec ` + installSkillDir + `/.venv/bin/python ` +
-		installSkillDir + `/scripts/extract.py "$@"; ` +
-		`else exec python3 ` + installSkillDir + `/scripts/extract.py "$@"; fi' ` +
-		`weknora-skill --help`
+// installPythonVerifyCommand is built from the same helper the install path
+// uses. Pinning the literal text would mean re-encoding the embedded verifier
+// by hand on every edit to it, which is a test that fails for the wrong
+// reason; the properties worth stating verbatim are asserted separately in
+// TestSkillPythonVerifyCommand*.
+var installPythonVerifyCommand = skillPythonVerifyCommand(
+	installSkillDir, []string{"scripts/extract.py"},
 )
 
 func indexOfEvent(events []string, needle string) int {
@@ -1143,20 +1552,22 @@ type installFixture struct {
 	// events are the coarse milestones the ordering tests read; commands is
 	// the full, ordered shell transcript so a new command can never hide
 	// behind an older substring match.
-	events        []string
-	commands      []string
-	fingerprint   string
-	smokeExitCode int
-	smokeResult   *sandbox.ExecuteResult
+	events      []string
+	commands    []string
+	fingerprint string
+	// loadCheck* drive the per-language script verification pass, which is
+	// the last gate before the snapshot.
+	loadCheckExitCode int
+	loadCheckResult   *sandbox.ExecuteResult
 	// depsExitCode fails the declared-dependency check (venv / node_modules).
 	depsExitCode int
 	// execResult is scoped to execResultCommand: an unscoped stub result
 	// applies to the first command issued, which is not the command any of
 	// these tests is about.
-	execResultCommand string
-	execResult        *sandbox.ExecuteResult
-	smokeRanAsRoot    bool
-	agentErr          error
+	execResultCommand  string
+	execResult         *sandbox.ExecuteResult
+	loadCheckRanAsRoot bool
+	agentErr           error
 	// beforeExecute runs at the moment the engine would start, so a test can
 	// observe the state an attaching console would see mid-install.
 	beforeExecute func()
@@ -1467,6 +1878,10 @@ type installSkillRepo struct {
 	// listing and one whose listing failed are different bugs, and the skill
 	// derivation tests turn on telling them apart.
 	listCalls int
+	// userEnvs is a real store rather than a stub: the env-var flows are about
+	// which principal's value wins, so a fake that cannot distinguish
+	// principals would let the interesting bugs through.
+	userEnvs []*types.TenantUserEnvVar
 }
 
 func newInstallSkillRepo() *installSkillRepo {
@@ -1562,8 +1977,54 @@ func (r *installSkillRepo) UpdateSkill(ctx context.Context, e *types.TenantSkill
 	if r.updateFailsWhen != nil && r.updateFailsWhen(e) {
 		return errUpdateBoom
 	}
+	key := skillKey(e.TenantID, e.SandboxConfigID, e.ID)
 	cp := *e
-	r.skills[skillKey(e.TenantID, e.SandboxConfigID, e.ID)] = &cp
+	// The real UpdateSkill leaves the envs column alone, so a stale in-memory
+	// copy cannot put an old declaration back. The fake has to model that or
+	// the tests would pass on behaviour production does not have.
+	if stored := r.skills[key]; stored != nil {
+		cp.Envs = stored.Envs
+	} else {
+		cp.Envs = nil
+	}
+	r.skills[key] = &cp
+	return nil
+}
+
+func (r *installSkillRepo) UpdateSkillEnvs(
+	ctx context.Context, tenantID uint64, configID, skillID string, envs types.SkillEnvVars,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stored := r.skills[skillKey(tenantID, configID, skillID)]
+	if stored == nil {
+		return nil
+	}
+	stored.Envs = envs
+	return nil
+}
+
+func (r *installSkillRepo) UpdateSkillAdminState(
+	ctx context.Context,
+	tenantID uint64,
+	configID, skillID string,
+	enabled bool,
+	envs types.SkillEnvVars,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stored := r.skills[skillKey(tenantID, configID, skillID)]
+	if stored == nil {
+		return nil
+	}
+	stored.Enabled = enabled
+	stored.Envs = envs
 	return nil
 }
 
@@ -1582,7 +2043,24 @@ func (r *installSkillRepo) DeleteSkill(
 	if r.deleteSkillErr != nil {
 		return r.deleteSkillErr
 	}
-	delete(r.skills, skillKey(tenantID, configID, skillID))
+	key := skillKey(tenantID, configID, skillID)
+	if _, matched := r.skills[key]; !matched {
+		// Mirrors the real repository: when the scoped key matches no skill,
+		// nothing is deleted at all. Deleting the user values here anyway would
+		// hide the exact data-loss bug the real DeleteSkill was fixed to avoid.
+		return nil
+	}
+	delete(r.skills, key)
+	// Mirrors the real repository's transaction: a skill's user values go with
+	// it, because the soft delete means no cascade can do it for us.
+	kept := r.userEnvs[:0]
+	for _, e := range r.userEnvs {
+		if e.TenantID == tenantID && e.SkillID == skillID {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	r.userEnvs = kept
 	return nil
 }
 
@@ -1642,6 +2120,138 @@ func (r *installSkillRepo) DeleteSnapshotRowsByConfig(context.Context, uint64, s
 	return nil
 }
 
+func (r *installSkillRepo) ListSkillsByTenant(
+	ctx context.Context, tenantID uint64,
+) ([]*types.TenantSkillEntity, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*types.TenantSkillEntity
+	for _, e := range r.skills {
+		if e.TenantID == tenantID {
+			cp := *e
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+// userEnvMatches mirrors the real repository's unique index, minus the name,
+// which the per-row callers add.
+func userEnvMatches(
+	e *types.TenantUserEnvVar, tenantID uint64, p types.Principal, configID, skillID string,
+) bool {
+	p = p.Normalize()
+	return e.TenantID == tenantID && e.PrincipalType == p.Type &&
+		e.PrincipalID == p.ID && e.SandboxConfigID == configID && e.SkillID == skillID
+}
+
+func (r *installSkillRepo) ListUserEnvVars(
+	ctx context.Context, tenantID uint64, p types.Principal, configID, skillID string,
+) ([]*types.TenantUserEnvVar, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*types.TenantUserEnvVar
+	for _, e := range r.userEnvs {
+		if userEnvMatches(e, tenantID, p, configID, skillID) {
+			cp := *e
+			out = append(out, &cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (r *installSkillRepo) ListUserEnvVarsByConfig(
+	ctx context.Context, tenantID uint64, p types.Principal, configID string,
+) ([]*types.TenantUserEnvVar, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p = p.Normalize()
+	var out []*types.TenantUserEnvVar
+	for _, e := range r.userEnvs {
+		if e.TenantID == tenantID && e.PrincipalType == p.Type &&
+			e.PrincipalID == p.ID && e.SandboxConfigID == configID {
+			cp := *e
+			out = append(out, &cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SkillID != out[j].SkillID {
+			return out[i].SkillID < out[j].SkillID
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
+}
+
+func (r *installSkillRepo) UpsertUserEnvVar(ctx context.Context, e *types.TenantUserEnvVar) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p := types.Principal{Type: e.PrincipalType, ID: e.PrincipalID}.Normalize()
+	for _, existing := range r.userEnvs {
+		if userEnvMatches(existing, e.TenantID, p, e.SandboxConfigID, e.SkillID) &&
+			existing.Name == e.Name {
+			existing.Value = e.Value
+			return nil
+		}
+	}
+	cp := *e
+	cp.PrincipalType, cp.PrincipalID = p.Type, p.ID
+	if cp.ID == "" {
+		cp.ID = uuid.NewString()
+	}
+	r.userEnvs = append(r.userEnvs, &cp)
+	return nil
+}
+
+func (r *installSkillRepo) DeleteUserEnvVar(
+	ctx context.Context, tenantID uint64, p types.Principal, configID, skillID, name string,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, e := range r.userEnvs {
+		if userEnvMatches(e, tenantID, p, configID, skillID) && e.Name == name {
+			r.userEnvs = append(r.userEnvs[:i], r.userEnvs[i+1:]...)
+			return nil
+		}
+	}
+	return types.ErrEnvVarNotFound
+}
+
+func (r *installSkillRepo) DeleteUserEnvVarsByConfig(
+	ctx context.Context, tenantID uint64, configID string,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	kept := r.userEnvs[:0]
+	for _, e := range r.userEnvs {
+		if e.TenantID == tenantID && e.SandboxConfigID == configID {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	r.userEnvs = kept
+	return nil
+}
+
 var _ repository.TenantSkillRepository = (*installSkillRepo)(nil)
 
 type installSandboxResolver struct {
@@ -1661,6 +2271,10 @@ type installSandboxManager struct {
 	writeContents map[string][]byte
 	// manifest is the file the image already carries at SkillsManifestPath.
 	manifest []byte
+	// files are the other files the image already carries, keyed by absolute
+	// path. The env declaration crosses from the sandbox to the server as one
+	// of these, never as a tool call.
+	files map[string][]byte
 }
 
 func (m *installSandboxManager) sortedWrites() []string {
@@ -1699,7 +2313,13 @@ func (m *installSandboxManager) ReadSessionFile(
 	if filePath == sandbox.SkillsManifestPath && m.manifest != nil {
 		return m.manifest, nil
 	}
-	return nil, nil
+	if content, ok := m.files[filePath]; ok {
+		return content, nil
+	}
+	// A miss is reported the way a real backend reports one. Returning empty
+	// bytes with no error would make "the agent wrote nothing" indistinguishable
+	// from "the agent wrote an empty file".
+	return nil, os.ErrNotExist
 }
 
 func (m *installSandboxManager) WriteSessionInputFile(
@@ -1816,13 +2436,15 @@ func (m *installSandboxManager) ExecShellCommandWithOptions(
 		if m.fx.depsExitCode != 0 {
 			return &sandbox.ExecuteResult{ExitCode: m.fx.depsExitCode, Stderr: "deps missing"}, nil
 		}
-	case command == installSmokeCommand:
-		m.fx.smokeRanAsRoot = opts.AsRoot
-		m.fx.record("verify-smoke")
-		if m.fx.smokeResult != nil {
-			return m.fx.smokeResult, nil
+	case command == installPythonVerifyCommand:
+		m.fx.loadCheckRanAsRoot = opts.AsRoot
+		m.fx.record("verify-python")
+		if m.fx.loadCheckResult != nil {
+			return m.fx.loadCheckResult, nil
 		}
-		return &sandbox.ExecuteResult{ExitCode: m.fx.smokeExitCode, Stderr: "smoke failed"}, nil
+		return &sandbox.ExecuteResult{
+			ExitCode: m.fx.loadCheckExitCode, Stderr: "scripts/extract.py imports pandas",
+		}, nil
 	case command == removeSkillDirCommand:
 		m.fx.record("remove-skill-dir")
 		if m.fx.removeDelay > 0 {

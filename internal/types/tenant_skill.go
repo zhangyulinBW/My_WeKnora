@@ -79,6 +79,10 @@ type TenantSkillEntity struct {
 	InstallSessionID string `gorm:"type:varchar(36)"`
 	InstallMessageID string `gorm:"type:varchar(36)"`
 
+	// Envs is the installer agent's declaration of the environment variables
+	// this skill needs, each optionally carrying a workspace-wide admin value.
+	Envs SkillEnvVars `json:"envs,omitempty" gorm:"type:jsonb"`
+
 	Status string `gorm:"type:varchar(32);not null"`
 	Error  string `gorm:"type:text"`
 	// InstallingSince drives the stuck-run reaper for both install and remove.
@@ -106,6 +110,15 @@ type TenantSkillSnapshotEntity struct {
 	SnapshotID       string `gorm:"type:varchar(255)"`
 	ParentSnapshotID string `gorm:"type:varchar(255)"`
 	Generation       int
+
+	// PlannedName is the name handed to CreateSnapshot. It is written before
+	// the provider call, which is what makes an abandoned build identifiable:
+	// SnapshotID can only be recorded once the provider has answered, so a
+	// process that died in between left a snapshot the ledger could not name
+	// and therefore could never reclaim. Matching is by name because only
+	// Docker's ID is derivable from it; Cube and E2B mint their own and echo
+	// the name back in the listing.
+	PlannedName string `gorm:"type:varchar(255)"`
 
 	Trigger string `gorm:"type:varchar(16)"`
 	State   string `gorm:"type:varchar(16);index"`

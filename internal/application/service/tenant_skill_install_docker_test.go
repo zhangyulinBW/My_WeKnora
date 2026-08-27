@@ -30,13 +30,21 @@ func TestSkillOwnerFingerprintDocker(t *testing.T) {
 	}))
 }
 
-func TestSkillOwnerFingerprintDockerWithoutIdentity(t *testing.T) {
-	// A docker config with neither host nor cert has no account to own a
-	// snapshot; the install flow must abort rather than stamp a fake owner.
-	require.Empty(t, skillOwnerFingerprint(&types.TenantSandboxConfig{
+func TestSkillOwnerFingerprintDockerLocalDaemon(t *testing.T) {
+	// A blank host is a definite account on the docker backend: it is the
+	// "local daemon" identity, not "no owner". This is what keeps an install
+	// committed against the default socket pinned across DOCKER_HOST / docker
+	// context changes instead of being dropped as a credential rotation (see
+	// dockerLocalDaemonIdentity in the sandbox package).
+	cfg := &types.TenantSandboxConfig{
 		SandboxType: "docker",
 		Docker:      &types.DockerSandboxConfig{Image: "wechatopenai/weknora-sandbox:latest"},
-	}))
+	}
+	require.Equal(t,
+		sandbox.SkillImageFingerprint("docker", "", "local-daemon"),
+		skillOwnerFingerprint(cfg))
+
+	// A nil docker block still has no account to own a snapshot.
 	require.Empty(t, skillOwnerFingerprint(&types.TenantSandboxConfig{SandboxType: "docker"}))
 }
 

@@ -1,182 +1,242 @@
-// Snapshots for the docker backend.
-//
-// The MicroVM providers have a snapshot endpoint that freezes a sandbox into a
-// reusable template. Docker's equivalent is committing the container's
-// filesystem to an image, which is enough for the one thing snapshots are used
-// for here: carrying installed skills into every session the config boots.
-//
-// Two differences from Cube and E2B shape this file:
-//
-//   - A commit returns a content hash, but everything downstream treats a
-//     snapshot ID as something it can boot from and list. Content-addressed
-//     images have no RepoTags, so a hash would vanish from every listing. The
-//     snapshot ID is therefore a tag this file generates, not the commit hash.
-//   - A commit captures the filesystem and nothing else. Running processes do
-//     not survive, unlike a MicroVM snapshot. Skill images are installed files,
-//     so this costs nothing - but it is why these are not a general-purpose
-//     "resume where you left off" snapshot.
-
 package sandbox
 
 import (
 	"context"
-	"fmt"
 	"strings"
+	"unicode"
 
+	"github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/client"
 )
 
 const (
-	// dockerSnapshotRepository namespaces snapshot tags.
-	//
-	// It must NOT be the sandbox image's repository: isStandardTemplateImage
-	// compares repository paths, so tagging snapshots under
-	// wechatopenai/weknora-sandbox would make every skill image show up in the
-	// admin's template picker as a selectable base.
-	dockerSnapshotRepository = "weknora-skill"
+	// dockerSkillSnapshotRepo is the local image namespace every skill
+	// snapshot is committed into. It is not a registry path: these tags are
+	// never pulled, and ListTemplates hides anything under it so an admin
+	// cannot pick a baked skill image as the config's base template.
+	dockerSkillSnapshotRepo = "weknora-skill"
 
-	// dockerSnapshotLabel marks an image as a skill snapshot. Deliberately a
-	// different key from dockerTemplateLabel: the two namespaces stay disjoint,
-	// so ListTemplates keeps ignoring snapshots without needing to know they
-	// exist.
-	dockerSnapshotLabel = "com.weknora.sandbox.snapshot"
-
-	// dockerSnapshotSandboxLabel records the container a snapshot came from,
-	// which is the only way to answer ListSnapshots(sandboxID) once the
-	// container is gone.
-	dockerSnapshotSandboxLabel = "com.weknora.sandbox.snapshot.sandbox"
+	dockerSkillSnapshotLabel       = "com.weknora.sandbox.skill-snapshot"
+	dockerSkillSnapshotSourceLabel = "com.weknora.sandbox.skill-snapshot-source"
 )
 
-var _ RemoteSnapshotManager = (*DockerRemoteClient)(nil)
-
-// dockerSnapshotTag builds the snapshot ID for one sandbox.
+// CreateSnapshot commits the container's filesystem into a tagged local image.
 //
-// The container ID is the tag, not the caller's name: names are generated from
-// a short config hash plus a generation counter, so two configs on one daemon
-// can collide and silently overwrite each other's image. Container IDs cannot.
-func dockerSnapshotTag(sandboxID string) string {
-	return dockerSnapshotRepository + ":" + sandboxID
-}
-
-// isDockerSnapshotImage reports whether a reference names a skill snapshot.
-func isDockerSnapshotImage(image string) bool {
-	return normalizeImageRepository(image) == dockerSnapshotRepository
-}
-
-// dockerSnapshotIDFromTag maps a RepoTag the daemon reported back to the
-// canonical ID this file hands out.
-//
-// The daemon may echo a tag fully qualified ("docker.io/library/weknora-skill:x")
-// even though it was created short. Returning the daemon's spelling would make
-// the reaper compare it against the stored short form, decide the two differ,
-// and report a snapshot it created as an untracked extra.
-func dockerSnapshotIDFromTag(raw string) (string, bool) {
-	tag := strings.TrimSpace(raw)
-	if tag == "" || tag == "<none>:<none>" || !isDockerSnapshotImage(tag) {
-		return "", false
-	}
-	colon := strings.LastIndex(tag, ":")
-	if colon <= strings.LastIndex(tag, "/") {
-		return "", false
-	}
-	sandboxID := tag[colon+1:]
-	if sandboxID == "" || sandboxID == "<none>" {
-		return "", false
-	}
-	return dockerSnapshotTag(sandboxID), true
-}
-
-// CreateSnapshot commits a sandbox's filesystem to an image and returns the tag
-// that image can be booted from.
+// The Engine pauses the container for the duration of the commit unless we
+// opt out (we do not): that is the same "provider pauses while snapshotting"
+// contract Cube and E2B honour. The resulting tag is a template ID — Create
+// accepts it as RemoteCreateRequest.TemplateID — so the skill install path
+// needs no Docker-specific branch past this adapter.
 func (c *DockerRemoteClient) CreateSnapshot(
 	ctx context.Context, sandboxID string, name string,
 ) (RemoteSnapshotRef, error) {
-	sandboxID = strings.TrimSpace(sandboxID)
-	if sandboxID == "" {
-		return RemoteSnapshotRef{}, dockerInvalidRequest(
-			"CreateSnapshot", "sandbox ID is required")
+	id := strings.TrimSpace(sandboxID)
+	if id == "" {
+		return RemoteSnapshotRef{}, dockerInvalidRequest("CreateSnapshot", "sandbox ID is required")
+	}
+	reference, err := dockerSkillSnapshotReference(name, id)
+	if err != nil {
+		return RemoteSnapshotRef{}, err
 	}
 
-	tag := dockerSnapshotTag(sandboxID)
-	// Labels go through Changes because that is the only way ContainerCommit
-	// accepts them without replacing the whole image config: passing a Config
-	// would drop the entrypoint and working directory the container was made
-	// with.
-	changes := []string{
-		fmt.Sprintf("LABEL %s=true", dockerSnapshotLabel),
-		fmt.Sprintf("LABEL %s=%s", dockerSnapshotSandboxLabel, sandboxID),
-	}
-	if trimmed := strings.TrimSpace(name); trimmed != "" {
-		changes = append(changes, fmt.Sprintf("LABEL %s.name=%q", dockerSnapshotLabel, trimmed))
-	}
-
-	result, err := c.api.ContainerCommit(ctx, sandboxID, client.ContainerCommitOptions{
-		Reference: tag,
-		Comment:   strings.TrimSpace(name),
-		Changes:   changes,
+	committed, err := c.api.ContainerCommit(ctx, id, client.ContainerCommitOptions{
+		Reference: reference,
+		Comment:   "weknora skill snapshot",
+		Changes: []string{
+			"LABEL " + dockerSkillSnapshotLabel + "=true",
+			"LABEL " + dockerSkillSnapshotSourceLabel + "=" + id,
+		},
 	})
 	if err != nil {
 		return RemoteSnapshotRef{}, dockerError("CreateSnapshot", err)
 	}
-	if strings.TrimSpace(result.ID) == "" {
+	if strings.TrimSpace(committed.ID) == "" {
 		return RemoteSnapshotRef{}, dockerInvalidRequest(
-			"CreateSnapshot", "daemon returned an empty image ID")
+			"CreateSnapshot", "provider returned an empty snapshot ID")
 	}
-	// result.ID is the content hash. The tag is what gets returned, because the
-	// ID doubles as a template ID downstream and a hash is neither listable nor
-	// a thing ContainerCreate should be pointed at.
-	return RemoteSnapshotRef{ID: tag, Names: []string{tag}}, nil
+	return RemoteSnapshotRef{
+		ID:    dockerCanonicalSnapshotID(reference),
+		Names: []string{dockerCanonicalSnapshotID(reference)},
+	}, nil
 }
 
-// DeleteSnapshot removes a snapshot image. A missing image is not an error:
-// every adapter has to treat delete as idempotent, because the prune path
-// retries and the config-delete path runs after crashes.
+// DeleteSnapshot removes a committed skill image. A missing image is success:
+// the reaper and the install-compensation path both retry deletes.
+//
+// PruneChildren is what makes the delete reclaim anything. Each generation is
+// committed from a container started off the previous one, so generation N+1
+// holds generation N's layers as ancestors. Untagging N alone therefore frees
+// nothing while N+1 exists — which is correct and unavoidable — but the layers
+// of a chain whose every tag has been retired would stay on disk forever
+// without this, because the Go client defaults to noprune. Layers a live image
+// still references are refcounted by the daemon, so cascading here cannot take
+// the current image's storage out from under it.
 func (c *DockerRemoteClient) DeleteSnapshot(ctx context.Context, snapshotID string) error {
-	snapshotID = strings.TrimSpace(snapshotID)
-	if snapshotID == "" {
+	id := strings.TrimSpace(snapshotID)
+	if id == "" {
 		return dockerInvalidRequest("DeleteSnapshot", "snapshot ID is required")
 	}
-	// Force covers the window where a session that has not been rebuilt yet
-	// still references a superseded image; PruneChildren reclaims the untagged
-	// layers underneath, which is the bulk of the disk a stale skill image holds.
-	_, err := c.api.ImageRemove(ctx, snapshotID, client.ImageRemoveOptions{
-		Force:         true,
+	_, err := c.api.ImageRemove(ctx, id, client.ImageRemoveOptions{
 		PruneChildren: true,
 	})
-	if err == nil {
-		return nil
+	if err != nil {
+		normalized := dockerError("DeleteSnapshot", err)
+		if IsRemoteNotFound(normalized) {
+			return nil
+		}
+		return normalized
 	}
-	wrapped := dockerError("DeleteSnapshot", err)
-	if IsRemoteNotFound(wrapped) {
-		return nil
-	}
-	return wrapped
+	c.pruneDanglingSkillImages(ctx)
+	return nil
 }
 
-// ListSnapshots reports the skill snapshots on this daemon. An empty sandboxID
-// lists all of them; a non-empty one narrows to the snapshots committed from
-// that container.
+// pruneDanglingSkillImages drops skill-snapshot images that no longer carry a
+// tag. Nothing can boot one: the ledger addresses snapshots by the tag minted
+// in CreateSnapshot and never by digest, so an untagged one is unreachable by
+// construction. They are left behind by a commit whose ledger write or pointer
+// switch failed, and by every delete that ran before PruneChildren was set.
+//
+// Best effort by nature — reclaiming storage must never turn a successful
+// delete into a failed one. An image a container still holds comes back as a
+// conflict and is skipped; the next pass retries once that container is gone.
+func (c *DockerRemoteClient) pruneDanglingSkillImages(ctx context.Context) {
+	listed, err := c.api.ImageList(ctx, client.ImageListOptions{
+		All:     true,
+		Filters: client.Filters{}.Add("label", dockerSkillSnapshotLabel+"=true"),
+	})
+	if err != nil {
+		return
+	}
+	for _, item := range listed.Items {
+		if !dockerImageIsSkillSnapshot(item) || dockerImageHasTag(item) {
+			continue
+		}
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		_, _ = c.api.ImageRemove(ctx, id, client.ImageRemoveOptions{PruneChildren: true})
+	}
+}
+
+func dockerImageHasTag(item image.Summary) bool {
+	for _, tag := range item.RepoTags {
+		if strings.TrimSpace(tag) != "" && tag != "<none>:<none>" {
+			return true
+		}
+	}
+	return false
+}
+
+// ListSnapshots returns skill-snapshot images on this daemon. An empty
+// sandboxID lists every skill snapshot; a non-empty one keeps those committed
+// from that container.
 func (c *DockerRemoteClient) ListSnapshots(
 	ctx context.Context, sandboxID string,
 ) ([]RemoteSnapshotRef, error) {
-	filters := client.Filters{}.Add("label", dockerSnapshotLabel+"=true")
-	if trimmed := strings.TrimSpace(sandboxID); trimmed != "" {
-		filters = filters.Add("label", dockerSnapshotSandboxLabel+"="+trimmed)
+	filters := client.Filters{}.Add("label", dockerSkillSnapshotLabel+"=true")
+	if src := strings.TrimSpace(sandboxID); src != "" {
+		filters = filters.Add("label", dockerSkillSnapshotSourceLabel+"="+src)
 	}
-	listed, err := c.api.ImageList(ctx, client.ImageListOptions{Filters: filters})
+	listed, err := c.api.ImageList(ctx, client.ImageListOptions{All: true, Filters: filters})
 	if err != nil {
 		return nil, dockerError("ListSnapshots", err)
 	}
 
-	refs := make([]RemoteSnapshotRef, 0, len(listed.Items))
-	for _, image := range listed.Items {
-		for _, raw := range image.RepoTags {
-			id, ok := dockerSnapshotIDFromTag(raw)
-			if !ok {
-				continue
-			}
-			refs = append(refs, RemoteSnapshotRef{ID: id, Names: []string{id}})
+	wantSource := strings.TrimSpace(sandboxID)
+	out := make([]RemoteSnapshotRef, 0, len(listed.Items))
+	for _, item := range listed.Items {
+		if !dockerImageIsSkillSnapshot(item) {
+			continue
+		}
+		if wantSource != "" && item.Labels[dockerSkillSnapshotSourceLabel] != wantSource {
+			continue
+		}
+		out = append(out, dockerSnapshotRef(item))
+	}
+	return out, nil
+}
+
+func dockerImageIsSkillSnapshot(item image.Summary) bool {
+	if item.Labels[dockerSkillSnapshotLabel] == "true" {
+		return true
+	}
+	for _, tag := range item.RepoTags {
+		if dockerIsSkillSnapshotRef(tag) {
+			return true
 		}
 	}
-	return refs, nil
+	return false
+}
+
+func dockerIsSkillSnapshotRef(ref string) bool {
+	trimmed := strings.TrimSpace(ref)
+	prefix := dockerSkillSnapshotRepo + "/"
+	if strings.HasPrefix(trimmed, prefix) {
+		return true
+	}
+	// ImageList sometimes returns the docker.io/ prefix. The tag we mint
+	// never has a registry, so this is only a listing alias.
+	return strings.HasPrefix(trimmed, "docker.io/"+prefix)
+}
+
+func dockerSnapshotRef(item image.Summary) RemoteSnapshotRef {
+	names := make([]string, 0, len(item.RepoTags))
+	id := strings.TrimSpace(item.ID)
+	for _, tag := range item.RepoTags {
+		if tag == "" || tag == "<none>:<none>" {
+			continue
+		}
+		canonical := dockerCanonicalSnapshotID(tag)
+		names = append(names, canonical)
+		if dockerIsSkillSnapshotRef(canonical) && (id == "" || !dockerIsSkillSnapshotRef(id)) {
+			id = canonical
+		}
+	}
+	if id == "" && len(names) > 0 {
+		id = names[0]
+	}
+	return RemoteSnapshotRef{ID: id, Names: names}
+}
+
+func dockerCanonicalSnapshotID(ref string) string {
+	trimmed := strings.TrimPrefix(strings.TrimSpace(ref), "docker.io/")
+	return strings.TrimSuffix(trimmed, ":latest")
+}
+
+func dockerSkillSnapshotReference(name, sandboxID string) (string, error) {
+	base := dockerSanitizeImageName(name)
+	if base == "" {
+		base = dockerSanitizeImageName(sandboxID)
+	}
+	if base == "" {
+		return "", dockerInvalidRequest("CreateSnapshot", "snapshot name is required")
+	}
+	return dockerSkillSnapshotRepo + "/" + base, nil
+}
+
+// dockerSanitizeImageName maps an install-generated snapshot name onto a
+// single Docker path component: lowercase [a-z0-9] with interior - separators.
+func dockerSanitizeImageName(raw string) string {
+	var b strings.Builder
+	lastSep := true
+	for _, r := range strings.ToLower(strings.TrimSpace(raw)) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+			lastSep = false
+		case r == '.' || r == '_' || r == '-':
+			if lastSep || b.Len() == 0 {
+				continue
+			}
+			b.WriteByte('-')
+			lastSep = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	const maxName = 80
+	if len(out) > maxName {
+		out = strings.Trim(out[:maxName], "-")
+	}
+	return out
 }

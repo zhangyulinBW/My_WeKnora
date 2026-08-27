@@ -11,6 +11,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/agent/approval"
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -402,6 +403,9 @@ func (s *agentService) initializeSkillsManager(
 	if source := s.tenantSkillSource(ctx, config); source != nil {
 		skillsManager.WithTenantSource(source)
 	}
+	if resolver := s.userEnvResolver(ctx, config); resolver != nil {
+		skillsManager.WithEnvResolver(resolver)
+	}
 
 	// Initialize (discover skills)
 	if err := skillsManager.Initialize(ctx); err != nil {
@@ -424,10 +428,9 @@ func (s *agentService) initializeSkillsManager(
 
 		// list_sandbox_files / read_sandbox_file expose per-session
 		// filesystem inspection. Registration is gated on the sandbox
-		// manager advertising a SessionFileStore capability — providers
-		// that fell back to a stateless local sandbox return nil so we
-		// never surface tenant-isolated tools that would run on the
-		// WeKnora host.
+		// manager advertising a SessionFileStore capability. A manager that
+		// cannot honour that capability returns nil so we never surface
+		// tenant-isolated tools against a backend that cannot isolate them.
 		//
 		// They follow SkillsEnabled for the same reason the skill tools do:
 		// the installer agent is here only for the shell it needs to install
@@ -445,7 +448,7 @@ func (s *agentService) initializeSkillsManager(
 			}
 		}
 
-		registerSandboxShellTool(ctx, toolRegistry, sandboxMgr, config)
+		s.registerSandboxShellTool(ctx, toolRegistry, sandboxMgr, config)
 	}
 
 	return skillsManager, nil
@@ -477,6 +480,66 @@ func (s *agentService) tenantSkillSource(
 	return skills.NewTenantSkillSource(rows, func(ref string) ([]byte, error) {
 		return s.readSkillBundle(ctx, ownerTenantID, ref)
 	})
+}
+
+// userEnvResolver builds the per-caller environment resolver for this run, or
+// nil when there is no sandbox config to resolve against.
+//
+// It is built even when the run has no installed skills: the caller's
+// config-wide variables are injected into every execution, skills or not.
+//
+// The repository is constructed from s.db here rather than injected:
+// NewAgentService already takes 23 parameters, and this is the only place in
+// the agent path that touches the user env table.
+func (s *agentService) userEnvResolver(
+	ctx context.Context, config *types.AgentConfig,
+) skills.SkillEnvResolver {
+	configID := config.SandboxConfigID
+	if configID == "" {
+		return nil
+	}
+	rows := config.TenantSkills
+	if s.db == nil {
+		// Unreachable in production, but a wiring regression here would drop
+		// every admin and user value silently and present to a member as "my
+		// key stopped working" with nothing in the logs.
+		logger.Warnf(ctx,
+			"[skill] no database handle: sandbox config %s will run without "+
+				"any configured environment variable", configID)
+		return nil
+	}
+	// The workspace is read off a row for the same reason tenantSkillSource
+	// does it: the rows were fetched under the caller's workspace, and a value
+	// must never be looked up in a different one. With no rows there is nothing
+	// to disagree with the context.
+	tenantID, _ := types.TenantIDFromContext(ctx)
+	if len(rows) > 0 {
+		tenantID = rows[0].TenantID
+	}
+	if tenantID == 0 {
+		return nil
+	}
+	return NewUserEnvResolver(rows, repository.NewTenantSkillRepository(s.db), tenantID, configID)
+}
+
+// skillEnvCapture writes declared skill credentials a successful shell_exec
+// already used, for the current principal. Nil when there is nothing to write
+// against. Errors stay inside the callback so a failed persist cannot change
+// the tool result the model already received.
+func (s *agentService) skillEnvCapture(config *types.AgentConfig) tools.SkillEnvCapture {
+	if s.db == nil || config == nil || config.SandboxConfigID == "" {
+		return nil
+	}
+	configID := config.SandboxConfigID
+	return func(ctx context.Context, skillName string, pairs map[string]string) {
+		svc := NewUserEnvService(
+			repository.NewTenantSkillRepository(s.db),
+			repository.NewTenantSandboxConfigRepository(s.db),
+		)
+		if err := svc.CaptureSkillEnv(ctx, configID, skillName, pairs); err != nil {
+			logger.Warnf(ctx, "[skill] capture env for %s failed: %v", skillName, err)
+		}
+	}
 }
 
 // readSkillBundle downloads one uploaded skill archive. It backs read_skill for
@@ -519,8 +582,8 @@ func (s *agentService) readSkillBundle(
 // entitled to.
 //
 // shell_exec is a remote-only capability: the capability accessors yield nil
-// for stateless backends and for a SessionBoundManager that fell back to
-// LocalSandbox, so the same check works for every provider.
+// for backends that cannot run session-scoped shell, so the same check works
+// for every provider.
 //
 // The skill installer agent gets the install-mode variant, which runs as root
 // and may work inside the skills image root — it exists to install
@@ -529,7 +592,7 @@ func (s *agentService) readSkillBundle(
 // AgentConfig.SkillInstallMode is settable only through
 // EnableSkillInstallMode, which refuses every agent but the built-in
 // installer, so no tenant agent can reach this branch.
-func registerSandboxShellTool(
+func (s *agentService) registerSandboxShellTool(
 	ctx context.Context,
 	toolRegistry *tools.ToolRegistry,
 	sandboxMgr sandbox.Manager,
@@ -545,7 +608,10 @@ func registerSandboxShellTool(
 		return
 	}
 	if executor := sessionSandboxShellExecutor(sandboxMgr); executor != nil {
-		toolRegistry.RegisterTool(tools.NewShellExecTool(executor))
+		resolver := s.userEnvResolver(ctx, config)
+		toolRegistry.RegisterTool(
+			tools.NewShellExecTool(executor, resolver).WithEnvCapture(s.skillEnvCapture(config)),
+		)
 		logger.Infof(ctx, "Registered shell_exec tool")
 	} else {
 		logger.Infof(ctx, "Sandbox backend does not advertise remote shell capability; shell_exec not registered")
@@ -758,7 +824,6 @@ func (s *agentService) registerTools(
 				s.chunkService,
 				config.SearchTargets,
 				rerankModel,
-				chatModel,
 				s.cfg,
 			)
 		case tools.ToolGrepChunks:

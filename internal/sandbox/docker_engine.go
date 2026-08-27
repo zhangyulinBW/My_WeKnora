@@ -47,12 +47,6 @@ type dockerEngineAPI interface {
 	ContainerRemove(
 		ctx context.Context, containerID string, options client.ContainerRemoveOptions,
 	) (client.ContainerRemoveResult, error)
-	// ContainerCommit is how this backend takes a snapshot: the MicroVM
-	// providers have a snapshot endpoint, Docker has "commit the filesystem to
-	// an image". See docker_snapshot.go.
-	ContainerCommit(
-		ctx context.Context, containerID string, options client.ContainerCommitOptions,
-	) (client.ContainerCommitResult, error)
 
 	ExecCreate(
 		ctx context.Context, containerID string, options client.ExecCreateOptions,
@@ -74,11 +68,16 @@ type dockerEngineAPI interface {
 	) (client.ImageInspectResult, error)
 	ImagePull(ctx context.Context, refStr string, options client.ImagePullOptions) (client.ImagePullResponse, error)
 	ImageList(ctx context.Context, options client.ImageListOptions) (client.ImageListResult, error)
-	// ImageRemove deletes a snapshot image. Snapshots are images here, so
-	// releasing one is an image delete rather than a provider API call.
 	ImageRemove(
 		ctx context.Context, imageID string, options client.ImageRemoveOptions,
 	) (client.ImageRemoveResult, error)
+
+	// ContainerCommit is a long call (a large skill image can take well
+	// over the short RPC budget), so the timeout wrapper leaves it on the
+	// caller's context the way it does ImagePull.
+	ContainerCommit(
+		ctx context.Context, containerID string, options client.ContainerCommitOptions,
+	) (client.ContainerCommitResult, error)
 }
 
 var _ dockerEngineAPI = (*client.Client)(nil)
@@ -90,9 +89,10 @@ var _ dockerEngineAPI = (*client.Client)(nil)
 const DefaultDockerHost = "unix:///var/run/docker.sock"
 
 // DefaultDockerHTTPTimeout bounds a single short Engine API call (ping, create,
-// inspect, list, delete, exec create/inspect). Streaming calls — image pull,
-// exec hijack, archive copy — use the caller's context instead, because
-// http.Client.Timeout would kill them mid-body.
+// inspect, list, exec create/inspect). Streaming and long storage calls —
+// image pull, image remove with prune, commit, exec hijack, archive copy —
+// use the caller's context instead, because a 30s deadline would kill them
+// mid-body.
 const DefaultDockerHTTPTimeout = 30 * time.Second
 
 // DefaultDockerIdleTTL is how long a session container may go without an exec

@@ -50,13 +50,15 @@ type sandboxSkillService interface {
 	ReadSkillFile(
 		ctx context.Context, tenantID uint64, configID, skillID, relativePath string,
 	) (*service.SkillFileContent, error)
-	SetSkillEnabled(
-		ctx context.Context, tenantID uint64, configID, skillID string, enabled bool,
+	UpdateSkillAdmin(
+		ctx context.Context, tenantID uint64, configID, skillID string,
+		update service.SkillAdminUpdate,
 	) (*types.TenantSkillEntity, error)
 	InstallSkill(ctx context.Context, tenantID uint64, configID string, archive []byte) (string, error)
 	InstallSkillFromSource(
 		ctx context.Context, tenantID uint64, configID, source string,
 	) (string, error)
+	ReinstallSkill(ctx context.Context, tenantID uint64, configID, skillID string) (string, error)
 	RemoveSkill(ctx context.Context, tenantID uint64, configID, skillID string) error
 	LastProgress(
 		ctx context.Context, tenantID uint64, configID, skillID string,
@@ -110,6 +112,34 @@ type skillResponse struct {
 	InstallMessageID    string    `json:"install_message_id,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
+
+	Envs []skillEnvResponse `json:"envs,omitempty"`
+}
+
+// skillEnvResponse is one declared environment variable. It reports whether a
+// workspace value exists and never what it is: a stored credential is written
+// once and read only by the sandbox that needs it.
+type skillEnvResponse struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	IsSet       bool   `json:"is_set"`
+}
+
+func toSkillEnvResponses(envs types.SkillEnvVars) []skillEnvResponse {
+	if len(envs) == 0 {
+		return nil
+	}
+	out := make([]skillEnvResponse, 0, len(envs))
+	for _, entry := range envs {
+		out = append(out, skillEnvResponse{
+			Name:        entry.Name,
+			Description: entry.Description,
+			Required:    entry.Required,
+			IsSet:       entry.Value != "",
+		})
+	}
+	return out
 }
 
 func toSkillResponse(e *types.TenantSkillEntity) skillResponse {
@@ -130,6 +160,7 @@ func toSkillResponse(e *types.TenantSkillEntity) skillResponse {
 		InstallMessageID:    e.InstallMessageID,
 		CreatedAt:           e.CreatedAt,
 		UpdatedAt:           e.UpdatedAt,
+		Envs:                toSkillEnvResponses(e.Envs),
 	}
 }
 
@@ -351,20 +382,49 @@ func (h *SandboxSkillHandler) installFromSource(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"success": true, "data": gin.H{"skill_id": skillID}})
 }
 
+// Reinstall godoc
+// @Summary      Retry a skill install
+// @Description  Retry a failed install from the stored archive; does not re-upload.
+// @Tags         SandboxConfig
+// @Produce      json
+// @Param        id       path      string  true  "Sandbox config ID"
+// @Param        skillId  path      string  true  "Skill ID"
+// @Success      202      {object}  map[string]interface{}  "Reinstall accepted"
+// @Failure      400      {object}  apperrors.AppError      "The stored archive is gone"
+// @Failure      401      {object}  map[string]interface{}  "Unauthorized"
+// @Failure      404      {object}  apperrors.AppError      "Skill not found"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /sandbox-configs/{id}/skills/{skillId}/reinstall [post]
+func (h *SandboxSkillHandler) Reinstall(c *gin.Context) {
+	skillID, err := h.service.ReinstallSkill(
+		c.Request.Context(), sandboxConfigTenantID(c), c.Param("id"), c.Param("skillId"),
+	)
+	if err != nil {
+		respondSkillServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"success": true, "data": gin.H{"skill_id": skillID}})
+}
+
 func skillTooLargeError() error {
 	return apperrors.NewBadRequestError(
 		fmt.Sprintf("skill bundle cannot exceed %d MB", secutils.GetMaxFileSizeMB()))
 }
 
 type skillPatchRequest struct {
-	// Enabled is a pointer because its absence is a bad request rather than a
-	// request to disable the skill.
+	// Enabled is a pointer because its absence is not a request to disable the
+	// skill; a body may carry envs instead.
 	Enabled *bool `json:"enabled"`
+	// Envs is a pointer to a map because "sent an empty object" and "did not
+	// mention envs" are different requests: the first clears what it names,
+	// the second must leave every stored value alone.
+	Envs *map[string]string `json:"envs"`
 }
 
 // Patch godoc
 // @Summary      Update an installed skill
-// @Description  Show or hide an installed skill. The files stay in the image either way; removal is a separate flow.
+// @Description  Show or hide an installed skill and set the workspace-wide values of the environment variables it declared. Either field may be sent, or both. The files stay in the image either way; removal is a separate flow.
 // @Tags         SandboxConfig
 // @Accept       json
 // @Produce      json
@@ -384,12 +444,23 @@ func (h *SandboxSkillHandler) Patch(c *gin.Context) {
 		_ = c.Error(apperrors.NewBadRequestError(err.Error()))
 		return
 	}
-	if req.Enabled == nil {
-		_ = c.Error(apperrors.NewBadRequestError("enabled is required"))
+	if req.Enabled == nil && req.Envs == nil {
+		_ = c.Error(apperrors.NewBadRequestError("enabled or envs is required"))
 		return
 	}
-	updated, err := h.service.SetSkillEnabled(c.Request.Context(), sandboxConfigTenantID(c),
-		c.Param("id"), c.Param("skillId"), *req.Enabled)
+
+	ctx := c.Request.Context()
+	tenantID := sandboxConfigTenantID(c)
+	configID, skillID := c.Param("id"), c.Param("skillId")
+
+	// Both fields go down in one call so the request is all-or-nothing: two
+	// service calls could persist the toggle and then fail the values, which
+	// is exactly what a half-applied credential rotation looks like.
+	update := service.SkillAdminUpdate{Enabled: req.Enabled}
+	if req.Envs != nil {
+		update.EnvValues = *req.Envs
+	}
+	updated, err := h.service.UpdateSkillAdmin(ctx, tenantID, configID, skillID, update)
 	if err != nil {
 		_ = c.Error(err)
 		return

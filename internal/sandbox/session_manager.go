@@ -18,11 +18,6 @@
 //   - An Execute call with an empty SessionID falls through to a stateless
 //     RemoteSandbox, which allocates a fresh sandbox, runs the script, and
 //     tears the sandbox down after Execute returns.
-//   - When the remote provider's Health probe fails at construction time and
-//     config.FallbackEnabled is true, the manager falls back to LocalSandbox.
-//     Every session-scoped capability (shell exec, file staging, session
-//     filesystem inspection) then refuses to run on the host: those calls
-//     require a real remote provider.
 //   - Cube and E2B reap idle sandboxes themselves. Docker has no provider TTL,
 //     so that backend runs its own idle sweep against activity-marker mtimes.
 package sandbox
@@ -33,7 +28,6 @@ import (
 	"fmt"
 	"log"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +48,12 @@ const SessionOutputRoot = "/workspace/output"
 // skillOutputEnvVar matches the skills manager's WEKNORA_SKILL_OUTPUT_DIR.
 const skillOutputEnvVar = "WEKNORA_SKILL_OUTPUT_DIR"
 
+// sessionInputEnvVar matches the skills manager's WEKNORA_SESSION_INPUT_DIR.
+// Both names are injected into the sandbox environment itself, not only into
+// the skill-script Execute call, so an agent exploring with shell_exec reads
+// the same paths the skills framework uses.
+const sessionInputEnvVar = "WEKNORA_SESSION_INPUT_DIR"
+
 // SessionWorkspaceRoot is the writable workspace root inside remote sandboxes.
 // shell_exec work_dir must stay underneath this path.
 const SessionWorkspaceRoot = "/workspace"
@@ -69,9 +69,9 @@ const sessionLifecycleCleanupTimeout = 30 * time.Second
 
 // SessionBoundManager is a sandbox.Manager that binds one remote sandbox per
 // tenant session. Concrete provider work is delegated to RemoteSandboxClient;
-// this type owns validation, fallback, and the mapping between application
-// concepts (ExecuteConfig, session-scoped shell/file APIs) and the provider-
-// neutral RemoteSandboxClient contract.
+// this type owns validation and the mapping between application concepts
+// (ExecuteConfig, session-scoped shell/file APIs) and the provider-neutral
+// RemoteSandboxClient contract.
 type SessionBoundManager struct {
 	config    *Config
 	validator *ScriptValidator
@@ -82,13 +82,7 @@ type SessionBoundManager struct {
 	lifecycle *remoteSessionLifecycle
 	ephemeral *RemoteSandbox
 
-	// fallback is used when the remote provider's health probe fails at
-	// construction time. Nil when the remote provider is healthy.
-	fallback Sandbox
-
-	// activeType is the effective sandbox type callers observe. It equals
-	// client.Provider() in the normal path and the fallback sandbox's Type()
-	// after Local fallback engages.
+	// activeType is the effective sandbox type callers observe.
 	activeType SandboxType
 
 	// mu guards Cleanup's idempotency flag.
@@ -110,9 +104,9 @@ type SessionBoundManagerConfig struct {
 	// touching another that shares the same provider account.
 	ConfigID string
 
-	// SkipHealthProbe skips the construction-time Health() round-trip and,
-	// with it, the Local fallback. Set by the per-tenant resolver, which
-	// builds a manager per request. See NewSessionBoundManager.
+	// SkipHealthProbe skips the construction-time Health() round-trip.
+	// Set by the per-tenant resolver, which builds a manager per request.
+	// See NewSessionBoundManager.
 	SkipHealthProbe bool
 }
 
@@ -124,10 +118,6 @@ type SessionBoundManagerConfig struct {
 // Provider identity comes from deps.Client.Provider() — not Config.Type —
 // so test harnesses and custom wiring that inject a different client backend
 // always project the correct template, TTL, and health timeout.
-//
-// When the client's Health probe fails and config.FallbackEnabled is true,
-// the manager transparently falls back to LocalSandbox for ephemeral Execute
-// calls. Session-scoped capabilities remain refused in that mode.
 func NewSessionBoundManager(deps SessionBoundManagerConfig) (*SessionBoundManager, error) {
 	cfg := deps.Config
 	if cfg == nil {
@@ -204,10 +194,9 @@ func NewSessionBoundManager(deps SessionBoundManagerConfig) (*SessionBoundManage
 	}
 
 	// Per-tenant managers are rebuilt on every request, so probing here would
-	// add a remote round-trip to each one. Skipping also disables the Local
-	// fallback below, which is deliberate: when a tenant explicitly configures
-	// a backend, silently running their scripts in a local process is a
-	// surprising, security-relevant downgrade. Failing loudly is correct.
+	// add a remote round-trip to each one. When a tenant explicitly configures
+	// a backend, an unreachable provider must fail at first use rather than
+	// substituting a different execution environment.
 	if deps.SkipHealthProbe {
 		return m, nil
 	}
@@ -219,19 +208,12 @@ func NewSessionBoundManager(deps SessionBoundManagerConfig) (*SessionBoundManage
 	)
 	defer cancel()
 	if err := deps.Client.Health(probeCtx); err != nil {
-		if !cfg.FallbackEnabled {
-			return nil, fmt.Errorf("remote sandbox provider unavailable: %w", err)
-		}
-		log.Printf("[sandbox] remote provider %s unhealthy (%v); falling back to local sandbox",
-			provider, err)
-		m.fallback = NewLocalSandbox(cfg)
-		m.activeType = m.fallback.Type()
+		return nil, fmt.Errorf("remote sandbox provider unavailable: %w", err)
 	}
 	return m, nil
 }
 
-// GetType reports the current effective sandbox type. Returns the fallback
-// type after Local fallback engages.
+// GetType reports the current effective sandbox type.
 func (m *SessionBoundManager) GetType() SandboxType {
 	if m == nil {
 		return SandboxTypeDisabled
@@ -242,17 +224,14 @@ func (m *SessionBoundManager) GetType() SandboxType {
 }
 
 // GetSandbox exposes a diagnostic Sandbox for callers that need to inspect
-// availability. Returns the fallback when engaged, otherwise a stateless
-// RemoteSandbox surface for the current provider.
+// availability. Returns a stateless RemoteSandbox surface for the current
+// provider.
 func (m *SessionBoundManager) GetSandbox() Sandbox {
 	if m == nil {
 		return nil
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if m.fallback != nil {
-		return m.fallback
-	}
 	return m.ephemeral
 }
 
@@ -269,7 +248,6 @@ func (m *SessionBoundManager) Execute(ctx context.Context, cfg *ExecuteConfig) (
 		m.mu.RUnlock()
 		return nil, ErrSandboxDisabled
 	}
-	fallback := m.fallback
 	m.mu.RUnlock()
 
 	if !cfg.SkipValidation {
@@ -283,15 +261,6 @@ func (m *SessionBoundManager) Execute(ctx context.Context, cfg *ExecuteConfig) (
 		}
 	}
 
-	if fallback != nil {
-		if strings.TrimSpace(cfg.SessionID) != "" {
-			return nil, fmt.Errorf(
-				"sandbox: session-scoped execution requires the remote provider (current mode: %s)",
-				m.fallback.Type(),
-			)
-		}
-		return fallback.Execute(ctx, cfg)
-	}
 	if strings.TrimSpace(cfg.SessionID) == "" {
 		return m.ephemeral.Execute(ctx, cfg)
 	}
@@ -300,63 +269,105 @@ func (m *SessionBoundManager) Execute(ctx context.Context, cfg *ExecuteConfig) (
 	if err != nil {
 		return nil, err
 	}
-	m.ensureExecutionOutputDir(ctx, handle, cfg)
+	m.ensureSessionWorkspaceDirs(ctx, handle, executionOutputDir(cfg))
 	return m.ephemeral.ExecuteOnHandle(ctx, handle, cfg)
 }
 
-// ensureExecutionOutputDir creates the skill artifact directory and makes sure
-// DefaultSandboxExecUser can write to it before script execution.
+// ensureSessionWorkspaceDirs materialises the input and artifact directories
+// and makes sure DefaultSandboxExecUser can write to them. It runs before
+// every operation rather than only before script execution: a snapshot-derived
+// image has no /workspace tree at all (skill install wipes it before the
+// snapshot), an agent that explores with shell_exec first would otherwise find
+// neither directory, and a later `rm -rf` of those paths must be repaired
+// rather than left missing until the process restarts.
 //
-// This runs AS that account, never as root. The directory sits inside the
-// session's own writable workspace, and chown/chmod follow symlinks, so a
+// This runs AS the sandbox account, never as root. The directories sit inside
+// the session's own writable workspace, and chown/chmod follow symlinks, so a
 // root-run bootstrap can be aimed at any directory in the container: a session
 // that swaps its artifact directory for a link to /etc gets handed ownership of
 // /etc, and from there uid 0 by rewriting passwd. Running as the sandbox
-// account makes that a no-op — chown succeeds on the directory MakeDir just
-// created for it and is refused by the kernel on anything else.
+// account makes that a no-op — the kernel refuses everything the account does
+// not already own.
 //
-// Best-effort: failures are logged and do not abort the upcoming execution.
-func (m *SessionBoundManager) ensureExecutionOutputDir(
+// The command is a no-op when the directories already exist and are writable,
+// so repeating it is cheap relative to recreating a missing tree. Best-effort:
+// failures are logged and do not abort the upcoming operation.
+func (m *SessionBoundManager) ensureSessionWorkspaceDirs(
 	ctx context.Context,
 	handle RemoteSandboxHandle,
-	cfg *ExecuteConfig,
+	outputDir string,
 ) {
-	if m == nil || m.client == nil || handle == nil {
-		return
-	}
-	outputDir := executionOutputDir(cfg)
-	if outputDir == "" {
+	if m == nil || m.client == nil || handle == nil || outputDir == "" {
 		return
 	}
 	execUser := DefaultSandboxExecUser
-	if err := m.client.MakeDir(ctx, handle, outputDir); err != nil {
-		log.Printf("[sandbox] ensure output dir %s failed: %v", outputDir, err)
-		return
-	}
-	quoted := strconv.Quote(outputDir)
-	line := fmt.Sprintf(
-		"chown %s:%s %s && chmod 775 %s",
-		execUser, execUser, quoted, quoted,
-	)
 	result, err := m.client.Exec(ctx, handle, RemoteExecRequest{
 		Shell:   true,
-		Command: line,
+		Command: workspaceBootstrapCommand(SessionInputRoot, outputDir),
 		User:    execUser,
 		Timeout: sessionArtifactDirBootstrapTimeout,
 	})
-	if err != nil {
+	switch {
+	case err != nil:
 		log.Printf(
-			"[sandbox] grant output dir %s to %s failed: %v",
-			outputDir, execUser, err,
+			"[sandbox] prepare workspace dirs (%s, %s) for %s failed: %v",
+			SessionInputRoot, outputDir, execUser, err,
 		)
 		return
-	}
-	if result != nil && result.ExitCode != 0 {
+	case result != nil && result.ExitCode != 0:
+		// The account cannot create or take over these directories, which
+		// means /workspace itself does not belong to it. No runtime step can
+		// repair that; the image or template has to be rebuilt from a base
+		// where /workspace is owned by the sandbox account.
 		log.Printf(
-			"[sandbox] grant output dir %s to %s: exit=%d stderr=%s",
-			outputDir, execUser, result.ExitCode, strings.TrimSpace(result.Stderr),
+			"[sandbox] prepare workspace dirs (%s, %s) for %s: exit=%d stderr=%s "+
+				"— rebuild the sandbox image/template so /workspace is owned by %s",
+			SessionInputRoot, outputDir, execUser,
+			result.ExitCode, strings.TrimSpace(result.Stderr), execUser,
 		)
 	}
+}
+
+// workspaceBootstrapCommand builds the repair script the sandbox account runs.
+//
+// Each directory is handled in three steps because all three states occur in
+// the field: missing (snapshot images carry no /workspace tree), present but
+// not a directory (a symlink an earlier turn left behind), and present but
+// owned by another account (a provider whose filesystem API creates
+// directories as root). The last one is repaired by moving the directory aside
+// instead of chowning it: deletion rights come from the parent, so the account
+// that owns /workspace can always replace a child it does not own, and nothing
+// here needs privileges.
+func workspaceBootstrapCommand(dirs ...string) string {
+	quoted := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		quoted = append(quoted, ShellQuote(dir))
+	}
+	return fmt.Sprintf(
+		`set -e; for d in %s; do `+
+			`if [ -d "$d" ] && [ -w "$d" ] && [ ! -L "$d" ]; then continue; fi; `+
+			`if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then rm -f "$d"; fi; `+
+			`[ -d "$d" ] || mkdir -p "$d"; `+
+			`if [ ! -w "$d" ]; then mv -f "$d" "$d.unwritable.$(date +%%s)"; mkdir "$d"; fi; `+
+			`chmod 775 "$d"; done`,
+		strings.Join(quoted, " "),
+	)
+}
+
+// withWorkspaceEnvDefaults stamps the workspace paths onto the sandbox's own
+// environment. A tenant-configured value wins: an operator who points the
+// artifact directory somewhere else must not have it overwritten here.
+func withWorkspaceEnvDefaults(env map[string]string) map[string]string {
+	if env == nil {
+		env = make(map[string]string, 2)
+	}
+	if strings.TrimSpace(env[skillOutputEnvVar]) == "" {
+		env[skillOutputEnvVar] = SessionOutputRoot
+	}
+	if strings.TrimSpace(env[sessionInputEnvVar]) == "" {
+		env[sessionInputEnvVar] = SessionInputRoot
+	}
+	return env
 }
 
 // executionOutputDir resolves the artifact directory for this Execute call.
@@ -690,6 +701,11 @@ func (m *SessionBoundManager) ExecShellCommandWithOptions(
 	if err != nil {
 		return nil, err
 	}
+	// The model reaches the sandbox through this path too, and typically
+	// before any skill script runs. Without the same bootstrap it would find
+	// no artifact directory and no place to read attachments from, and would
+	// improvise somewhere the collector never looks.
+	m.ensureSessionWorkspaceDirs(ctx, handle, SessionOutputRoot)
 	if workDir != "" {
 		if mkErr := m.client.MakeDir(ctx, handle, workDir); mkErr != nil {
 			log.Printf("[sandbox] shell_exec: MakeDir %s failed (continuing): %v", workDir, mkErr)
@@ -719,9 +735,8 @@ func (m *SessionBoundManager) ExecShellCommandWithOptions(
 	return remoteExecuteResult(execResult, execErr, duration), nil
 }
 
-// SessionShellExecutor advertises the shell-execution capability while a
-// real remote backend is active. Returns nil after Local fallback engages so
-// the tool layer refuses to run shell commands on the host machine.
+// SessionShellExecutor advertises the shell-execution capability while the
+// manager is open.
 func (m *SessionBoundManager) SessionShellExecutor() SessionShellExecutor {
 	if m == nil || m.remoteDisabled() {
 		return nil
@@ -730,8 +745,6 @@ func (m *SessionBoundManager) SessionShellExecutor() SessionShellExecutor {
 }
 
 // SessionInstallShellExecutor advertises the privileged install-mode shell.
-// Same nil contract as SessionShellExecutor: after Local fallback engages the
-// capability disappears, so an install can never run on the host machine.
 func (m *SessionBoundManager) SessionInstallShellExecutor() SessionInstallShellExecutor {
 	if m == nil || m.remoteDisabled() {
 		return nil
@@ -756,7 +769,7 @@ func (m *SessionBoundManager) SessionFileStore() SessionFileStore {
 // here: their lifecycle is authoritative in the binding store and would
 // leak to any other WeKnora replica if this replica reaped them on shutdown.
 // Providers reclaim idle sandboxes via their own timeout/pause policies.
-func (m *SessionBoundManager) Cleanup(ctx context.Context) error {
+func (m *SessionBoundManager) Cleanup(_ context.Context) error {
 	if m == nil {
 		return nil
 	}
@@ -766,12 +779,7 @@ func (m *SessionBoundManager) Cleanup(ctx context.Context) error {
 		return nil
 	}
 	m.closed = true
-	fallback := m.fallback
 	m.mu.Unlock()
-
-	if fallback != nil {
-		return fallback.Cleanup(ctx)
-	}
 	return nil
 }
 
@@ -931,9 +939,12 @@ func (m *SessionBoundManager) sessionKey(
 }
 
 func (m *SessionBoundManager) remoteDisabled() bool {
+	if m == nil {
+		return true
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.fallback != nil || m.closed
+	return m.closed
 }
 
 func (m *SessionBoundManager) requireRemoteBackend() error {
@@ -944,12 +955,6 @@ func (m *SessionBoundManager) requireRemoteBackend() error {
 	defer m.mu.RUnlock()
 	if m.closed {
 		return ErrSandboxDisabled
-	}
-	if m.fallback != nil {
-		return fmt.Errorf(
-			"sandbox: remote-only capability requires the remote provider (current mode: %s)",
-			m.fallback.Type(),
-		)
 	}
 	return nil
 }
@@ -1009,7 +1014,7 @@ func cleanSessionWorkDir(workDir string, allowSkillsRoot bool) (string, error) {
 // authoritative source of identity — it selects the correct Config fields so
 // Cube and E2B never read each other's templates or TTLs.
 func buildSessionCreateRequest(provider RemoteProvider, cfg *Config) (RemoteCreateRequest, error) {
-	envVars := cloneMetadata(cfg.EnvVars)
+	envVars := withWorkspaceEnvDefaults(cloneMetadata(cfg.EnvVars))
 
 	switch provider {
 	case SandboxTypeCube:
