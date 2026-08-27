@@ -217,6 +217,11 @@ func (c *DockerRemoteClient) Provider() RemoteProvider { return SandboxTypeDocke
 // SupportsVolumes is false until the volume-mount surface is mapped onto
 // Docker named volumes; advertising it early would let a workspace configure
 // a mount that silently never appears.
+//
+// SupportsSnapshots is true because a committed image is a bootable template,
+// which is all a skill image needs. It is not the MicroVM providers' snapshot:
+// docker commit captures the filesystem only, never running processes. That
+// costs nothing here, since a skill image is installed files.
 func (c *DockerRemoteClient) Capabilities() RemoteSandboxCapabilities {
 	return RemoteSandboxCapabilities{
 		SupportsReconnect:             true,
@@ -225,6 +230,7 @@ func (c *DockerRemoteClient) Capabilities() RemoteSandboxCapabilities {
 		SupportsPauseResume:           true,
 		SupportsTimeoutRefresh:        false,
 		SupportsFilesystemEnumeration: true,
+		SupportsSnapshots:             true,
 		SupportsVolumes:               false,
 	}
 }
@@ -1040,6 +1046,15 @@ func dockerEntryType(findType string) RemoteDirEntryType {
 func (c *DockerRemoteClient) ensureImage(ctx context.Context, image string) error {
 	if _, err := c.api.ImageInspect(ctx, image); err == nil {
 		return nil
+	}
+	// A skill snapshot is committed locally and pushed nowhere, so a miss here
+	// means it was pruned or the config was moved to a different daemon. Pulling
+	// would spend the whole budget failing against a registry that never had it,
+	// and report a registry error for what is really a stale skill image.
+	if isDockerSnapshotImage(image) {
+		return dockerInvalidRequest("Create", fmt.Sprintf(
+			"skill snapshot image %s is not on this daemon; "+
+				"reinstall the skills to rebuild it", image))
 	}
 	pullCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dockerImagePullBudget)
 	defer cancel()

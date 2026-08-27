@@ -6,6 +6,10 @@
 *.go text eol=lf
 cli/acceptance/testdata/**/*.json text eol=lf
 
+# TypeScript is read by a Go test that splits on "\n"; CRLF checkouts would
+# leave stray "\r" in the capability keys and break the parse.
+*.ts text eol=lf
+
 # Trellis: append-only developer journals should merge cleanly across
 # parallel sessions/worktrees — each session only appends a new block, so
 # there is nothing to actually conflict on.

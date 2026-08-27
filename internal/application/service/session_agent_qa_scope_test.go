@@ -113,3 +113,26 @@ func TestConfigureSkillsFromAgentDoesNotLoadHostPreloadedDir(t *testing.T) {
 	assert.Empty(t, cfg.SkillDirs,
 		"the host skills/preloaded tree is not what the sandbox image carries")
 }
+
+func TestSkillDirsFallback(t *testing.T) {
+	installed := []*types.TenantSkillEntity{{Name: "ppt-generator"}}
+
+	t.Run("used when the config carries no skill image", func(t *testing.T) {
+		assert.Equal(t, []string{"/srv/skills"},
+			skillDirsFallback(true, nil, "/srv/skills"))
+	})
+
+	t.Run("the image wins whenever it carries skills", func(t *testing.T) {
+		assert.Nil(t, skillDirsFallback(true, installed, "/srv/skills"),
+			"preloaded skills are a fallback, never an addition")
+	})
+
+	t.Run("disabled skills read nothing from the host", func(t *testing.T) {
+		assert.Nil(t, skillDirsFallback(false, nil, "/srv/skills"))
+	})
+
+	t.Run("a missing preloaded tree offers no skills", func(t *testing.T) {
+		assert.Nil(t, skillDirsFallback(true, nil, ""),
+			"a directory with no SKILL.md would register read_skill against nothing")
+	})
+}

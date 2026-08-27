@@ -520,6 +520,10 @@ let templatePollTimer: ReturnType<typeof setTimeout> | undefined
 // settings. All four backends still share the same save/check API.
 const isRemoteBackend = computed(() => backend.value === 'cube' || backend.value === 'e2b')
 const hasImageCatalog = computed(() => isRemoteBackend.value || backend.value === 'docker')
+// A skill is installed into a snapshot image, so the Skills step only appears
+// for backends that can produce one. Cube and E2B snapshot natively; Docker
+// snapshots via container commit. The local backend has no image to bake into.
+const supportsSkillImages = computed(() => backend.value === 'cube' || backend.value === 'e2b' || backend.value === 'docker')
 const currentTemplateId = computed(() => (
   backend.value === 'cube' ? cube.template_id : backend.value === 'e2b' ? e2b.template_id : ''
 )?.trim() || '')
@@ -532,10 +536,11 @@ const wizardSteps = computed<Array<{ key: SandboxStepKey; title: string }>>(() =
     steps.push({ key: 'template', title: t('settings.sandbox.stepTemplate') })
   }
   steps.push({ key: 'runtime', title: t('settings.sandbox.stepRuntime') })
-  // Skills are baked into the config's snapshot image, which only the remote
-  // backends have. Docker and local configs therefore end at runtime rather
-  // than showing a step that could never do anything.
-  if (isRemoteBackend.value) {
+  // Skills are baked into the config's snapshot image. Cube, E2B and Docker
+  // can all produce one now that the Docker backend snapshots via container
+  // commit; only the local backend has no image to bake into, so its config
+  // ends at runtime rather than showing a step that could never do anything.
+  if (supportsSkillImages.value) {
     steps.push({ key: 'skills', title: t('settings.sandbox.stepSkills') })
   }
   return steps

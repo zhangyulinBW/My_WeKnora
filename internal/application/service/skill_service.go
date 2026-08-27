@@ -64,6 +64,23 @@ func getPreloadedSkillsDir() string {
 	return DefaultPreloadedSkillsDir
 }
 
+// existingPreloadedSkillsDir returns the preloaded skills directory only when it
+// actually exists on disk, and "" otherwise.
+//
+// getPreloadedSkillsDir falls back to the bare relative path even when nothing
+// is there, which is right for the listing service (it creates the directory so
+// an operator can drop skills in). A chat turn must not do that: handing the
+// agent engine a directory with no SKILL.md would make offerSkills true and
+// register read_skill against an empty catalogue. Resolved once because the
+// directory cannot change while the process runs.
+var existingPreloadedSkillsDir = sync.OnceValue(func() string {
+	dir := getPreloadedSkillsDir()
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return ""
+	}
+	return dir
+})
+
 // ensureInitialized initializes the loader if not already done
 func (s *skillService) ensureInitialized(ctx context.Context) error {
 	s.mu.Lock()

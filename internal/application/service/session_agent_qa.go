@@ -362,6 +362,13 @@ func (s *sessionService) buildAgentConfig(
 		// line is worth reading.
 		logger.Infof(ctx, "Sandbox config %s offers %d installed skill(s) to this run",
 			skillConfigID, len(tenantSkills))
+	} else if dirs := skillDirsFallback(
+		agentConfig.SkillsEnabled, tenantSkills, existingPreloadedSkillsDir(),
+	); len(dirs) > 0 {
+		agentConfig.SkillDirs = dirs
+		logger.Infof(ctx,
+			"Sandbox config %s carries no skill image; falling back to preloaded skills in %s",
+			skillConfigID, dirs[0])
 	}
 
 	// Resolve knowledge bases using shared helper
@@ -610,6 +617,34 @@ func dedupPreservingOrder(values []string) []string {
 // The skills themselves come from the sandbox image (TenantSkills), not from
 // the deployment's skills/preloaded directory — that host copy is not what
 // execute_skill_script would find inside the sandbox.
+
+// skillDirsFallback returns the host directories a run should discover skills
+// from, or nil when the run has no business reading the host tree.
+//
+// Preloaded skills are a fallback, never an addition. Backends that cannot
+// snapshot - docker and local - never produce a skill image, so without this
+// SkillsEnabled buys those deployments nothing at all: offerSkills in
+// agent_service.go needs one of SkillDirs or TenantSkills to be non-empty, and
+// with neither the engine gets no skills manager and not even read_skill is
+// registered.
+//
+// When an image DOES carry skills, tenantSkills wins and this returns nil, so
+// the two sets can never merge into a catalogue that advertises files the
+// sandbox does not have. skills.Manager.resolveSource enforces the same rule
+// one layer down.
+//
+// Deliberately kept out of configureSkillsFromAgent: which skills a selection
+// mode enables is a property of the agent, not of what the host has on disk,
+// and that function is asserted to leave SkillDirs alone.
+func skillDirsFallback(
+	skillsEnabled bool, tenantSkills []*types.TenantSkillEntity, preloadedDir string,
+) []string {
+	if !skillsEnabled || len(tenantSkills) > 0 || preloadedDir == "" {
+		return nil
+	}
+	return []string{preloadedDir}
+}
+
 func (s *sessionService) configureSkillsFromAgent(
 	ctx context.Context,
 	agentConfig *types.AgentConfig,

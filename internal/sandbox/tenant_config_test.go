@@ -385,6 +385,18 @@ func TestSkillImageActiveAgreesWithTheResolvedTemplate(t *testing.T) {
 	}
 	fp := SkillImageFingerprint("cube", "key-1", "https://203.0.113.10")
 
+	dockerFP := SkillImageFingerprint("docker", "/etc/certs/client.pem", "unix:///var/run/docker.sock")
+	docker := func() *types.TenantSandboxConfig {
+		return &types.TenantSandboxConfig{
+			SandboxType: "docker",
+			Docker: &types.DockerSandboxConfig{
+				Image:       "wechatopenai/weknora-sandbox:latest",
+				Host:        "unix:///var/run/docker.sock",
+				TLSCertPath: "/etc/certs/client.pem",
+			},
+		}
+	}
+
 	cases := map[string]struct {
 		config *types.TenantSandboxConfig
 		want   bool
@@ -419,12 +431,42 @@ func TestSkillImageActiveAgreesWithTheResolvedTemplate(t *testing.T) {
 			config: cube(),
 			want:   false,
 		},
-		"backend that cannot snapshot": {
+		"docker snapshot owned by the live daemon": {
+			config: func() *types.TenantSandboxConfig {
+				cfg := docker()
+				cfg.SkillImage = &types.SkillImageConfig{SnapshotID: "weknora-skill:c1", OwnerFingerprint: dockerFP}
+				return cfg
+			}(),
+			want: true,
+		},
+		"docker snapshot from another daemon": {
+			config: func() *types.TenantSandboxConfig {
+				cfg := docker()
+				cfg.SkillImage = &types.SkillImageConfig{
+					SnapshotID: "weknora-skill:c1", OwnerFingerprint: "another-daemon",
+				}
+				return cfg
+			}(),
+			want: false,
+		},
+		"docker snapshot with no recorded owner": {
+			config: func() *types.TenantSandboxConfig {
+				cfg := docker()
+				cfg.SkillImage = &types.SkillImageConfig{SnapshotID: "weknora-skill:c1"}
+				return cfg
+			}(),
+			want: false,
+		},
+		"docker with no snapshot yet": {
+			config: docker(),
+			want:   false,
+		},
+		"docker with no recorded daemon identity": {
 			config: &types.TenantSandboxConfig{
 				SandboxType: "docker",
-				Docker:      &types.DockerSandboxConfig{Image: "img"},
+				Docker:      &types.DockerSandboxConfig{Image: "wechatopenai/weknora-sandbox:latest"},
 				SkillImage: &types.SkillImageConfig{
-					SnapshotID: "snap-1", OwnerFingerprint: fp,
+					SnapshotID: "weknora-skill:c1", OwnerFingerprint: dockerFP,
 				},
 			},
 			want: false,

@@ -126,16 +126,28 @@ func ResolveEffectiveConfig(
 	// of skills.
 	switch effective.Type {
 	case SandboxTypeCube:
-		if snapshot := skillImageTemplateOverride(
-			tenantCfg.SkillImage, "cube", effective.CubeAPIKey, effective.CubeAPIURL,
+		if snapshot := skillImageTemplateOverride(tenantCfg.SkillImage,
+			SkillImageFingerprint("cube", effective.CubeAPIKey, effective.CubeAPIURL),
 		); snapshot != "" {
 			effective.CubeTemplate = snapshot
 		}
 	case SandboxTypeE2B:
-		if snapshot := skillImageTemplateOverride(
-			tenantCfg.SkillImage, "e2b", effective.E2BAPIKey, effective.E2BAPIURL,
+		if snapshot := skillImageTemplateOverride(tenantCfg.SkillImage,
+			SkillImageFingerprint("e2b", effective.E2BAPIKey, effective.E2BAPIURL),
 		); snapshot != "" {
 			effective.E2BTemplate = snapshot
+		}
+	case SandboxTypeDocker:
+		// Docker's template is the image, and its "account" is the daemon the
+		// snapshot was committed to. Read the STORED host rather than the
+		// effective one: applyDockerRuntimeDefaults fills a blank host in from
+		// DOCKER_HOST, but SkillImageActive only has the stored config, so using
+		// the resolved value here would fingerprint a different account than the
+		// agent side sees and never let a local blank-host install take effect.
+		if fp := dockerSkillImageFingerprint(tenantCfg.Docker); fp != "" {
+			if snapshot := skillImageTemplateOverride(tenantCfg.SkillImage, fp); snapshot != "" {
+				effective.DockerImage = snapshot
+			}
 		}
 	}
 	// Deliberately after the runtime defaults: TTLs and HTTP timeouts have

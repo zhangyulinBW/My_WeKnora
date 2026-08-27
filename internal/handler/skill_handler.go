@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 )
 
@@ -18,12 +19,19 @@ type usableSkillLister interface {
 // SkillHandler handles skill-related HTTP requests
 type SkillHandler struct {
 	usableSkills usableSkillLister
+	// preloaded backs the same two surfaces when the selected config carries no
+	// skill image, mirroring the fallback buildAgentConfig applies to the run
+	// itself. Without it the picker would be empty on every backend that cannot
+	// snapshot, so "selected" mode could never be filled in even though those
+	// skills do execute.
+	preloaded interfaces.SkillService
 }
 
 // NewSkillHandler creates a new skill handler
-func NewSkillHandler(usableSkills usableSkillLister) *SkillHandler {
+func NewSkillHandler(usableSkills usableSkillLister, preloaded interfaces.SkillService) *SkillHandler {
 	return &SkillHandler{
 		usableSkills: usableSkills,
+		preloaded:    preloaded,
 	}
 }
 
@@ -69,9 +77,40 @@ func (h *SkillHandler) ListSkills(c *gin.Context) {
 		})
 	}
 
+	// An empty installed set means this config boots its base template, which is
+	// what every backend that cannot snapshot always does. Report the preloaded
+	// tree instead, because that is exactly what the run will offer the agent.
+	if len(response) == 0 {
+		response = h.preloadedSkills(c)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success":          true,
 		"data":             response,
 		"skills_available": true,
 	})
+}
+
+// preloadedSkills lists the deployment's preloaded skills, or an empty slice
+// when none are configured. A failure here must not fail the request: the
+// picker degrades to "no skills", which is what it showed before the fallback.
+func (h *SkillHandler) preloadedSkills(c *gin.Context) []SkillInfoResponse {
+	if h.preloaded == nil {
+		return []SkillInfoResponse{}
+	}
+	metadata, err := h.preloaded.ListPreloadedSkills(c.Request.Context())
+	if err != nil {
+		return []SkillInfoResponse{}
+	}
+	out := make([]SkillInfoResponse, 0, len(metadata))
+	for _, meta := range metadata {
+		if meta == nil {
+			continue
+		}
+		out = append(out, SkillInfoResponse{
+			Name:        meta.Name,
+			Description: meta.Description,
+		})
+	}
+	return out
 }

@@ -65,6 +65,13 @@ type fakeDockerEngine struct {
 	images       []image.Summary
 	imagePresent map[string]bool
 	pulled       []string
+	imageListFilters []client.Filters
+
+	committed     []client.ContainerCommitOptions
+	committedID   string
+	commitErr     error
+	removedImages []string
+	imageRemoveErr error
 }
 
 func newFakeDockerEngine() *fakeDockerEngine {
@@ -237,9 +244,34 @@ func (f *fakeDockerEngine) ImagePull(
 }
 
 func (f *fakeDockerEngine) ImageList(
-	_ context.Context, _ client.ImageListOptions,
+	_ context.Context, options client.ImageListOptions,
 ) (client.ImageListResult, error) {
+	f.imageListFilters = append(f.imageListFilters, options.Filters)
 	return client.ImageListResult{Items: f.images}, nil
+}
+
+func (f *fakeDockerEngine) ContainerCommit(
+	_ context.Context, containerID string, options client.ContainerCommitOptions,
+) (client.ContainerCommitResult, error) {
+	f.committed = append(f.committed, options)
+	if f.commitErr != nil {
+		return client.ContainerCommitResult{}, f.commitErr
+	}
+	id := f.committedID
+	if id == "" {
+		id = "sha256:committed"
+	}
+	return client.ContainerCommitResult{ID: id}, nil
+}
+
+func (f *fakeDockerEngine) ImageRemove(
+	_ context.Context, imageID string, _ client.ImageRemoveOptions,
+) (client.ImageRemoveResult, error) {
+	f.removedImages = append(f.removedImages, imageID)
+	if f.imageRemoveErr != nil {
+		return client.ImageRemoveResult{}, f.imageRemoveErr
+	}
+	return client.ImageRemoveResult{}, nil
 }
 
 // fakePullResponse satisfies the pull-response contract without a registry.

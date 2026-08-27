@@ -161,6 +161,31 @@ func (h *AIChatHandler) resolveRecommendAgent(ctx context.Context) (*types.Custo
 	return h.resolveAgent(ctx)
 }
 
+// applyModelOverride 返回一份应用了 ai_chat.model_id 覆盖的智能体副本。
+// 覆盖只作用于本次请求（不写回 custom_agents 表）；未配置覆盖值、或覆盖值与
+// 智能体自身模型相同时，原样返回入参指针。
+//
+// 必须覆盖 Config.ModelID 而非只在 QARequest 上带 SummaryModelID：
+// resolveChatModelID 会先校验智能体自身的 model_id 有效，智能体那个若失效
+// 则在读到 SummaryModelID 之前就已报错。
+func (h *AIChatHandler) applyModelOverride(agent *types.CustomAgent) *types.CustomAgent {
+	if agent == nil {
+		return nil
+	}
+	if h.config == nil || h.config.AIChat == nil {
+		return agent
+	}
+	override := strings.TrimSpace(h.config.AIChat.ModelID)
+	if override == "" || override == strings.TrimSpace(agent.Config.ModelID) {
+		return agent
+	}
+	// Config 是值类型字段，浅拷贝即可获得独立的 ModelID；其中的切片仍与原对象
+	// 共享，但此处只覆写一个字符串字段，不会写穿。
+	clone := *agent
+	clone.Config.ModelID = override
+	return &clone
+}
+
 // handleStart 根据提供的数据上下文建立会话，并返回由专用推荐智能体
 // （ai_chat.recommend_agent_id）基于会话基础数据生成的推荐候选问题。
 func (h *AIChatHandler) handleStart(
@@ -578,6 +603,7 @@ func (h *AIChatHandler) loadStartContext(
 // handleAgentTurn 将用户消息送入真正的智能体引擎（AgentQA），
 // 将每个智能体步骤（思考/工具调用/工具结果/引用/回答）以 AIEvent 流式输出。
 // 助手消息预先创建，并在智能体完成后标记完成，从而持久化多轮历史和 AgentSteps。
+// 对话模型遵循 ai_chat.model_id > 智能体自身 model_id 的优先级，与搜索草稿一致。
 func (h *AIChatHandler) handleAgentTurn(
 	ctx context.Context,
 	c *gin.Context,
@@ -585,6 +611,10 @@ func (h *AIChatHandler) handleAgentTurn(
 	agent *types.CustomAgent,
 	tenantID uint64,
 ) {
+	// 覆盖后的副本同时驱动 AgentQA 的模型解析与助手消息落库的 ModelID，
+	// 两者必须是同一个值，否则日志/账单记的模型与实际调用的对不上。
+	agent = h.applyModelOverride(agent)
+
 	session, err := h.getOrCreateSession(ctx, req.ConversationID, tenantID)
 	if err != nil || session == nil {
 		h.writeEvent(c, h.errorEvent(req, "failed to create session"))

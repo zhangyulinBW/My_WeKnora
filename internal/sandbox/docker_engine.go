@@ -47,6 +47,12 @@ type dockerEngineAPI interface {
 	ContainerRemove(
 		ctx context.Context, containerID string, options client.ContainerRemoveOptions,
 	) (client.ContainerRemoveResult, error)
+	// ContainerCommit is how this backend takes a snapshot: the MicroVM
+	// providers have a snapshot endpoint, Docker has "commit the filesystem to
+	// an image". See docker_snapshot.go.
+	ContainerCommit(
+		ctx context.Context, containerID string, options client.ContainerCommitOptions,
+	) (client.ContainerCommitResult, error)
 
 	ExecCreate(
 		ctx context.Context, containerID string, options client.ExecCreateOptions,
@@ -68,6 +74,11 @@ type dockerEngineAPI interface {
 	) (client.ImageInspectResult, error)
 	ImagePull(ctx context.Context, refStr string, options client.ImagePullOptions) (client.ImagePullResponse, error)
 	ImageList(ctx context.Context, options client.ImageListOptions) (client.ImageListResult, error)
+	// ImageRemove deletes a snapshot image. Snapshots are images here, so
+	// releasing one is an image delete rather than a provider API call.
+	ImageRemove(
+		ctx context.Context, imageID string, options client.ImageRemoveOptions,
+	) (client.ImageRemoveResult, error)
 }
 
 var _ dockerEngineAPI = (*client.Client)(nil)

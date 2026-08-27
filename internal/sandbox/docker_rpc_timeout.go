@@ -135,4 +135,23 @@ func (a *dockerRPCTimeoutAPI) ImageList(
 	return a.inner.ImageList(rpcCtx, options)
 }
 
+// ContainerCommit is deliberately left on the caller's context, like ImagePull
+// and for the same reason: writing the container's filesystem out as image
+// layers is bounded by disk and image size, not by round-trip latency. A skill
+// image carrying a Python venv can take well past the 30s short-RPC budget, and
+// the install flow that calls this already runs under its own deadline.
+func (a *dockerRPCTimeoutAPI) ContainerCommit(
+	ctx context.Context, containerID string, options client.ContainerCommitOptions,
+) (client.ContainerCommitResult, error) {
+	return a.inner.ContainerCommit(ctx, containerID, options)
+}
+
+func (a *dockerRPCTimeoutAPI) ImageRemove(
+	ctx context.Context, imageID string, options client.ImageRemoveOptions,
+) (client.ImageRemoveResult, error) {
+	rpcCtx, cancel := a.rpcCtx(ctx)
+	defer cancel()
+	return a.inner.ImageRemove(rpcCtx, imageID, options)
+}
+
 var _ dockerEngineAPI = (*dockerRPCTimeoutAPI)(nil)

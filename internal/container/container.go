@@ -424,8 +424,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewAIChatHandler))
 	must(container.Provide(handler.NewUserResourceFavoriteHandler))
 	must(container.Provide(service.NewSkillService))
-	must(container.Provide(func(s *service.TenantSkillService) *handler.SkillHandler {
-		return handler.NewSkillHandler(s)
+	must(container.Provide(func(
+		s *service.TenantSkillService, preloaded interfaces.SkillService,
+	) *handler.SkillHandler {
+		return handler.NewSkillHandler(s, preloaded)
 	}))
 	must(container.Provide(handler.NewOrganizationHandler))
 	must(container.Provide(handler.NewMemoryHandler))

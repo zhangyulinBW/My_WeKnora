@@ -21,6 +21,22 @@ func SkillImageFingerprint(provider, apiKey, apiURL string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// dockerSkillImageFingerprint returns the fingerprint of the daemon a docker
+// snapshot was committed to, or "" when the config names no daemon.
+//
+// A blank host means "whatever DOCKER_HOST / the docker context resolves to",
+// which is not a definite account: an install committed against the default
+// socket could later resolve to a different daemon, so no snapshot is ever
+// pinned to it. The service layer's skillOwnerFingerprint applies the same
+// rule, and the two must agree or a skill image would be recorded but never
+// booted.
+func dockerSkillImageFingerprint(docker *types.DockerSandboxConfig) string {
+	if docker == nil || strings.TrimSpace(docker.Host) == "" {
+		return ""
+	}
+	return SkillImageFingerprint("docker", docker.TLSCertPath, docker.Host)
+}
+
 // SkillImageActive reports whether a config's stored snapshot is the image its
 // sessions actually boot.
 //
@@ -52,16 +68,22 @@ func SkillImageActive(tenantCfg *types.TenantSandboxConfig) bool {
 		if tenantCfg.Cube == nil {
 			return false
 		}
-		return skillImageTemplateOverride(
-			tenantCfg.SkillImage, "cube", tenantCfg.Cube.APIKey, tenantCfg.Cube.APIURL,
+		return skillImageTemplateOverride(tenantCfg.SkillImage,
+			SkillImageFingerprint("cube", tenantCfg.Cube.APIKey, tenantCfg.Cube.APIURL),
 		) != ""
 	case SandboxTypeE2B:
 		if tenantCfg.E2B == nil {
 			return false
 		}
-		return skillImageTemplateOverride(
-			tenantCfg.SkillImage, "e2b", tenantCfg.E2B.APIKey, tenantCfg.E2B.APIURL,
+		return skillImageTemplateOverride(tenantCfg.SkillImage,
+			SkillImageFingerprint("e2b", tenantCfg.E2B.APIKey, tenantCfg.E2B.APIURL),
 		) != ""
+	case SandboxTypeDocker:
+		fp := dockerSkillImageFingerprint(tenantCfg.Docker)
+		if fp == "" {
+			return false
+		}
+		return skillImageTemplateOverride(tenantCfg.SkillImage, fp) != ""
 	}
 	return false
 }
@@ -69,7 +91,7 @@ func SkillImageActive(tenantCfg *types.TenantSandboxConfig) bool {
 // skillImageTemplateOverride returns the snapshot ID that should replace the
 // base template, or "" when the base template must be kept.
 func skillImageTemplateOverride(
-	image *types.SkillImageConfig, provider, apiKey, apiURL string,
+	image *types.SkillImageConfig, ownerFingerprint string,
 ) string {
 	if image == nil || strings.TrimSpace(image.SnapshotID) == "" {
 		return ""
@@ -77,7 +99,7 @@ func skillImageTemplateOverride(
 	if image.OwnerFingerprint == "" {
 		return ""
 	}
-	if image.OwnerFingerprint != SkillImageFingerprint(provider, apiKey, apiURL) {
+	if image.OwnerFingerprint != ownerFingerprint {
 		return ""
 	}
 	return strings.TrimSpace(image.SnapshotID)

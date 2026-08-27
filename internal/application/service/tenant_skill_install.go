@@ -1628,6 +1628,10 @@ func currentBaseTemplate(cfg *types.TenantSandboxConfig) string {
 		if cfg.E2B != nil {
 			return cfg.E2B.TemplateID
 		}
+	case sandbox.SandboxTypeDocker:
+		if cfg.Docker != nil {
+			return cfg.Docker.Image
+		}
 	}
 	return ""
 }
@@ -1657,6 +1661,17 @@ func skillOwnerFingerprint(cfg *types.TenantSandboxConfig) string {
 	case sandbox.SandboxTypeE2B:
 		if cfg.E2B != nil {
 			return sandbox.SkillImageFingerprint("e2b", cfg.E2B.APIKey, cfg.E2B.APIURL)
+		}
+	case sandbox.SandboxTypeDocker:
+		if cfg.Docker != nil && strings.TrimSpace(cfg.Docker.Host) != "" {
+			// A docker snapshot lives on one daemon and nowhere else, so the
+			// daemon is the "account". TLSCertPath and Host are the same pair
+			// IdentityOf uses. A blank host yields no fingerprint rather than
+			// one over empty strings: the resolved daemon could be any host, so
+			// an install against "the default socket" could never be pinned to
+			// a definite account the agent side would later recognise.
+			return sandbox.SkillImageFingerprint(
+				"docker", cfg.Docker.TLSCertPath, cfg.Docker.Host)
 		}
 	}
 	return ""
