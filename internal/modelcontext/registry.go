@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -29,8 +30,8 @@ const resourceHandleProtocolPrompt = `
 
 ## Resource handle protocol (system-owned)
 Some durable resources and high-entropy Wiki slugs are represented by request-local res://NNNN handles. Wiki issues may use iN handles.
-- Copy only handles that appeared in supplied context or tool results, preserving them exactly in links, images, and tool arguments.
-- Never invent, edit, or expand any handle. The system restores it after generation.`
+- Copy supplied handles exactly in links, images, and tool arguments; they refer only to the supplied resource versions.
+- For new or regenerated files, use sandbox:<file name>; never reuse or invent a resource handle.`
 
 // Registry is the single request-scoped boundary between durable application
 // identities and temporary model handles.
@@ -248,9 +249,9 @@ func (r *Registry) ModelToolResultForTool(toolName string, result *types.ToolRes
 	}
 	if r == nil || r.sources == nil {
 		if result.Success {
-			return result.Output
+			return result.Output + outputFilesPrompt(result)
 		}
-		return result.Error
+		return failedToolModelText(result.Output, result.Error) + outputFilesPrompt(result)
 	}
 	// Protect durable resources and UUID-bearing summary slugs before the
 	// source codec sees any embedded document IDs. Encode once more afterwards
@@ -266,10 +267,8 @@ func (r *Registry) ModelToolResultForTool(toolName string, result *types.ToolRes
 		modelOutput = r.sources.ModelOutput(&copyResult)
 	} else if copyResult.Success {
 		modelOutput = copyResult.Output
-	} else if copyResult.Error != "" {
-		modelOutput = "Error: " + copyResult.Error
 	} else {
-		modelOutput = "Error: tool call failed"
+		modelOutput = failedToolModelText(copyResult.Output, copyResult.Error)
 	}
 	// Even tools without structured source results can surface a known durable
 	// ID in validation errors or status text. Compact only explicitly declared
@@ -277,7 +276,14 @@ func (r *Registry) ModelToolResultForTool(toolName string, result *types.ToolRes
 	if sourceCompactionAllowed(toolName) {
 		modelOutput = r.sources.CompactKnownText(modelOutput)
 	}
-	return r.resources.EncodeText(modelOutput)
+	return r.resources.EncodeText(modelOutput) + outputFilesPrompt(result)
+}
+
+func outputFilesPrompt(result *types.ToolResult) string {
+	if result == nil || len(result.OutputFiles) == 0 {
+		return ""
+	}
+	return "\nOutput files: `" + strings.Join(result.OutputFiles, "`, `") + "`"
 }
 
 // DecodeOutputText applies the public citation policy to complete text. It is

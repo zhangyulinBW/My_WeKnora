@@ -64,7 +64,21 @@
     </div>
 
     <t-loading :loading="loading" size="small" class="sandbox-list-loading">
-      <div v-if="!loading" class="sandbox-grid">
+      <t-alert
+        v-if="!loading && dockerTabDisabled && filteredRecords.length > 0"
+        theme="warning"
+        class="sandbox-docker-banner"
+        :message="$t('settings.sandbox.dockerDisabledAlert')"
+      >
+        <template #description>
+          <p>{{ $t('settings.sandbox.dockerDisabledHint') }}</p>
+        </template>
+      </t-alert>
+      <div v-if="!loading && dockerTabDisabled && filteredRecords.length === 0" class="sandbox-docker-disabled">
+        <t-empty :description="$t('settings.sandbox.dockerDisabledAlert')" />
+        <p class="sandbox-empty-hint">{{ $t('settings.sandbox.dockerDisabledHint') }}</p>
+      </div>
+      <div v-else-if="!loading" class="sandbox-grid">
         <div v-for="record in filteredRecords" :key="record.id" class="sandbox-card"
           :class="[`sandbox-card--${record.sandbox_type}`, { 'sandbox-card--clickable': !isLegacyRecord(record) }]"
           :role="isLegacyRecord(record) ? undefined : 'button'"
@@ -101,30 +115,6 @@
             <div v-if="targetSummary(record)" class="sandbox-card__url" :title="targetSummary(record)">
               {{ targetSummary(record) }}
             </div>
-            <div
-              v-if="supportsSkills(record) && (skillsOf(record) || skillsFailed(record))"
-              class="sandbox-card__skills"
-            >
-              <template v-if="(skillsOf(record) || []).length">
-                <t-tag
-                  v-for="skill in visibleSkills(record)"
-                  :key="skill.id"
-                  size="small"
-                  variant="light"
-                  :theme="skillTagTheme(skill)"
-                  :title="skill.name"
-                >{{ skill.name }}</t-tag>
-                <span v-if="extraSkillCount(record)" class="sandbox-card__skills-more">
-                  {{ $t('settings.sandbox.cardSkillsMore', { count: extraSkillCount(record) }) }}
-                </span>
-              </template>
-              <span v-else-if="skillsFailed(record)" class="sandbox-card__skills-empty">
-                {{ $t('settings.sandbox.skillLoadFailed') }}
-              </span>
-              <span v-else class="sandbox-card__skills-empty">
-                {{ $t('settings.sandbox.cardSkillsNone') }}
-              </span>
-            </div>
             <ul v-if="cardWarnings[record.id]?.length" class="sandbox-card__warnings">
               <li v-for="item in cardWarnings[record.id]" :key="item.key">
                 <t-icon name="error-circle" size="12px" />
@@ -133,20 +123,19 @@
             </ul>
           </div>
         </div>
-        <button type="button" class="sandbox-card sandbox-card--add" @click="openCreate">
+        <button v-if="canCreateOnTab" type="button" class="sandbox-card sandbox-card--add" @click="openCreate">
           <span class="sandbox-card--add__icon" aria-hidden="true"><t-icon name="add" /></span>
           <span class="sandbox-card--add__label">{{ $t('settings.sandbox.addConfig') }}</span>
         </button>
       </div>
-      <p v-if="!loading && records.length === 0" class="sandbox-empty-hint">
+      <p v-if="!loading && !dockerTabDisabled && records.length === 0" class="sandbox-empty-hint">
         {{ $t('settings.sandbox.noConfigs') }}
       </p>
     </t-loading>
 
     <SandboxConfigEditorDrawer v-model:visible="showEditor" :record="editingRecord"
-      :preset-type="activeType === 'all' ? '' : activeType" :initial-step="editorStep"
-      :has-in-flight-skill="editorHasInFlightSkill"
-      @saved="load" @skills-changed="onSkillsChanged" />
+      :preset-type="createPresetType"
+      @saved="load" />
 
     <!--
       Same SettingDrawer chrome as the skill editor. The list is chat sessions
@@ -228,16 +217,15 @@ import SandboxBackendBadge from '@/components/settings/SandboxBackendBadge.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import { useConfirmDelete } from '@/components/settings/useConfirmDelete'
 import { getSession } from '@/api/chat/index'
+import { useDeploymentCapabilitiesStore } from '@/stores/deploymentCapabilities'
 import {
   deleteSandboxConfig,
   getSandboxConfigInventory,
   isNamedSandboxBackend,
-  listConfigSkills,
   listSandboxConfigs,
   NAMED_SANDBOX_BACKEND_TYPES,
   parseSandboxConflict,
   setSandboxWorkspacePolicy,
-  type ConfigSkill,
   type SandboxConfigRecord,
   type SandboxInventory,
 } from '@/api/system'
@@ -245,28 +233,35 @@ import {
 const { t } = useI18n()
 const router = useRouter()
 const confirmDelete = useConfirmDelete()
+const deploymentCapabilities = useDeploymentCapabilitiesStore()
+const dockerBackendEnabled = computed(() =>
+  deploymentCapabilities.isSupported('settings.sandbox.docker'),
+)
 
 const sandboxGuideUrl = 'https://github.com/Tencent/WeKnora/blob/main/docs/sandbox-cluster.md'
 
-const backendTypes = NAMED_SANDBOX_BACKEND_TYPES
+const backendTypes = [...NAMED_SANDBOX_BACKEND_TYPES]
+
+const dockerTabDisabled = computed(() =>
+  activeType.value === 'docker' && !dockerBackendEnabled.value,
+)
+
+const canCreateOnTab = computed(() => !dockerTabDisabled.value)
+
+const createPresetType = computed(() => {
+  if (activeType.value === 'all') return ''
+  if (dockerTabDisabled.value) return ''
+  return activeType.value
+})
 
 const loading = ref(false)
 const policySaving = ref(false)
 const workspaceScriptsDisabled = ref(false)
 const records = ref<SandboxConfigRecord[]>([])
 const activeType = ref<string>('all')
-// Skill names on cube/e2b cards. Missing until the per-config list returns, so
-// the empty hint does not flash on first paint. A failed fetch is tracked
-// separately so it is not shown as "no skills installed".
-const skillsByConfig = ref<Record<string, ConfigSkill[]>>({})
-const skillsLoadFailed = ref<Record<string, boolean>>({})
-const SKILL_TAG_LIMIT = 3
 
 const showEditor = ref(false)
 const editingRecord = ref<SandboxConfigRecord | null>(null)
-// Which page of the editor to open on. Skills live there as the last step, so
-// clicking a cube/e2b/docker card lands on that page.
-const editorStep = ref<'skills' | undefined>(undefined)
 
 const showInventory = ref(false)
 const inventoryLoading = ref(false)
@@ -281,44 +276,6 @@ const backendLabel = (value: string) => t(`settings.sandbox.backends.${value}`)
 
 const isLegacyRecord = (record: SandboxConfigRecord) => !isNamedSandboxBackend(record.sandbox_type)
 
-// Skills are baked into the snapshot image. Legacy configs (removed backends)
-// have no skills step, so their cards stay a connection summary.
-function supportsSkills(record: SandboxConfigRecord) {
-  return record.sandbox_type === 'cube' || record.sandbox_type === 'e2b' || record.sandbox_type === 'docker'
-}
-
-function skillsOf(record: SandboxConfigRecord): ConfigSkill[] | undefined {
-  return skillsByConfig.value[record.id]
-}
-
-function skillsFailed(record: SandboxConfigRecord): boolean {
-  return skillsLoadFailed.value[record.id] === true
-}
-
-function visibleSkills(record: SandboxConfigRecord): ConfigSkill[] {
-  return (skillsOf(record) || []).slice(0, SKILL_TAG_LIMIT)
-}
-
-function extraSkillCount(record: SandboxConfigRecord): number {
-  return Math.max(0, (skillsOf(record) || []).length - SKILL_TAG_LIMIT)
-}
-
-function skillTagTheme(skill: ConfigSkill): 'default' | 'warning' | 'primary' {
-  if (skill.status === 'failed') return 'warning'
-  if (skill.status === 'installing' || skill.status === 'removing') return 'primary'
-  return 'default'
-}
-
-function skillInFlight(skill: ConfigSkill): boolean {
-  return skill.status === 'installing' || skill.status === 'removing'
-}
-
-const editorHasInFlightSkill = computed(() => {
-  const id = editingRecord.value?.id
-  if (!id) return false
-  return (skillsByConfig.value[id] || []).some(skillInFlight)
-})
-
 const filteredRecords = computed(() => {
   const base = activeType.value === 'all'
     ? records.value
@@ -331,8 +288,7 @@ const countByType = (type: string) =>
 
 type CardMenuOption = { content: string; value: string; theme?: 'error' }
 
-// Card click already opens skills, and the editor has the connection check,
-// so the menu stays edit / running instances / delete.
+// Card click opens the connection editor. Skills live on their own settings page.
 const cardMenu = (record: SandboxConfigRecord): CardMenuOption[] => {
   if (isLegacyRecord(record)) {
     return [{ content: t('common.delete'), value: 'delete', theme: 'error' }]
@@ -425,32 +381,18 @@ async function onDeleteConfirmOpen(visible: boolean, record: SandboxConfigRecord
 }
 
 function openCreate() {
+  if (!canCreateOnTab.value) return
   editingRecord.value = null
-  editorStep.value = undefined
   showEditor.value = true
 }
 
 function openEdit(record: SandboxConfigRecord) {
   if (isLegacyRecord(record)) return
   editingRecord.value = record
-  editorStep.value = undefined
   showEditor.value = true
 }
 
-function openSkills(record: SandboxConfigRecord) {
-  if (isLegacyRecord(record) || !supportsSkills(record)) return
-  editingRecord.value = record
-  editorStep.value = 'skills'
-  showEditor.value = true
-}
-
-// Cube/E2B/Docker cards lead with installed skills, so a click lands on that
-// step. Connection and runtime stay behind the card menu's edit action.
 function openCard(record: SandboxConfigRecord) {
-  if (supportsSkills(record)) {
-    openSkills(record)
-    return
-  }
   openEdit(record)
 }
 
@@ -501,6 +443,12 @@ function buildCardWarnings(record: SandboxConfigRecord): CardWarning[] {
       })
     }
   }
+  if (record.sandbox_type === 'docker' && !dockerBackendEnabled.value) {
+    warnings.push({
+      key: 'docker-disabled',
+      text: t('settings.sandbox.dockerDisabledCard'),
+    })
+  }
   if (record.sandbox_type === 'docker' && !config.docker?.image?.trim()) {
     warnings.push({
       key: 'image',
@@ -508,28 +456,6 @@ function buildCardWarnings(record: SandboxConfigRecord): CardWarning[] {
     })
   }
   return warnings
-}
-
-async function loadSkills(configs: SandboxConfigRecord[]) {
-  const remotes = configs.filter(supportsSkills)
-  const remoteIDs = new Set(remotes.map((record) => record.id))
-  const next: Record<string, ConfigSkill[]> = {}
-  for (const [id, skills] of Object.entries(skillsByConfig.value)) {
-    if (remoteIDs.has(id)) next[id] = skills
-  }
-  const failed: Record<string, boolean> = {}
-  await Promise.all(remotes.map(async (record) => {
-    try {
-      const res = await listConfigSkills(record.id)
-      next[record.id] = (res?.data || []).filter((skill) => skill.status !== 'removed')
-    } catch {
-      // Keep a previous successful list. Only the first-load miss is an error
-      // row; replacing it with [] would read as "no skills installed".
-      if (next[record.id] === undefined) failed[record.id] = true
-    }
-  }))
-  skillsByConfig.value = next
-  skillsLoadFailed.value = failed
 }
 
 async function load() {
@@ -543,14 +469,6 @@ async function load() {
   } finally {
     loading.value = false
   }
-  await loadSkills(records.value)
-}
-
-async function onSkillsChanged(record?: SandboxConfigRecord) {
-  if (record?.id) {
-    records.value = records.value.map((item) => (item.id === record.id ? { ...item, ...record } : item))
-  }
-  await loadSkills(records.value)
 }
 
 async function setScriptsDisabled(disabled: boolean) {
@@ -651,7 +569,10 @@ async function forceRemove(record: SandboxConfigRecord) {
   await removeRecord(record, true)
 }
 
-onMounted(load)
+onMounted(() => {
+  void deploymentCapabilities.ensureLoaded()
+  load()
+})
 </script>
 
 <style lang="less" scoped>
@@ -988,33 +909,6 @@ onMounted(load)
   min-width: 0;
 }
 
-.sandbox-card__skills {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  margin-top: 2px;
-  min-width: 0;
-
-  :deep(.t-tag) {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-}
-
-.sandbox-card__skills-empty,
-.sandbox-card__skills-more {
-  color: var(--td-text-color-placeholder);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.sandbox-card__skills-empty:hover,
-.sandbox-card__skills:hover .sandbox-card__skills-more {
-  color: var(--td-brand-color);
-}
-
 .sandbox-card__warnings {
   display: flex;
   flex-wrap: wrap;
@@ -1057,10 +951,23 @@ onMounted(load)
   opacity: 1;
 }
 
+.sandbox-docker-banner {
+  margin-bottom: 12px;
+}
+
+.sandbox-docker-disabled {
+  padding: 48px 16px 24px;
+  text-align: center;
+}
+
 .sandbox-empty-hint {
   margin: 16px 0 0;
   font-size: 13px;
   color: var(--td-text-color-placeholder);
+}
+
+.sandbox-docker-disabled .sandbox-empty-hint {
+  margin-top: 8px;
 }
 
 .inventory-banner {

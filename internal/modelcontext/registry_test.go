@@ -46,6 +46,21 @@ func TestRegistryProtocolOwnsResourceHandleRules(t *testing.T) {
 	require.Contains(t, prompt, "res://NNNN")
 }
 
+func TestOutputFilesAreRenderedOnlyForLiveModelResults(t *testing.T) {
+	result := &types.ToolResult{Success: true, Output: "generated", OutputFiles: []string{"sandbox:比赛信息.pptx"}}
+	registry := NewRegistry(true)
+	require.Equal(t, "generated\nOutput files: `sandbox:比赛信息.pptx`", registry.ModelToolResultForTool("shell_exec", result))
+	require.Equal(t, "generated", result.Output)
+	encoded, err := json.Marshal(result)
+	require.NoError(t, err)
+	var restored types.ToolResult
+	require.NoError(t, json.Unmarshal(encoded, &restored))
+	require.Equal(t, "generated", registry.ModelToolResultForTool("shell_exec", &restored))
+	result.Success = false
+	result.Error = "timeout"
+	require.Contains(t, registry.ModelToolResultForTool("shell_exec", result), "sandbox:比赛信息.pptx")
+}
+
 func TestRegistryAuditsUnresolvedAndPartiallyResolvedToolHandles(t *testing.T) {
 	registry := NewRegistry(true)
 	registry.RegisterKnowledgeBase("kb-real")
@@ -270,6 +285,19 @@ func TestRegistryCompactsKnownIDsInBuiltInValidationErrors(t *testing.T) {
 		Error:   "document doc-real belongs to knowledge base kb-real",
 	})
 	require.Equal(t, "Error: document d1 belongs to knowledge base b1", got)
+}
+
+func TestModelToolResultForTool_failedSkillScriptKeepsStdout(t *testing.T) {
+	registry := NewRegistry(true)
+	stdout := `{"chart":{"success":false,"error":{"error":"X轴字段不存在：工作项目","available":["name","value"]}}}`
+	got := registry.ModelToolResultForTool("execute_skill_script", &types.ToolResult{
+		Success: false,
+		Output:  "=== Script Execution: smart-charts/scripts/cli.py ===\n\n## Standard Output\n\n```\n" + stdout + "\n```\n",
+		Error:   "Script exited with code 1\n\n[Analyze the error above and try a different approach.]",
+	})
+	require.Contains(t, got, "X轴字段不存在：工作项目")
+	require.Contains(t, got, "available")
+	require.Contains(t, got, "Error: Script exited with code 1")
 }
 
 func TestRegistryCompactsDatabaseQueryIDColumnsForBuiltInFollowUps(t *testing.T) {

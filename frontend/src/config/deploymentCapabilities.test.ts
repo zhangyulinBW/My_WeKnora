@@ -47,3 +47,26 @@ test('skill credentials follow the sandbox capability rather than a key of their
   assert.equal(SETTINGS_SECTION_CAPABILITY.envvars, 'settings.sandbox')
   assert.equal(SETTINGS_SECTION_CAPABILITY.envvars, SETTINGS_SECTION_CAPABILITY.sandbox)
 })
+
+test('the skill catalog follows the sandbox capability', () => {
+  assert.equal(SETTINGS_SECTION_CAPABILITY.skills, 'settings.sandbox')
+  assert.equal(SETTINGS_SECTION_CAPABILITY.skills, SETTINGS_SECTION_CAPABILITY.sandbox)
+})
+
+test('docker sandbox stays hidden unless the deployment explicitly enables it', () => {
+  assert.equal(isDeploymentCapabilitySupported({}, 'settings.sandbox.docker'), false)
+  assert.equal(
+    isDeploymentCapabilitySupported(
+      { 'settings.sandbox.docker': { supported: false, reason: 'docker_backend_disabled' } },
+      'settings.sandbox.docker',
+    ),
+    false,
+  )
+  assert.equal(
+    isDeploymentCapabilitySupported(
+      { 'settings.sandbox.docker': { supported: true } },
+      'settings.sandbox.docker',
+    ),
+    true,
+  )
+})

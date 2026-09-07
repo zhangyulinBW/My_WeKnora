@@ -178,6 +178,11 @@ func buildAssistantHistoryMessages(m *types.Message) []chat.Message {
 	}
 
 	finalContent := agentHistoryThinkTagRegex.ReplaceAllString(m.Content, "")
+	// Version clarification was written for that message's turn, not this one.
+	finalContent = strings.NewReplacer(
+		"\n\n本轮生成的文件: ![", "\n\n该历史消息生成的文件: ![",
+		"\n\nFile generated this turn: ![", "\n\nFile generated in that historical turn: ![",
+	).Replace(finalContent)
 	finalContent = strings.TrimSpace(finalContent)
 	if finalContent != "" {
 		msgs = append(msgs, chat.Message{Role: "assistant", Content: finalContent})
@@ -210,17 +215,11 @@ func filterNonTerminalToolCalls(calls []types.ToolCall) []types.ToolCall {
 }
 
 // toolCallOutput returns the textual content to use for a historical tool
-// message: the recorded Output on success, or an "Error: …" line otherwise so
-// the model can tell that an earlier tool call failed.
+// message. Failures still go through CompactToolOutputForHistory so stdout
+// from a crashed skill script is not dropped in favor of a one-line exit code.
 func toolCallOutput(tc types.ToolCall) string {
 	if tc.Result == nil {
 		return ""
-	}
-	if !tc.Result.Success {
-		if tc.Result.Error != "" {
-			return "Error: " + tc.Result.Error
-		}
-		return "Error: tool call failed"
 	}
 	return agenttools.CompactToolOutputForHistory(tc.Name, tc.Result)
 }

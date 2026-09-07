@@ -119,6 +119,23 @@ func TestBuildAssistantHistoryMessages_StripsThinkBlocks(t *testing.T) {
 	}
 }
 
+func TestAssistantHistoryScopesArtifactVersionsToHistoricalTurn(t *testing.T) {
+	for _, labels := range [][2]string{
+		{"本轮生成的文件", "该历史消息生成的文件"},
+		{"File generated this turn", "File generated in that historical turn"},
+	} {
+		body := "Done.\n\n" + labels[0] + ": ![deck](resource://AbCdEfGhIjKlMnOpQrStUv)"
+		message := &types.Message{Role: "assistant", Content: body}
+		history := buildAssistantHistoryMessages(message)
+		require.Len(t, history, 1)
+		require.Contains(t, history[0].Content, labels[1]+": ![deck](resource://AbCdEfGhIjKlMnOpQrStUv)")
+		require.Equal(t, body, message.Content, "stored display content must remain unchanged")
+	}
+	result := &types.ToolResult{Success: true, Output: "command completed", OutputFiles: []string{"sandbox:deck.pptx"}}
+	require.Equal(t, "command completed", toolCallOutput(types.ToolCall{Name: agenttools.ToolShellExec, Result: result}))
+	require.Contains(t, result.OutputFiles, "sandbox:deck.pptx")
+}
+
 // TestBuildAssistantHistoryMessages_ToolCallsExpandIntoOpenAIShape covers the
 // option-B replay: non-terminal tool calls from AgentSteps become proper
 // assistant_with_tool_calls + tool messages, and the canonical final answer is
@@ -248,6 +265,42 @@ func TestBuildAssistantHistoryMessages_ToolFailureSurfacesAsError(t *testing.T) 
 		ToolCallID: "call_err",
 		Name:       agenttools.ToolKnowledgeSearch,
 	}, got[1])
+}
+
+func TestBuildAssistantHistoryMessages_SkillScriptFailureKeepsStdout(t *testing.T) {
+	stdout := `{"chart":{"success":false,"error":{"error":"X轴字段不存在：工作项目"}}}`
+	msg := &types.Message{
+		Role:    "assistant",
+		Content: "I will retry with a different axis.",
+		AgentSteps: types.AgentSteps{
+			{
+				Iteration: 0,
+				Thought:   "Plot the chart.",
+				ToolCalls: []types.ToolCall{
+					{
+						ID:   "call_skill",
+						Name: agenttools.LegacyToolExecuteSkillScript,
+						Args: map[string]interface{}{"skill_name": "smart-charts", "script_path": "scripts/cli.py"},
+						Result: &types.ToolResult{
+							Success: false,
+							Output:  "=== Script Execution ===\n" + stdout,
+							Error:   "Script exited with code 1",
+							Data: map[string]interface{}{
+								"display_type": "shell_exec",
+								"stdout":       stdout,
+								"exit_code":    1,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	got := buildAssistantHistoryMessages(msg)
+	require.Len(t, got, 3)
+	assert.Equal(t, "tool", got[1].Role)
+	assert.Contains(t, got[1].Content, "X轴字段不存在：工作项目")
+	assert.Contains(t, got[1].Content, "Error: Script exited with code 1")
 }
 
 // TestFilterNonTerminalToolCalls confirms a legacy final_answer entry is

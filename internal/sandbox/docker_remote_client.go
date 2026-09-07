@@ -295,6 +295,15 @@ func (c *DockerRemoteClient) Create(
 		c.removeQuietly(ctx, created.ID)
 		return nil, dockerError("Create", err)
 	}
+	// ContainerStart returning is not the same as State.Running: the daemon
+	// accepts the start, then PID 1 still has to replace sh. ExecCreate on a
+	// container that is still "created" comes back as 409 Conflict
+	// ("container is not running"), which used to fail skill install on
+	// the first attempt and succeed on retry.
+	if err := c.waitUntilRunning(ctx, created.ID, "Create"); err != nil {
+		c.removeQuietly(ctx, created.ID)
+		return nil, err
+	}
 	c.sweepInBackground(ctx)
 	return &dockerSandboxHandle{id: created.ID, metadata: dockerSandboxMetadata(labels)}, nil
 }
@@ -351,7 +360,8 @@ var dockerInitProcess = true
 // RemoteNetworkPolicy cannot be honoured here; the one thing that maps
 // cleanly is "no egress at all", which AllowInternetAccess=false expresses.
 // Domain rules are silently not applied — the config surface refuses them
-// before they get this far (see RequireCompleteConfig).
+// before they get this far (see types.ValidateSandboxNetworkPolicy, which
+// rejects any allow/deny list or L7 rule on a docker config at save time).
 func (c *DockerRemoteClient) networkMode(policy RemoteNetworkPolicy) string {
 	if policy.AllowInternetAccess != nil && !*policy.AllowInternetAccess {
 		return "none"
@@ -368,8 +378,11 @@ func (c *DockerRemoteClient) networkMode(policy RemoteNetworkPolicy) string {
 // left off instead of losing everything it installed.
 func (c *DockerRemoteClient) Connect(
 	ctx context.Context,
-	sandboxID string,
+	request RemoteConnectRequest,
 ) (RemoteSandboxHandle, error) {
+	// Docker containers are not fronted by a provider gateway, so there is no
+	// inbound credential to restore; TrafficAccessToken is ignored.
+	sandboxID := request.SandboxID
 	inspected, err := c.api.ContainerInspect(ctx, sandboxID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, dockerError("Connect", err)
@@ -387,7 +400,10 @@ func (c *DockerRemoteClient) Connect(
 			Message:  "container is dead",
 		}
 	case RemoteStatePaused:
-		if err := c.resume(ctx, inspected.Container.ID, string(state.Status)); err != nil {
+		if err := c.resume(ctx, inspected.Container.ID, string(state.Status), "Connect"); err != nil {
+			return nil, err
+		}
+		if err := c.waitUntilRunning(ctx, inspected.Container.ID, "Connect"); err != nil {
 			return nil, err
 		}
 	}
@@ -403,18 +419,129 @@ func (c *DockerRemoteClient) Connect(
 	}, nil
 }
 
+// dockerStartReadyTimeout bounds how long Create/Connect/Exec wait for PID 1
+// after the daemon has accepted a start. The window is milliseconds on a
+// healthy daemon; this is only the ceiling for a wedged one.
+var dockerStartReadyTimeout = 15 * time.Second
+
+// dockerStartReadyPoll is the inspect interval inside waitUntilRunning.
+var dockerStartReadyPoll = 50 * time.Millisecond
+
 // resume brings a paused or stopped container back to running.
-func (c *DockerRemoteClient) resume(ctx context.Context, id, status string) error {
+func (c *DockerRemoteClient) resume(ctx context.Context, id, status, op string) error {
+	if op == "" {
+		op = "Connect"
+	}
 	if strings.EqualFold(status, "paused") {
 		if _, err := c.api.ContainerUnpause(ctx, id, client.ContainerUnpauseOptions{}); err != nil {
-			return dockerError("Connect", err)
+			return dockerError(op, err)
 		}
 		return nil
 	}
 	if _, err := c.api.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
-		return dockerError("Connect", err)
+		return dockerError(op, err)
 	}
 	return nil
+}
+
+// dockerContainerNotRunning reports the Engine 409 that ExecCreate returns
+// when the target is not in State.Running. The message is the signal: Kind
+// Conflict also covers "already exists" and is not replaceable, so callers
+// that want to resume have to look here rather than at CanReplaceRemoteBinding.
+func dockerContainerNotRunning(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "is not running")
+}
+
+// waitUntilRunning polls inspect until the container is running, or until it
+// is clear waiting will not help (exited, paused, dead).
+func (c *DockerRemoteClient) waitUntilRunning(ctx context.Context, id, op string) error {
+	deadline := time.Now().Add(dockerStartReadyTimeout)
+	var lastStatus string
+	for {
+		if err := ctx.Err(); err != nil {
+			return dockerError(op, err)
+		}
+		inspected, err := c.api.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+		if err != nil {
+			return dockerError(op, err)
+		}
+		state := inspected.Container.State
+		if state == nil {
+			return dockerError(op, errors.New("daemon returned no container state"))
+		}
+		lastStatus = strings.TrimSpace(string(state.Status))
+		switch dockerStateOf(state.Status) {
+		case RemoteStateRunning:
+			return nil
+		case RemoteStateTerminal:
+			return &RemoteError{
+				Kind:     RemoteErrorKindTerminal,
+				Provider: SandboxTypeDocker,
+				Op:       op,
+				Message:  "container is dead",
+			}
+		}
+		switch strings.ToLower(lastStatus) {
+		case "exited", "paused":
+			return &RemoteError{
+				Kind:     RemoteErrorKindConflict,
+				Provider: SandboxTypeDocker,
+				Op:       op,
+				Message:  "container is not running: " + lastStatus,
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return &RemoteError{
+				Kind:     RemoteErrorKindTimeout,
+				Provider: SandboxTypeDocker,
+				Op:       op,
+				Message:  fmt.Sprintf("container did not reach running (last state %q)", lastStatus),
+			}
+		}
+		timer := time.NewTimer(dockerStartReadyPoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return dockerError(op, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+// ensureRunning resumes a stopped/paused container and waits until exec can
+// succeed. It is the Exec counterpart of Connect: the first command of a
+// newly created sandbox used to race PID 1, and a later command can hit a
+// container the host or the idle sweep stopped.
+func (c *DockerRemoteClient) ensureRunning(ctx context.Context, id, op string) error {
+	inspected, err := c.api.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil {
+		return dockerError(op, err)
+	}
+	state := inspected.Container.State
+	if state == nil {
+		return dockerError(op, errors.New("daemon returned no container state"))
+	}
+	switch dockerStateOf(state.Status) {
+	case RemoteStateRunning:
+		return nil
+	case RemoteStateTerminal:
+		return &RemoteError{
+			Kind:     RemoteErrorKindTerminal,
+			Provider: SandboxTypeDocker,
+			Op:       op,
+			Message:  "container is dead",
+		}
+	case RemoteStatePaused:
+		if err := c.resume(ctx, inspected.Container.ID, string(state.Status), op); err != nil {
+			return err
+		}
+		return c.waitUntilRunning(ctx, id, op)
+	default:
+		return c.waitUntilRunning(ctx, id, op)
+	}
 }
 
 // Get returns one sandbox summary.
@@ -544,7 +671,7 @@ func (c *DockerRemoteClient) Exec(
 	execCtx, cancel := context.WithTimeout(ctx, timeout+dockerExecGrace)
 	defer cancel()
 
-	created, err := c.api.ExecCreate(execCtx, id, client.ExecCreateOptions{
+	execOpts := client.ExecCreateOptions{
 		Cmd:          dockerExecCommand(req, timeout),
 		User:         dockerExecUser(req.User),
 		WorkingDir:   req.WorkDir,
@@ -552,7 +679,14 @@ func (c *DockerRemoteClient) Exec(
 		AttachStdin:  req.Stdin != "",
 		AttachStdout: true,
 		AttachStderr: true,
-	})
+	}
+	created, err := c.api.ExecCreate(execCtx, id, execOpts)
+	if err != nil && dockerContainerNotRunning(err) {
+		if readyErr := c.ensureRunning(execCtx, id, "Exec"); readyErr != nil {
+			return nil, readyErr
+		}
+		created, err = c.api.ExecCreate(execCtx, id, execOpts)
+	}
 	if err != nil {
 		return nil, dockerError("Exec", err)
 	}
@@ -662,7 +796,7 @@ func dockerExecCommand(req RemoteExecRequest, timeout time.Duration) []string {
 	if req.Shell {
 		return []string{
 			"/bin/sh", "-c",
-			touch + `exec timeout -s KILL ` + seconds + ` /bin/sh -c "$1"`,
+			touch + `exec timeout -s KILL ` + seconds + ` /bin/bash --noprofile --norc -c "$1"`,
 			"weknora-exec", req.Command,
 		}
 	}
@@ -743,7 +877,7 @@ func (c *DockerRemoteClient) WriteFile(
 		Command: "sh",
 		Args:    []string{"-c", `cat > "$1"`, "weknora-write", clean},
 		Stdin:   string(content),
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {
@@ -778,7 +912,7 @@ func (c *DockerRemoteClient) ReadFile(
 	result, err := c.Exec(ctx, &dockerSandboxHandle{id: id}, RemoteExecRequest{
 		Command: "cat",
 		Args:    []string{"--", clean},
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {
@@ -822,7 +956,7 @@ func (c *DockerRemoteClient) Stat(
 			clean, "-maxdepth", "0",
 			"-printf", `%y\t%s\t%T@\t%p\n`,
 		},
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {
@@ -890,7 +1024,7 @@ func (c *DockerRemoteClient) makeDir(ctx context.Context, id, dir, op string) er
 	result, err := c.Exec(ctx, &dockerSandboxHandle{id: id}, RemoteExecRequest{
 		Command: "mkdir",
 		Args:    []string{"-p", dir},
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {
@@ -927,7 +1061,7 @@ func (c *DockerRemoteClient) Remove(
 	result, err := c.Exec(ctx, &dockerSandboxHandle{id: id}, RemoteExecRequest{
 		Command: "rm",
 		Args:    []string{"-rf", clean},
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {
@@ -968,7 +1102,7 @@ func (c *DockerRemoteClient) ListDir(
 			clean, "-mindepth", "1", "-maxdepth", "1",
 			"-printf", `%y\t%s\t%T@\t%p\n`,
 		},
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {

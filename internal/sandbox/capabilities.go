@@ -60,9 +60,26 @@ type SessionFileStore interface {
 	// session's remote sandbox, provisioning the sandbox on first call.
 	WriteSessionInputFile(ctx context.Context, sessionID, filePath string, content []byte) error
 
+	// WriteSessionWorkspaceFile writes a model-authored file under
+	// /workspace. /workspace/input stays read-only (attachments); everything
+	// else under /workspace is accepted so generated scripts do not have to
+	// travel through shell_exec heredocs.
+	WriteSessionWorkspaceFile(ctx context.Context, sessionID, filePath string, content []byte) error
+
+	// WriteSessionWorkspaceFiles writes many workspace files after preparing
+	// the session layout once. Host-skill staging must use this instead of
+	// looping WriteSessionWorkspaceFile.
+	WriteSessionWorkspaceFiles(ctx context.Context, sessionID string, files []SessionWorkspaceFile) error
+
 	// RemoveSessionInputPath deletes a staged attachment. No-op when the
 	// session has no live sandbox.
 	RemoveSessionInputPath(ctx context.Context, sessionID, targetPath string) error
+}
+
+// SessionWorkspaceFile is one path/content pair for WriteSessionWorkspaceFiles.
+type SessionWorkspaceFile struct {
+	Path    string
+	Content []byte
 }
 
 // SessionCapabilityProvider is implemented by managers that MAY offer

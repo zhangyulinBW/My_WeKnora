@@ -1551,7 +1551,8 @@ func (h *SystemHandler) ResetUserPassword(c *gin.Context) {
 		return
 	}
 	req.Email = strings.TrimSpace(req.Email)
-	if err := service.ValidatePasswordPolicy(req.NewPassword); err != nil {
+
+	if err := service.ValidatePasswordPolicy(req.NewPassword, h.complexPasswordEnabled(ctx)); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -1568,7 +1569,7 @@ func (h *SystemHandler) ResetUserPassword(c *gin.Context) {
 	}
 
 	if err := h.userSvc.AdminResetPassword(ctx, user.ID, req.NewPassword); err != nil {
-		if errors.Is(err, service.ErrPasswordPolicy) {
+		if service.IsPasswordPolicyError(err) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -1595,6 +1596,10 @@ type CreateSystemUserResponse struct {
 	// GeneratedPassword is the plaintext password when the server
 	// auto-generated one. Absent when the caller supplied the password.
 	GeneratedPassword string `json:"generated_password,omitempty"`
+	// Idempotent is true when the identity already existed (HTTP 200).
+	// The SPA axios interceptor discards status codes, so this flag is
+	// the body-level signal that nothing was created or changed.
+	Idempotent bool `json:"idempotent,omitempty"`
 }
 
 // CreateSystemUser godoc
@@ -1653,7 +1658,7 @@ func (h *SystemHandler) CreateSystemUser(c *gin.Context) {
 				"password_generated": false,
 				"idempotent":         true,
 			})
-			c.JSON(http.StatusOK, CreateSystemUserResponse{User: user.ToUserInfo()})
+			c.JSON(http.StatusOK, CreateSystemUserResponse{User: user.ToUserInfo(), Idempotent: true})
 		case errors.Is(err, service.ErrPasswordPolicy):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		case errors.Is(err, service.ErrUserIdentityConflict):

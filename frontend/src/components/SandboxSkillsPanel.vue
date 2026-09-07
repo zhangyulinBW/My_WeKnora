@@ -1,44 +1,10 @@
 <template>
-  <div class="sandbox-skills-panel">
-    <t-loading :loading="loading" size="small">
-      <section class="setting-drawer__section">
-        <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.imageInfoTitle') }}</h4>
-        <p v-if="!hasSkillSnapshot" class="image-info-note">
-          {{ $t('settings.sandbox.imageInfoUsingBase') }}
-        </p>
-        <ul class="image-info">
-          <template v-if="hasSkillSnapshot">
-            <li>
-              <span class="image-info__label">{{ $t('settings.sandbox.imageInfoBaseTemplate') }}</span>
-              <span class="image-info__value image-info__value--id">
-                {{ skillImage?.base_template_id || runtimeTemplateId || $t('settings.sandbox.imageInfoUnset') }}
-              </span>
-            </li>
-            <li>
-              <span class="image-info__label">{{ $t('settings.sandbox.imageInfoSnapshot') }}</span>
-              <span class="image-info__value image-info__value--id">{{ skillImage?.snapshot_id }}</span>
-            </li>
-            <li>
-              <span class="image-info__label">{{ $t('settings.sandbox.imageInfoGeneration') }}</span>
-              <span class="image-info__value">
-                {{ skillImage?.generation ? String(skillImage.generation) : $t('settings.sandbox.imageInfoUnset') }}
-              </span>
-            </li>
-            <li>
-              <span class="image-info__label">{{ $t('settings.sandbox.imageInfoBuiltAt') }}</span>
-              <span class="image-info__value">{{ formatBuiltAt(skillImage?.built_at) }}</span>
-            </li>
-          </template>
-          <li v-else>
-            <span class="image-info__label">{{ $t('settings.sandbox.imageInfoRuntimeTemplate') }}</span>
-            <span class="image-info__value image-info__value--id">
-              {{ runtimeTemplateId || $t('settings.sandbox.imageInfoUnset') }}
-            </span>
-          </li>
-        </ul>
-      </section>
-
-      <section class="setting-drawer__section">
+  <div class="sandbox-skills-panel" :class="{
+    'sandbox-skills-panel--list': mode === 'list',
+    'sandbox-skills-panel--focused': mode === 'list' && !!focusSkillId,
+  }">
+    <t-loading :loading="mode === 'list' && loading" size="small">
+      <section v-if="mode === 'install'" class="setting-drawer__section">
         <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillInstallerModel') }}</h4>
         <p class="installer-model-hint">{{ $t('settings.sandbox.skillInstallerModelHint') }}</p>
         <ModelSelector
@@ -49,22 +15,9 @@
         />
       </section>
 
-      <section class="setting-drawer__section">
-        <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillRollout') }}</h4>
-        <p class="installer-model-hint">{{ $t('settings.sandbox.skillRolloutHint') }}</p>
-        <t-radio-group
-          :value="skillRollout"
-          :disabled="savingRollout"
-          class="skill-rollout-group"
-          @change="onSkillRolloutChange"
-        >
-          <t-radio value="next_turn">{{ $t('settings.sandbox.skillRolloutNextTurn') }}</t-radio>
-          <t-radio value="new_session">{{ $t('settings.sandbox.skillRolloutNewSession') }}</t-radio>
-        </t-radio-group>
-      </section>
-
-      <section class="setting-drawer__section">
-        <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillInstallGroup') }}</h4>
+      <section v-if="mode === 'install'" class="setting-drawer__section">
+        <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillSourceSection') }}</h4>
+        <p class="installer-model-hint">{{ $t('settings.sandbox.skillSourceSectionHint', { size: MAX_SKILL_BUNDLE_SIZE_MB }) }}</p>
         <t-input-adornment class="skill-source-row">
           <t-input
             v-model="sourceInput"
@@ -83,9 +36,11 @@
             </t-button>
           </template>
         </t-input-adornment>
-        <div class="skill-install-split">
-          <span>{{ $t('settings.sandbox.skillInstallOr') }}</span>
-        </div>
+      </section>
+
+      <section v-if="mode === 'install'" class="setting-drawer__section">
+        <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillUploadSection') }}</h4>
+        <p class="installer-model-hint">{{ $t('settings.sandbox.skillUploadSectionHint', { size: MAX_SKILL_BUNDLE_SIZE_MB }) }}</p>
         <input
           ref="fileInputRef"
           type="file"
@@ -94,7 +49,7 @@
           @change="onFileInputChange"
         />
         <div
-          class="file-upload-area"
+          class="file-upload-area file-upload-area--large"
           :class="{ 'has-file': uploading, 'is-disabled': installBusy }"
           @click="!installBusy && fileInputRef?.click()"
           @dragover.prevent
@@ -102,7 +57,9 @@
           @drop.prevent="onFileDrop"
         >
           <div class="file-upload-content">
-            <t-icon name="upload" size="18px" class="upload-icon" />
+            <div class="file-upload-icon-wrap" aria-hidden="true">
+              <t-icon name="cloud-upload" size="32px" class="upload-icon" />
+            </div>
             <div class="upload-text">
               <span v-if="uploading" class="upload-file-name">
                 {{ $t('settings.sandbox.skillUploading', { percent: uploadPercent }) }}
@@ -118,58 +75,238 @@
         <p class="upload-hint">{{ uploadHint }}</p>
       </section>
 
-      <section class="setting-drawer__section">
-        <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillInstalledGroup') }}</h4>
-        <p v-if="!loading && skills.length === 0" class="skill-empty">
-          {{ $t('settings.sandbox.skillEmpty') }}
-        </p>
+      <section v-if="mode === 'list' && focusSkillId" class="skill-manage">
+        <Teleport v-if="headerActionsTarget && showHeaderStop" :to="headerActionsTarget" defer>
+          <t-button
+            class="skill-header-stop"
+            theme="default"
+            variant="outline"
+            size="small"
+            :disabled="!managedSkill"
+            :loading="!!managedSkill && stoppingId === managedSkill.id"
+            @click="managedSkill && stopSkill(managedSkill)"
+          >
+            {{ $t('settings.sandbox.skillStop') }}
+          </t-button>
+        </Teleport>
+        <Teleport v-if="headerActionsTarget && showHeaderUninstall" :to="headerActionsTarget" defer>
+          <t-popconfirm
+            theme="warning"
+            attach="body"
+            :content="$t('settings.skills.manageUninstallConfirm', { name: managedSkill?.name || '' })"
+            :confirm-btn="{ content: $t('settings.skills.manageUninstall'), theme: 'danger' }"
+            :cancel-btn="{ content: $t('common.cancel') }"
+            placement="bottom-right"
+            @confirm="managedSkill && removeSkill(managedSkill)"
+          >
+            <t-button
+              class="skill-header-uninstall"
+              theme="danger"
+              variant="outline"
+              size="small"
+              :disabled="!managedSkill || isBusy(managedSkill)"
+              :loading="!!managedSkill && deletingId === managedSkill.id"
+            >
+              {{ $t('settings.skills.manageUninstall') }}
+            </t-button>
+          </t-popconfirm>
+        </Teleport>
+        <div v-if="uninstallDone" class="skill-manage__done">
+          <t-icon name="check-circle-filled" size="22px" />
+          <p>{{ $t('settings.sandbox.skillRemoveDone', { name: uninstallingName }) }}</p>
+        </div>
+        <template v-else-if="managedSkill && isRemoving(managedSkill)">
+          <section class="skill-manage__section skill-manage__section--remove">
+            <div class="skill-manage__section-head">
+              <h4>{{ $t('settings.sandbox.skillRemoveInProgress') }}</h4>
+              <div class="skill-manage__progress">
+                <t-progress
+                  theme="circle"
+                  :percentage="progressOf(managedSkill)"
+                  :size="18"
+                  :stroke-width="2"
+                  :label="false"
+                />
+                <span>{{ progressOf(managedSkill) }}%</span>
+              </div>
+            </div>
+            <p class="skill-manage__remove-stage">{{ progressStageText(managedSkill) }}</p>
+          </section>
+        </template>
+        <template v-else-if="managedSkill">
+          <div class="skill-manage__row">
+            <div class="skill-manage__info">
+              <label>{{ $t('settings.skills.manageEnable') }}</label>
+              <p>{{ $t('settings.sandbox.skillDisableHint') }}</p>
+            </div>
+            <div class="skill-manage__controls">
+              <t-switch
+                :value="managedSkill.enabled"
+                :disabled="isBusy(managedSkill)"
+                :loading="togglingId === managedSkill.id"
+                @change="(v: any) => managedSkill && toggleEnabled(managedSkill, Boolean(v))"
+              />
+              <t-tooltip
+                v-if="managedSkill.status === 'failed'"
+                :content="$t('settings.sandbox.skillRetryHint')"
+                placement="top"
+              >
+                <button
+                  type="button"
+                  class="skill-card__icon-btn"
+                  :disabled="retryingId === managedSkill.id"
+                  :title="$t('settings.sandbox.skillRetry')"
+                  :aria-label="$t('settings.sandbox.skillRetry')"
+                  @click="retrySkill(managedSkill)"
+                >
+                  <t-icon name="refresh" size="16px" />
+                </button>
+              </t-tooltip>
+            </div>
+          </div>
+          <ul v-if="failedErrorLines(managedSkill).length" class="skill-card__error">
+            <li v-for="(line, i) in failedErrorLines(managedSkill)" :key="i">{{ line }}</li>
+          </ul>
+          <ul v-if="removalErrorLines(managedSkill).length" class="skill-card__error">
+            <li v-for="(line, i) in removalErrorLines(managedSkill)" :key="i">{{ line }}</li>
+          </ul>
+          <section v-if="skillHasDeclaredEnvs(managedSkill)" class="skill-manage__section">
+            <h4>{{ $t('settings.sandbox.skillEnv.toggle') }}</h4>
+            <p class="skill-envs__hint">{{ $t('settings.sandbox.skillEnv.workspaceHint') }}</p>
+            <div class="skill-envs__rows">
+              <div v-for="(env, envIdx) in managedSkill.envs" :key="env.name" class="skill-envs__row">
+                <div class="skill-envs__meta">
+                  <code class="skill-envs__name">{{ env.name }}</code>
+                  <span v-if="env.required" class="skill-envs__tag skill-envs__tag--required">
+                    {{ $t('settings.sandbox.skillEnv.required') }}
+                  </span>
+                  <span
+                    class="skill-envs__tag"
+                    :class="env.is_set ? 'skill-envs__tag--set' : 'skill-envs__tag--unset'"
+                  >
+                    {{
+                      env.is_set
+                        ? $t('settings.sandbox.skillEnv.isSet')
+                        : $t('settings.sandbox.skillEnv.notSet')
+                    }}
+                  </span>
+                  <span v-if="env.description" class="skill-envs__desc">{{ env.description }}</span>
+                </div>
+                <div class="skill-envs__editor">
+                  <t-input
+                    :value="envDrafts[managedSkill.id]?.[env.name] ?? ''"
+                    type="password"
+                    autocomplete="new-password"
+                    :name="`wk-se-focus-${envIdx}`"
+                    :readonly="isBusy(managedSkill) || !isEnvInputUnlocked(managedSkill.id, env.name)"
+                    spellcheck="false"
+                    :placeholder="
+                      env.is_set
+                        ? $t('settings.sandbox.skillEnv.placeholderSet')
+                        : $t('settings.sandbox.skillEnv.placeholderUnset')
+                    "
+                    @focus="unlockEnvInput(managedSkill.id, env.name)"
+                    @update:value="(v: string) => managedSkill && setEnvDraft(managedSkill.id, env.name, v)"
+                    @enter="saveEnvs(managedSkill, true)"
+                    @blur="onEnvFieldBlur(managedSkill)"
+                  />
+                  <t-popconfirm
+                    v-if="canClearAdminSkillEnv(env)"
+                    theme="warning"
+                    attach="body"
+                    :content="$t('settings.sandbox.skillEnv.clearConfirm', { name: env.name })"
+                    :confirm-btn="{ content: $t('settings.sandbox.skillEnv.clear'), theme: 'danger' }"
+                    :cancel-btn="{ content: $t('common.cancel') }"
+                    @confirm="clearEnv(managedSkill, env.name)"
+                  >
+                    <t-button
+                      theme="danger"
+                      variant="text"
+                      size="small"
+                      :disabled="envSaveInFlight(managedSkill)"
+                      :loading="envSaveInFlight(managedSkill)"
+                    >
+                      {{ $t('settings.sandbox.skillEnv.clear') }}
+                    </t-button>
+                  </t-popconfirm>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section v-if="hasTranscript(managedSkill)" class="skill-manage__section">
+            <div class="skill-manage__section-head">
+              <h4>{{ $t('settings.sandbox.skillTranscriptTitle') }}</h4>
+              <div v-if="managedSkill.status === 'installing'" class="skill-manage__progress">
+                <t-progress
+                  theme="circle"
+                  :percentage="progressOf(managedSkill)"
+                  :size="18"
+                  :stroke-width="2"
+                  :label="false"
+                />
+                <span>{{ progressOf(managedSkill) }}%</span>
+              </div>
+            </div>
+            <SkillInstallTimeline
+              :key="`${managedSkill.id}-${managedSkill.install_session_id || ''}-${transcriptEpoch}`"
+              compact
+              :config-id="record?.id || ''"
+              :skill-id="managedSkill.id"
+              :session-id="managedSkill.install_session_id || ''"
+              :message-id="managedSkill.install_message_id || ''"
+              :live="managedSkill.status === 'installing'"
+            />
+          </section>
+        </template>
+      </section>
 
-        <ul class="skill-list">
-          <li
-            v-for="skill in skills"
+      <section v-else-if="mode === 'list'" class="skill-list-section">
+        <div class="skill-list">
+          <div
+            v-for="skill in visibleSkills"
             :key="skill.id"
             :ref="(el) => bindSkillItem(skill.id, el)"
-            class="skill-item"
-            :class="{ 'skill-item--focused': focusedSkillId === skill.id }"
+            class="skill-card"
+            :class="{
+              'skill-card--focused': focusedSkillId === skill.id && !focusSkillId,
+              'skill-card--bare': !!focusSkillId,
+            }"
           >
-            <div class="skill-status-ring" :title="statusLabel(skill)">
-              <!-- The percentage is spelled out in the meta line below, so the
-                   ring only has to show proportion: its own label is two digits
-                   crammed into 16px. The default 6px stroke is most of the
-                   radius at this size, which reads as a blob rather than a ring. -->
+            <div v-if="!focusSkillId" class="skill-card__badge" aria-hidden="true">
               <t-progress
                 v-if="isBusy(skill)"
                 theme="circle"
                 :percentage="progressOf(skill)"
-                :size="16"
+                :size="18"
                 :stroke-width="2"
                 :label="false"
               />
-              <t-icon
-                v-else-if="skill.status === 'failed'"
-                name="close-circle-filled"
-                size="16px"
-                class="skill-status-ring__failed"
-              />
-              <t-icon
-                v-else
-                name="check-circle-filled"
-                size="16px"
-                class="skill-status-ring__ready"
-              />
+              <t-icon v-else :name="SKILL_ICON" size="18px" />
             </div>
-            <div class="skill-item__body">
-              <div class="skill-item__header">
-                <div class="skill-item__heading">
-                  <div class="skill-item__title">{{ skill.name || skill.id }}</div>
-                  <p class="skill-item__meta">
-                    <span v-if="skill.version">{{ skill.version }} · </span>
-                    <span>{{ statusLabel(skill) }}</span>
-                    <span v-if="isBusy(skill)"> · {{ progressOf(skill) }}%</span>
-                    <span v-if="isBusy(skill) && progressLog(skill)"> · {{ progressLog(skill) }}</span>
-                  </p>
-                </div>
-                <div class="skill-item__actions">
+            <div class="skill-card__body">
+              <div
+                class="skill-card__header"
+                :class="{ 'skill-card__header--toolbar': !!focusSkillId }"
+              >
+                <h3
+                  v-if="!focusSkillId"
+                  class="skill-card__title"
+                  :title="skill.name || skill.id"
+                >
+                  {{ skill.name || skill.id }}
+                </h3>
+                <span
+                  v-if="skill.status === 'failed' || isBusy(skill)"
+                  class="skill-card__status"
+                  :class="cardStatusClass(skill)"
+                >
+                  <span
+                    class="skill-card__status-dot"
+                    :class="{ 'is-live': isBusy(skill) }"
+                  />
+                  {{ cardStatusText(skill) }}
+                </span>
+                <div class="skill-card__actions">
                   <t-tooltip :content="$t('settings.sandbox.skillDisableHint')" placement="top">
                     <t-switch
                       size="small"
@@ -179,75 +316,153 @@
                       @change="(v: any) => toggleEnabled(skill, Boolean(v))"
                     />
                   </t-tooltip>
-                  <t-tooltip
-                    :content="
-                      expandedEnvSkillId === skill.id
-                        ? $t('settings.sandbox.skillEnv.toggleHide')
-                        : $t('settings.sandbox.skillEnv.toggle')
-                    "
-                    placement="top"
+                  <t-popup
+                    v-if="skillHasDeclaredEnvs(skill)"
+                    :visible="expandedEnvSkillId === skill.id"
+                    trigger="click"
+                    placement="bottom-right"
+                    attach="body"
+                    destroy-on-close
+                    overlay-class-name="skill-env-popup"
+                    :z-index="3200"
+                    :overlay-inner-style="{ padding: '0' }"
+                    @visible-change="(visible: boolean, context?: { e?: Event }) => onEnvVisible(skill, visible, context)"
                   >
                     <button
                       type="button"
-                      class="skill-item__icon-btn"
+                      class="skill-card__icon-btn"
                       :class="{ 'is-on': expandedEnvSkillId === skill.id }"
+                      :title="$t('settings.sandbox.skillEnv.toggle')"
                       :aria-label="$t('settings.sandbox.skillEnv.toggle')"
-                      @click="toggleEnvs(skill)"
+                      @pointerdown="ensureEnvDrafts(skill.id)"
                     >
-                      <t-icon
-                        :name="expandedEnvSkillId === skill.id ? 'chevron-up' : 'key'"
-                        size="16px"
-                      />
+                      <t-icon name="key" size="14px" />
                     </button>
-                  </t-tooltip>
-                  <span class="skill-item__actions-divider" />
-                  <t-tooltip :content="$t('settings.sandbox.skillFiles')" placement="top">
+                    <template #content>
+                        <div class="skill-env-popup__panel">
+                          <header class="skill-env-popup__head">
+                            <div class="skill-env-popup__head-text">
+                              <div class="skill-env-popup__title">{{ skill.name || skill.id }}</div>
+                              <div class="skill-env-popup__meta">
+                                {{ $t('settings.sandbox.skillEnv.workspaceTitle') }}
+                              </div>
+                            </div>
+                            <t-button
+                              variant="text"
+                              shape="square"
+                              size="small"
+                              class="skill-env-popup__close"
+                              :title="$t('common.close')"
+                              @click.stop="onEnvVisible(skill, false)"
+                            >
+                              <template #icon><t-icon name="close" size="16px" /></template>
+                            </t-button>
+                          </header>
+                          <div class="skill-env-popup__body">
+                            <p class="skill-envs__hint">{{ $t('settings.sandbox.skillEnv.workspaceHint') }}</p>
+                            <div class="skill-envs__rows">
+                              <div v-for="(env, envIdx) in skill.envs" :key="env.name" class="skill-envs__row">
+                                <div class="skill-envs__meta">
+                                  <code class="skill-envs__name">{{ env.name }}</code>
+                                  <span v-if="env.required" class="skill-envs__tag skill-envs__tag--required">
+                                    {{ $t('settings.sandbox.skillEnv.required') }}
+                                  </span>
+                                  <span
+                                    class="skill-envs__tag"
+                                    :class="env.is_set ? 'skill-envs__tag--set' : 'skill-envs__tag--unset'"
+                                  >
+                                    {{
+                                      env.is_set
+                                        ? $t('settings.sandbox.skillEnv.isSet')
+                                        : $t('settings.sandbox.skillEnv.notSet')
+                                    }}
+                                  </span>
+                                  <span v-if="env.description" class="skill-envs__desc">{{ env.description }}</span>
+                                </div>
+                                <div class="skill-envs__editor">
+                                  <t-input
+                                    :value="envDrafts[skill.id]?.[env.name] ?? ''"
+                                    type="password"
+                                    autocomplete="new-password"
+                                    :name="`wk-se-${envIdx}`"
+                                    :readonly="!isEnvInputUnlocked(skill.id, env.name)"
+                                    spellcheck="false"
+                                    data-lpignore="true"
+                                    data-1p-ignore="true"
+                                    data-bwignore="true"
+                                    :aria-label="env.name"
+                                    :placeholder="
+                                      env.is_set
+                                        ? $t('settings.sandbox.skillEnv.placeholderSet')
+                                        : $t('settings.sandbox.skillEnv.placeholderUnset')
+                                    "
+                                    @focus="unlockEnvInput(skill.id, env.name)"
+                                    @update:value="(v: string) => setEnvDraft(skill.id, env.name, v)"
+                                  />
+                                  <t-popconfirm
+                                    v-if="canClearAdminSkillEnv(env)"
+                                    theme="warning"
+                                    attach="body"
+                                    :z-index="3300"
+                                    :popup-props="{ attach: 'body', zIndex: 3300 }"
+                                    :content="$t('settings.sandbox.skillEnv.clearConfirm', { name: env.name })"
+                                    :confirm-btn="{ content: $t('settings.sandbox.skillEnv.clear'), theme: 'danger' }"
+                                    :cancel-btn="{ content: $t('common.cancel') }"
+                                    @confirm="clearEnv(skill, env.name)"
+                                  >
+                                    <t-button
+                                      theme="danger"
+                                      variant="text"
+                                      size="small"
+                                      :disabled="envSaveInFlight(skill)"
+                                      :loading="envSaveInFlight(skill)"
+                                    >
+                                      {{ $t('settings.sandbox.skillEnv.clear') }}
+                                    </t-button>
+                                  </t-popconfirm>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="skill-env-popup__footer">
+                            <t-button
+                              theme="primary"
+                              size="small"
+                              :disabled="!hasEnvEdits(skill) || envSaveInFlight(skill)"
+                              :loading="envSaveInFlight(skill)"
+                              @click="saveEnvs(skill)"
+                            >
+                              {{ $t('settings.sandbox.skillEnv.save') }}
+                            </t-button>
+                          </div>
+                        </div>
+                      </template>
+                    </t-popup>
+                  <t-popup
+                    v-if="hasTranscript(skill)"
+                    :visible="expandedSkillId === skill.id"
+                    trigger="click"
+                    placement="bottom-right"
+                    attach="body"
+                    destroy-on-close
+                    overlay-class-name="skill-transcript-popup"
+                    :z-index="3200"
+                    :overlay-inner-style="{ padding: '0' }"
+                    @visible-change="(visible: boolean) => onTranscriptVisible(skill, visible)"
+                  >
                     <button
                       type="button"
-                      class="skill-item__icon-btn"
-                      :class="{ 'is-on': filesDrawerVisible && filesSkillId === skill.id }"
-                      :aria-label="$t('settings.sandbox.skillFiles')"
-                      @click="openSkillFiles(skill)"
+                      class="skill-card__icon-btn"
+                      :class="{
+                        'is-on': expandedSkillId === skill.id,
+                        'is-live': isBusy(skill),
+                      }"
+                      :aria-label="$t('settings.sandbox.skillTranscript')"
                     >
-                      <t-icon name="folder" size="16px" />
+                      <span v-if="isBusy(skill)" class="skill-card__live-dot" aria-hidden="true" />
+                      <t-icon name="chat-bubble-history" size="14px" />
                     </button>
-                  </t-tooltip>
-                  <t-tooltip
-                    v-if="hasTranscript(skill) || isBusy(skill)"
-                    :content="isBusy(skill)
-                      ? $t('settings.sandbox.skillTranscriptLiveHint')
-                      : $t('settings.sandbox.skillTranscript')"
-                    placement="top"
-                  >
-                    <t-popup
-                      v-if="hasTranscript(skill)"
-                      :visible="expandedSkillId === skill.id"
-                      trigger="click"
-                      placement="bottom-right"
-                      attach="body"
-                      destroy-on-close
-                      overlay-class-name="skill-transcript-popup"
-                      :z-index="3200"
-                      :overlay-inner-style="{ padding: '0' }"
-                      @visible-change="(visible: boolean) => onTranscriptVisible(skill, visible)"
-                    >
-                      <button
-                        type="button"
-                        class="skill-item__icon-btn"
-                        :class="{
-                          'is-on': expandedSkillId === skill.id,
-                          'is-live': isBusy(skill),
-                          'is-live-chip': isBusy(skill),
-                        }"
-                        :aria-label="$t('settings.sandbox.skillTranscript')"
-                      >
-                        <span v-if="isBusy(skill)" class="skill-item__live-dot" aria-hidden="true" />
-                        <t-icon name="chat-bubble-history" size="16px" />
-                        <span v-if="isBusy(skill)" class="skill-item__live-label">
-                          {{ $t('settings.sandbox.skillTranscriptLive') }}
-                        </span>
-                      </button>
-                      <template #content>
+                    <template #content>
                         <div class="skill-transcript-popup__panel">
                           <header class="skill-transcript-popup__head">
                             <div class="skill-transcript-popup__head-text">
@@ -285,17 +500,33 @@
                         </div>
                       </template>
                     </t-popup>
+                  <t-tooltip
+                    v-else-if="isBusy(skill)"
+                    :content="$t('settings.sandbox.skillTranscriptLiveHint')"
+                    placement="top"
+                  >
                     <button
-                      v-else
                       type="button"
-                      class="skill-item__icon-btn is-live is-live-chip"
+                      class="skill-card__icon-btn is-live"
                       :aria-label="$t('settings.sandbox.skillTranscript')"
                     >
-                      <span class="skill-item__live-dot" aria-hidden="true" />
-                      <t-icon name="chat-bubble-history" size="16px" />
-                      <span class="skill-item__live-label">
-                        {{ $t('settings.sandbox.skillTranscriptLive') }}
-                      </span>
+                      <span class="skill-card__live-dot" aria-hidden="true" />
+                      <t-icon name="chat-bubble-history" size="14px" />
+                    </button>
+                  </t-tooltip>
+                  <t-tooltip
+                    v-if="skill.status === 'installing'"
+                    :content="$t('settings.sandbox.skillStopHint')"
+                    placement="top"
+                  >
+                    <button
+                      type="button"
+                      class="skill-card__icon-btn"
+                      :disabled="stoppingId === skill.id"
+                      :aria-label="$t('settings.sandbox.skillStop')"
+                      @click="stopSkill(skill)"
+                    >
+                      <t-icon name="stop-circle" size="14px" />
                     </button>
                   </t-tooltip>
                   <t-tooltip
@@ -305,150 +536,78 @@
                   >
                     <button
                       type="button"
-                      class="skill-item__icon-btn"
+                      class="skill-card__icon-btn"
                       :disabled="retryingId === skill.id"
                       :aria-label="$t('settings.sandbox.skillRetry')"
                       @click="retrySkill(skill)"
                     >
-                      <t-icon name="refresh" size="16px" />
+                      <t-icon name="refresh" size="14px" />
                     </button>
                   </t-tooltip>
                   <t-popconfirm
+                    v-if="!isBusy(skill)"
                     theme="warning"
+                    attach="body"
                     :content="deleteHint"
-                    :confirm-btn="{ content: $t('common.delete'), theme: 'danger' }"
+                    :confirm-btn="{ content: $t('settings.skills.manageUninstall'), theme: 'danger' }"
                     :cancel-btn="{ content: $t('common.cancel') }"
                     placement="top-right"
                     @confirm="removeSkill(skill)"
                   >
-                    <t-tooltip :content="$t('common.delete')" placement="top">
-                      <button
-                        type="button"
-                        class="skill-item__icon-btn skill-item__icon-btn--danger"
-                        :disabled="isBusy(skill) || deletingId === skill.id"
-                        :aria-label="$t('common.delete')"
-                      >
-                        <t-icon name="delete" size="16px" />
-                      </button>
-                    </t-tooltip>
+                    <button
+                      type="button"
+                      class="skill-card__icon-btn skill-card__icon-btn--danger"
+                      :disabled="deletingId === skill.id"
+                      :aria-label="$t('settings.skills.manageUninstall')"
+                    >
+                      <t-icon name="delete" size="14px" />
+                    </button>
                   </t-popconfirm>
                 </div>
               </div>
-              <div v-if="skill.description" class="skill-item__copy">
-                <p
-                  class="skill-item__desc"
-                  :class="{ 'skill-item__desc--expanded': isCopyExpanded(skill.id) }"
-                >
-                  {{ skill.description }}
-                </p>
-                <button
-                  v-if="canToggleCopy(skill)"
-                  type="button"
-                  class="skill-item__toggle"
-                  @click="toggleCopy(skill.id)"
-                >
-                  {{ isCopyExpanded(skill.id) ? $t('common.collapse') : $t('common.expand') }}
-                </button>
-              </div>
-              <ul v-if="failedErrorLines(skill).length" class="skill-item__error">
+              <div v-if="skill.version && !focusSkillId" class="skill-card__type">{{ skill.version }}</div>
+              <p
+                v-if="skill.description && !focusSkillId"
+                class="skill-card__desc"
+                :title="skill.description"
+              >{{ skill.description }}</p>
+              <p v-if="isBusy(skill) && (progressOf(skill) || progressLog(skill))" class="skill-card__log">
+                <template v-if="progressOf(skill)">{{ progressOf(skill) }}%</template>
+                <template v-if="progressOf(skill) && progressLog(skill)"> · </template>
+                {{ progressLog(skill) }}
+              </p>
+              <ul v-if="failedErrorLines(skill).length" class="skill-card__error">
                 <li v-for="(line, i) in failedErrorLines(skill)" :key="i">{{ line }}</li>
               </ul>
             </div>
-
-            <div v-if="expandedEnvSkillId === skill.id" class="skill-item__envs">
-              <p v-if="!skill.envs || skill.envs.length === 0" class="skill-envs__none">
-                {{ $t('settings.sandbox.skillEnv.none') }}
-              </p>
-              <template v-else>
-                <h5 class="skill-envs__title">{{ $t('settings.sandbox.skillEnv.workspaceTitle') }}</h5>
-                <p class="skill-envs__hint">{{ $t('settings.sandbox.skillEnv.workspaceHint') }}</p>
-                <div class="skill-envs__rows">
-                  <div v-for="env in skill.envs" :key="env.name" class="skill-envs__row">
-                    <div class="skill-envs__meta">
-                      <code class="skill-envs__name">{{ env.name }}</code>
-                      <span v-if="env.required" class="skill-envs__tag skill-envs__tag--required">
-                        {{ $t('settings.sandbox.skillEnv.required') }}
-                      </span>
-                      <span
-                        class="skill-envs__tag"
-                        :class="env.is_set ? 'skill-envs__tag--set' : 'skill-envs__tag--unset'"
-                      >
-                        {{
-                          env.is_set
-                            ? $t('settings.sandbox.skillEnv.isSet')
-                            : $t('settings.sandbox.skillEnv.notSet')
-                        }}
-                      </span>
-                      <span v-if="env.description" class="skill-envs__desc">{{ env.description }}</span>
-                    </div>
-                    <div class="skill-envs__editor">
-                      <t-input
-                        v-model="envDrafts[skill.id][env.name]"
-                        type="password"
-                        autocomplete="off"
-                        :aria-label="env.name"
-                        :placeholder="
-                          env.is_set
-                            ? $t('settings.sandbox.skillEnv.placeholderSet')
-                            : $t('settings.sandbox.skillEnv.placeholderUnset')
-                        "
-                      />
-                      <t-popconfirm
-                        v-if="canClearAdminSkillEnv(env)"
-                        theme="warning"
-                        :content="$t('settings.sandbox.skillEnv.clearConfirm', { name: env.name })"
-                        :confirm-btn="{ content: $t('settings.sandbox.skillEnv.clear'), theme: 'danger' }"
-                        :cancel-btn="{ content: $t('common.cancel') }"
-                        @confirm="clearEnv(skill, env.name)"
-                      >
-                        <t-button
-                          theme="danger"
-                          variant="text"
-                          size="small"
-                          :disabled="envSaveInFlight(skill)"
-                          :loading="envSaveInFlight(skill)"
-                        >
-                          {{ $t('settings.sandbox.skillEnv.clear') }}
-                        </t-button>
-                      </t-popconfirm>
-                    </div>
-                  </div>
-                </div>
-                <div class="skill-envs__footer">
-                  <t-button
-                    theme="primary"
-                    size="small"
-                    :disabled="!hasEnvEdits(skill) || envSaveInFlight(skill)"
-                    :loading="envSaveInFlight(skill)"
-                    @click="saveEnvs(skill)"
-                  >
-                    {{ $t('settings.sandbox.skillEnv.save') }}
-                  </t-button>
-                </div>
-              </template>
-            </div>
-          </li>
-        </ul>
+          </div>
+          <button
+            v-if="mode === 'list' && !hideAdd"
+            type="button"
+            class="skill-card skill-card--add"
+            @click="emit('install')"
+          >
+            <span class="skill-card--add__icon" aria-hidden="true">
+              <add-icon />
+            </span>
+            <span class="skill-card--add__label">{{ $t('settings.skills.installSkill') }}</span>
+          </button>
+        </div>
       </section>
     </t-loading>
-
-    <SkillFilesDrawer
-      v-model:visible="filesDrawerVisible"
-      :config-id="record?.id || ''"
-      :skill-id="filesSkillId"
-      :skill-name="filesSkillName"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, inject, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
+import { AddIcon } from 'tdesign-icons-vue-next'
 import { useI18n } from 'vue-i18n'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import ModelSelector from '@/components/ModelSelector.vue'
 import SkillInstallTimeline from '@/components/SkillInstallTimeline.vue'
-import SkillFilesDrawer from '@/components/SkillFilesDrawer.vue'
+import { SETTING_DRAWER_HEADER_ACTIONS_ID } from '@/components/settings/SettingDrawer.vue'
+import { SKILL_ICON } from '@/types/mention'
 import {
   getAgentById,
   updateAgent,
@@ -458,19 +617,18 @@ import {
   configSkillInstallEventsUrl,
   deleteConfigSkill,
   getSandboxConfigById,
-  updateSandboxConfigById,
   listConfigSkills,
   patchConfigSkill,
   reinstallConfigSkill,
+  stopConfigSkill,
   uploadConfigSkill,
   installConfigSkillFromSource,
   type ConfigSkill,
   type ConfigSkillInstallEvent,
   type SandboxConfigRecord,
-  type SandboxSkillImage,
 } from '@/api/system'
 import { getApiBaseUrl } from '@/utils/api-base'
-import { generateRandomString } from '@/utils/index'
+import { generateRandomString, MAX_SKILL_BUNDLE_SIZE_BYTES, MAX_SKILL_BUNDLE_SIZE_MB } from '@/utils/index'
 import i18n from '@/i18n'
 import {
   MAX_ENV_VALUE_BYTES,
@@ -482,22 +640,34 @@ import {
   editedSkillEnvPayload,
   isSkillEnvSaveInFlight,
   isValidEnvValueLength,
+  skillHasDeclaredEnvs,
   type SkillEnvSavesInFlight,
 } from '@/views/settings/envVarState'
 
 // Skills are installed into the config's snapshot image, so the panel needs a
-// config that already exists. The editor only renders it on a saved config.
-const props = defineProps<{
+// config that already exists. The catalog page renders the list in place;
+// the install drawer only mounts the source/zip form.
+const props = withDefaults(defineProps<{
   record: SandboxConfigRecord | null
-}>()
+  mode?: 'install' | 'list'
+  hideAdd?: boolean
+  focusSkillId?: string
+}>(), {
+  mode: 'list',
+  hideAdd: false,
+  focusSkillId: '',
+})
 
 const emit = defineEmits<{
   updated: [record: SandboxConfigRecord]
   skillsChanged: []
   inFlightChange: [busy: boolean]
+  install: []
+  installed: [skillId: string]
 }>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
+const headerActionsTarget = inject(SETTING_DRAWER_HEADER_ACTIONS_ID, '')
 
 const loading = ref(false)
 const uploading = ref(false)
@@ -505,29 +675,30 @@ const installingFromSource = ref(false)
 const uploadPercent = ref(0)
 const sourceInput = ref('')
 const skills = ref<ConfigSkill[]>([])
-const skillImage = ref<SandboxSkillImage | null>(null)
 const togglingId = ref('')
 const deletingId = ref('')
 const retryingId = ref('')
+const stoppingId = ref('')
+const uninstallingId = ref('')
+const uninstallingName = ref('')
+const uninstallDone = ref(false)
+const sawRemoving = ref(false)
 // Only one install timeline is open at a time: each one holds an SSE
 // connection, and two runs' worth of agent steps in a drawer is unreadable.
 const expandedSkillId = ref('')
-const filesSkillId = ref('')
-const filesSkillName = ref('')
-const filesDrawerVisible = ref(false)
-const expandedCopyIds = ref<Set<string>>(new Set())
 const transcriptEpoch = ref(0)
 const focusedSkillId = ref('')
 const skillItemEls = new Map<string, HTMLElement>()
 let focusTimer: number | null = null
-// Workspace-wide env values. Only one skill's editor is open at a time, for the
-// same reason as the timeline: the row is already dense.
+// Workspace-wide env values. Only one skill's editor popup is open at a time,
+// same as the install timeline.
 const expandedEnvSkillId = ref('')
 // Drafts keyed by skill then variable name. An absent key means "the admin did
 // not touch this field", which is what keeps the PATCH partial: an empty string
 // clears the stored value server-side, so submitting every input would wipe
 // values nobody looked at.
 const envDrafts = reactive<Record<string, Record<string, string>>>({})
+const envInputUnlocked = reactive<Record<string, boolean>>({})
 const envSavesInFlight = ref<SkillEnvSavesInFlight>({})
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const progressById = ref<Record<string, ConfigSkillInstallEvent>>({})
@@ -541,12 +712,12 @@ const LAST_CHAT_MODEL_KEY = 'weknora_last_chat_model_id'
 const installerAgent = ref<CustomAgent | null>(null)
 const installerModelId = ref('')
 const savingInstallerModel = ref(false)
-const skillRollout = ref<'next_turn' | 'new_session'>('next_turn')
-const savingRollout = ref(false)
 
 function normalizeSkillRollout(value?: string): 'next_turn' | 'new_session' {
   return value === 'new_session' ? 'new_session' : 'next_turn'
 }
+
+const skillRollout = computed(() => normalizeSkillRollout(props.record?.config?.skill_rollout))
 
 const uploadHint = computed(() =>
   skillRollout.value === 'new_session'
@@ -559,14 +730,6 @@ const deleteHint = computed(() =>
     ? t('settings.sandbox.skillDeleteHintNewSession')
     : t('settings.sandbox.skillDeleteHint'),
 )
-const runtimeTemplateId = computed(() => {
-  const cfg = props.record?.config
-  return cfg?.cube?.template_id?.trim()
-    || cfg?.e2b?.template_id?.trim()
-    || cfg?.docker?.image?.trim()
-    || ''
-})
-const hasSkillSnapshot = computed(() => Boolean(skillImage.value?.snapshot_id?.trim()))
 
 function readLastChatModelID(): string {
   try {
@@ -574,15 +737,6 @@ function readLastChatModelID(): string {
   } catch {
     return ''
   }
-}
-
-function formatBuiltAt(value?: string): string {
-  if (!value) return t('settings.sandbox.imageInfoUnset')
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime()) || date.getFullYear() <= 1) {
-    return t('settings.sandbox.imageInfoUnset')
-  }
-  return date.toLocaleString(locale.value)
 }
 
 const STATUS_I18N: Record<string, string> = {
@@ -598,8 +752,82 @@ function statusLabel(skill: ConfigSkill): string {
 }
 
 function isBusy(skill: ConfigSkill): boolean {
-  return skill.status === 'installing' || skill.status === 'removing'
+  return skill.status === 'installing' || isRemoving(skill)
 }
+
+function isRemoving(skill: ConfigSkill): boolean {
+  if (uninstallingId.value === skill.id && !uninstallDone.value) {
+    if (progressById.value[skill.id]?.stage !== 'failed') return true
+  }
+  return skill.status === 'removing' || deletingId.value === skill.id
+}
+
+function cardStatusClass(skill: ConfigSkill): string {
+  if (skill.status === 'failed') return 'skill-card__status--failed'
+  if (skill.status === 'installing' || skill.status === 'removing') return 'skill-card__status--busy'
+  return skill.enabled ? 'skill-card__status--on' : 'skill-card__status--off'
+}
+
+function cardStatusText(skill: ConfigSkill): string {
+  if (skill.status === 'installing') return t('settings.sandbox.skillStatusInstalling')
+  if (skill.status === 'removing') return t('settings.sandbox.skillStatusRemoving')
+  if (skill.status === 'failed') return t('settings.sandbox.skillStatusFailed')
+  return skill.enabled ? t('common.on') : t('common.off')
+}
+
+const visibleSkills = computed(() => {
+  if (props.mode === 'install') {
+    return skills.value.filter(isBusy)
+  }
+  const rows = skills.value.filter((skill) => skill.status !== 'removed')
+  if (!props.focusSkillId) return rows
+  return rows.filter((skill) => skill.id === props.focusSkillId)
+})
+
+const managedSkill = computed(() =>
+  props.focusSkillId ? (visibleSkills.value[0] || null) : null,
+)
+
+const showHeaderUninstall = computed(() => {
+  if (!props.focusSkillId || uninstallDone.value) return false
+  const skill = managedSkill.value
+  if (!skill || skill.status === 'installing') return false
+  return !isRemoving(skill)
+})
+
+const showHeaderStop = computed(() => {
+  if (!props.focusSkillId || uninstallDone.value) return false
+  const skill = managedSkill.value
+  if (!skill) return false
+  return skill.status === 'installing'
+})
+
+watch(managedSkill, (skill) => {
+  if (skill && skillHasDeclaredEnvs(skill)) ensureEnvDrafts(skill.id)
+}, { immediate: true })
+
+watch(
+  () => props.focusSkillId,
+  () => {
+    uninstallingId.value = ''
+    uninstallingName.value = ''
+    uninstallDone.value = false
+    sawRemoving.value = false
+  },
+)
+
+watch(skills, (list) => {
+  const id = uninstallingId.value
+  if (!id || uninstallDone.value) return
+  const row = list.find((skill) => skill.id === id)
+  if (row?.status === 'removing') {
+    sawRemoving.value = true
+    return
+  }
+  if (sawRemoving.value && (!row || row.status === 'removed')) {
+    uninstallDone.value = true
+  }
+})
 
 watch(
   () => skills.value.some(isBusy),
@@ -638,7 +866,7 @@ function revealSkill(skillId: string) {
 
 function onTranscriptVisible(skill: ConfigSkill, visible: boolean) {
   if (visible) {
-    filesDrawerVisible.value = false
+    expandedEnvSkillId.value = ''
     if (expandedSkillId.value !== skill.id) {
       expandedSkillId.value = skill.id
       // A run that finished while the popup was closed was tailed from the
@@ -652,26 +880,55 @@ function onTranscriptVisible(skill: ConfigSkill, visible: boolean) {
   }
 }
 
-function openSkillFiles(skill: ConfigSkill) {
-  expandedSkillId.value = ''
-  if (filesDrawerVisible.value && filesSkillId.value === skill.id) {
-    filesDrawerVisible.value = false
-    return
-  }
-  filesSkillId.value = skill.id
-  filesSkillName.value = skill.name || skill.id
-  filesDrawerVisible.value = true
+function ensureEnvDrafts(skillId: string) {
+  if (!envDrafts[skillId]) envDrafts[skillId] = {}
 }
 
-function toggleEnvs(skill: ConfigSkill) {
-  if (expandedEnvSkillId.value === skill.id) {
-    expandedEnvSkillId.value = ''
+function setEnvDraft(skillId: string, name: string, value: string) {
+  ensureEnvDrafts(skillId)
+  envDrafts[skillId][name] = value ?? ''
+}
+
+function envInputLockKey(skillId: string, name: string) {
+  return `${skillId}\n${name}`
+}
+
+function isEnvInputUnlocked(skillId: string, name: string) {
+  return envInputUnlocked[envInputLockKey(skillId, name)] === true
+}
+
+function unlockEnvInput(skillId: string, name: string) {
+  envInputUnlocked[envInputLockKey(skillId, name)] = true
+}
+
+function resetEnvInputLocks() {
+  for (const key of Object.keys(envInputUnlocked)) delete envInputUnlocked[key]
+}
+
+function onEnvVisible(skill: ConfigSkill, visible: boolean, context?: { e?: Event }) {
+  if (visible) {
+    if (!skillHasDeclaredEnvs(skill)) return
+    expandedSkillId.value = ''
+    if (expandedEnvSkillId.value !== skill.id) {
+      // Reopening starts from a clean slate rather than resurrecting a
+      // half-typed secret from the last time the editor was open.
+      envDrafts[skill.id] = {}
+      resetEnvInputLocks()
+      expandedEnvSkillId.value = skill.id
+    } else {
+      ensureEnvDrafts(skill.id)
+    }
     return
   }
-  // Reopening starts from a clean slate rather than resurrecting a half-typed
-  // secret from the last time the editor was open.
-  envDrafts[skill.id] = {}
-  expandedEnvSkillId.value = skill.id
+  // The clear confirm is another body-attached popup, so TDesign treats a
+  // click on it as an outside click on this editor.
+  const target = context?.e?.target
+  if (target instanceof Element && target.closest('.t-popconfirm')) {
+    return
+  }
+  if (expandedEnvSkillId.value === skill.id) {
+    expandedEnvSkillId.value = ''
+  }
 }
 
 function envPayload(skill: ConfigSkill): Record<string, string> {
@@ -692,7 +949,8 @@ function envSaveInFlight(skill: ConfigSkill): boolean {
     : false
 }
 
-async function saveEnvs(skill: ConfigSkill) {
+async function saveEnvs(skill: ConfigSkill, silent = false) {
+  if (isBusy(skill)) return
   const envs = envPayload(skill)
   if (Object.keys(envs).length === 0) return
   if (Object.values(envs).some((value) => !isValidEnvValueLength(value))) {
@@ -701,7 +959,12 @@ async function saveEnvs(skill: ConfigSkill) {
     )
     return
   }
-  await submitEnvs(skill, envs, 'settings.sandbox.skillEnv.saveSuccess')
+  await submitEnvs(skill, envs, silent ? '' : 'settings.sandbox.skillEnv.saveSuccess')
+}
+
+function onEnvFieldBlur(skill: ConfigSkill) {
+  if (isBusy(skill) || !hasEnvEdits(skill) || envSaveInFlight(skill)) return
+  void saveEnvs(skill, true)
 }
 
 async function clearEnv(skill: ConfigSkill, name: string) {
@@ -734,7 +997,7 @@ async function submitEnvs(
     // Nothing reads a stored value back. Remove only values that are still the
     // submitted ones; newer typing during the request must survive cleanup.
     envDrafts[skill.id] = clearSubmittedSkillEnvDrafts(envDrafts[skill.id] || {}, envs)
-    MessagePlugin.success(t(successKey))
+    if (successKey) MessagePlugin.success(t(successKey))
   } catch (e: any) {
     if (!isCurrent()) return
     MessagePlugin.error(e?.message || t('settings.sandbox.skillEnv.saveFailed'))
@@ -752,11 +1015,33 @@ function progressOf(skill: ConfigSkill): number {
   if (typeof percent === 'number' && Number.isFinite(percent)) {
     return Math.max(0, Math.min(100, percent))
   }
+  if (skill.status === 'removing' || deletingId.value === skill.id) return 5
   return skill.status === 'ready' || skill.status === 'failed' ? 100 : 0
 }
 
+const REMOVE_STAGE_I18N: Record<string, string> = {
+  accepted: 'settings.sandbox.skillRemoveStage.accepted',
+  sandbox_ready: 'settings.sandbox.skillRemoveStage.sandbox_ready',
+  removed: 'settings.sandbox.skillRemoveStage.removed',
+  done: 'settings.sandbox.skillRemoveStage.done',
+  failed: 'settings.sandbox.skillRemoveStage.failed',
+}
+
+function progressStageText(skill: ConfigSkill): string {
+  const ev = progressById.value[skill.id]
+  const stageKey = ev?.stage ? REMOVE_STAGE_I18N[ev.stage] : ''
+  if (stageKey) return t(stageKey)
+  if (skill.status === 'removing' || deletingId.value === skill.id) {
+    return t('settings.sandbox.skillRemoveWaiting')
+  }
+  return ev?.log || ''
+}
+
 function progressLog(skill: ConfigSkill): string {
-  return progressById.value[skill.id]?.log || ''
+  const ev = progressById.value[skill.id]
+  if (ev?.log) return ev.log
+  if (skill.status === 'removing') return progressStageText(skill)
+  return ''
 }
 
 // A re-run reuses the skill id, so the previous run's last event is still the
@@ -786,24 +1071,15 @@ function failedErrorLines(skill: ConfigSkill): string[] {
     .filter(Boolean)
 }
 
-function isCopyExpanded(skillId: string): boolean {
-  return expandedCopyIds.value.has(skillId)
-}
-
-function descriptionNeedsToggle(skill: ConfigSkill): boolean {
-  const desc = skill.description?.trim() || ''
-  return desc.length > 80 || desc.includes('\n')
-}
-
-function canToggleCopy(skill: ConfigSkill): boolean {
-  return descriptionNeedsToggle(skill) || isCopyExpanded(skill.id)
-}
-
-function toggleCopy(skillId: string) {
-  const next = new Set(expandedCopyIds.value)
-  if (next.has(skillId)) next.delete(skillId)
-  else next.add(skillId)
-  expandedCopyIds.value = next
+function removalErrorLines(skill: ConfigSkill): string[] {
+  const ev = progressById.value[skill.id]
+  const raw = ev?.stage === 'failed'
+    ? (ev.log || skill.error || '')
+    : (uninstallingId.value === skill.id && skill.status !== 'removing' ? (skill.error || '') : '')
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
 }
 
 function stopFollow(skillId: string) {
@@ -897,17 +1173,27 @@ async function refreshImage() {
   if (!props.record) return
   try {
     const res = await getSandboxConfigById(props.record.id)
-    skillImage.value = res?.data?.config?.skill_image || null
-    skillRollout.value = normalizeSkillRollout(res?.data?.config?.skill_rollout)
     if (res?.data) emit('updated', res.data)
   } catch {
-    skillImage.value = skillImage.value || props.record.config?.skill_image || null
     emit('skillsChanged')
   }
 }
 
 function skillsSignature(list: ConfigSkill[]): string {
   return list.map((skill) => `${skill.id}:${skill.status}:${skill.enabled ? 1 : 0}`).join('|')
+}
+
+function overlayUninstallStatus(list: ConfigSkill[]): ConfigSkill[] {
+  const id = uninstallingId.value
+  if (!id || uninstallDone.value) return list
+  if (progressById.value[id]?.stage === 'failed') return list
+  return list.map((item) => {
+    if (item.id !== id) return item
+    if (item.status === 'removed' || item.status === 'failed' || item.status === 'removing') {
+      return item
+    }
+    return { ...item, status: 'removing' }
+  })
 }
 
 async function loadSkills(silent = false) {
@@ -917,12 +1203,13 @@ async function loadSkills(silent = false) {
   const wasBusy = skills.value.some(isBusy)
   try {
     const res = await listConfigSkills(props.record.id)
-    skills.value = res?.data || []
+    skills.value = overlayUninstallStatus(res?.data || [])
     followBusySkills()
     ensurePoll()
     if (skillsSignature(skills.value) !== previous) {
       emit('skillsChanged')
     }
+    if (props.focusSkillId) revealSkill(props.focusSkillId)
     if (wasBusy && !skills.value.some(isBusy)) {
       void refreshImage()
     }
@@ -936,10 +1223,15 @@ async function loadSkills(silent = false) {
 }
 
 async function loadAll() {
-  skillImage.value = props.record?.config?.skill_image || null
-  skillRollout.value = normalizeSkillRollout(props.record?.config?.skill_rollout)
-  await Promise.all([loadSkills(), refreshImage(), loadInstallerModel()])
+  const tasks: Array<Promise<unknown>> = [loadSkills(), refreshImage()]
+  if (props.mode === 'install') tasks.push(loadInstallerModel())
+  await Promise.all(tasks)
 }
+
+defineExpose({
+  reload: loadAll,
+  revealSkill,
+})
 
 async function loadInstallerModel() {
   try {
@@ -970,29 +1262,6 @@ async function persistInstallerModel(modelId: string) {
   installerModelId.value = id
 }
 
-async function onSkillRolloutChange(value: string) {
-  const next = normalizeSkillRollout(value)
-  if (!props.record || next === skillRollout.value) return
-  const previous = skillRollout.value
-  skillRollout.value = next
-  savingRollout.value = true
-  try {
-    const res = await getSandboxConfigById(props.record.id)
-    const current = res?.data
-    const saved = await updateSandboxConfigById(props.record.id, {
-      name: current?.name || props.record.name,
-      description: current?.description || props.record.description,
-      config: { ...(current?.config || props.record.config || {}), skill_rollout: next },
-    })
-    if (saved?.data) emit('updated', saved.data)
-  } catch (e: any) {
-    skillRollout.value = previous
-    MessagePlugin.error(e?.message || t('settings.sandbox.skillRolloutSaveFailed'))
-  } finally {
-    savingRollout.value = false
-  }
-}
-
 async function onInstallerModelChange(modelId: string) {
   if (!modelId || modelId === '__add_model__') return
   installerModelId.value = modelId
@@ -1010,6 +1279,26 @@ function isZipFile(file: File): boolean {
   return file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip'
 }
 
+function skillBundleErrorMessage(err: any, fallbackKey: string): string {
+  const raw = String(err?.message || '')
+  if (/cannot exceed \d+\s*MB/i.test(raw)) {
+    return t('settings.sandbox.skillBundleTooLarge', { size: MAX_SKILL_BUNDLE_SIZE_MB })
+  }
+  const tooManyFiles = raw.match(/skill directory holds more than (\d+) files/i)
+  if (tooManyFiles) {
+    return t('settings.sandbox.skillBundleTooManyFiles', { count: tooManyFiles[1] })
+  }
+  const tooManyEntries = raw.match(/archive has more than (\d+) zip entries/i)
+  if (tooManyEntries) {
+    return t('settings.sandbox.skillBundleTooManyZipEntries', { count: tooManyEntries[1] })
+  }
+  const legacyTooMany = raw.match(/archive holds more than (\d+) files/i)
+  if (legacyTooMany) {
+    return t('settings.sandbox.skillBundleTooManyFiles', { count: legacyTooMany[1] })
+  }
+  return raw || t(fallbackKey)
+}
+
 async function uploadFile(file: File) {
   if (!props.record || installBusy.value) return
   if (!installerModelId.value) {
@@ -1020,6 +1309,10 @@ async function uploadFile(file: File) {
     MessagePlugin.error(t('settings.sandbox.skillUploadFailed'))
     return
   }
+  if (file.size > MAX_SKILL_BUNDLE_SIZE_BYTES) {
+    MessagePlugin.error(t('settings.sandbox.skillBundleTooLarge', { size: MAX_SKILL_BUNDLE_SIZE_MB }))
+    return
+  }
   uploading.value = true
   uploadPercent.value = 0
   try {
@@ -1028,18 +1321,10 @@ async function uploadFile(file: File) {
       uploadPercent.value = percent
     })
     MessagePlugin.success(t('settings.sandbox.skillUploadAccepted'))
-    const skillId = res?.data?.skill_id
-    // Re-uploading a skill by the same name reuses its row, so this may be a
-    // second run of a skill already on screen.
-    if (skillId) forgetProgress(skillId)
-    await loadSkills()
-    await refreshImage()
-    if (skillId) {
-      followProgress(skillId)
-      revealSkill(skillId)
-    }
+    const skillId = res?.data?.skill_id || ''
+    emit('installed', skillId)
   } catch (e: any) {
-    MessagePlugin.error(e?.message || t('settings.sandbox.skillUploadFailed'))
+    MessagePlugin.error(skillBundleErrorMessage(e, 'settings.sandbox.skillUploadFailed'))
   } finally {
     uploading.value = false
     uploadPercent.value = 0
@@ -1061,16 +1346,10 @@ async function installFromSource() {
     const res = await installConfigSkillFromSource(props.record.id, { source })
     MessagePlugin.success(t('settings.sandbox.skillUploadAccepted'))
     sourceInput.value = ''
-    const skillId = res?.data?.skill_id
-    if (skillId) forgetProgress(skillId)
-    await loadSkills()
-    await refreshImage()
-    if (skillId) {
-      followProgress(skillId)
-      revealSkill(skillId)
-    }
+    const skillId = res?.data?.skill_id || ''
+    emit('installed', skillId)
   } catch (e: any) {
-    MessagePlugin.error(e?.message || t('settings.sandbox.skillSourceFailed'))
+    MessagePlugin.error(skillBundleErrorMessage(e, 'settings.sandbox.skillSourceFailed'))
   } finally {
     installingFromSource.value = false
   }
@@ -1124,24 +1403,58 @@ async function retrySkill(skill: ConfigSkill) {
   }
 }
 
-async function removeSkill(skill: ConfigSkill) {
+async function stopSkill(skill: ConfigSkill) {
   if (!props.record) return
+  stoppingId.value = skill.id
+  forgetProgress(skill.id)
+  try {
+    const res = await stopConfigSkill(props.record.id, skill.id)
+    const updated = res?.data
+    if (updated) {
+      skills.value = skills.value.map((item) => (item.id === skill.id ? { ...item, ...updated } : item))
+    }
+    MessagePlugin.success(t('settings.sandbox.skillStopAccepted'))
+    await loadSkills()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('settings.sandbox.skillStopFailed'))
+  } finally {
+    stoppingId.value = ''
+  }
+}
+
+async function removeSkill(skill: ConfigSkill) {
+  if (!props.record || isBusy(skill) || deletingId.value) return
   deletingId.value = skill.id
+  uninstallingId.value = skill.id
+  uninstallingName.value = skill.name
+  uninstallDone.value = false
+  forgetProgress(skill.id)
   try {
     await deleteConfigSkill(props.record.id, skill.id)
     MessagePlugin.success(t('settings.sandbox.skillDeleteAccepted'))
+    skills.value = skills.value.map((item) => (
+      item.id === skill.id ? { ...item, status: 'removing' } : item
+    ))
+    sawRemoving.value = true
+    progressById.value = {
+      ...progressById.value,
+      [skill.id]: { percent: 5, stage: 'accepted', done: false },
+    }
     await loadSkills()
     await refreshImage()
     followProgress(skill.id)
   } catch (e: any) {
+    uninstallingId.value = ''
+    uninstallingName.value = ''
+    sawRemoving.value = false
     MessagePlugin.error(e?.message || t('common.deleteFailed'))
   } finally {
     deletingId.value = ''
   }
 }
 
-// The panel is mounted only while its wizard step is showing, so switching
-// steps tears the follows down and coming back re-reads the list.
+// The panel is mounted while its catalog drawer is open. Switching sandbox
+// configs or closing the drawer tears the follows down.
 watch(
   () => props.record?.id,
   (configID, previousConfigID) => {
@@ -1157,11 +1470,17 @@ watch(
     stopPoll()
     skills.value = []
     progressById.value = {}
-    expandedCopyIds.value = new Set()
     installerAgent.value = null
     installerModelId.value = ''
   },
   { immediate: true },
+)
+
+watch(
+  () => props.focusSkillId,
+  (skillId) => {
+    if (skillId) revealSkill(skillId)
+  },
 )
 
 onUnmounted(() => {
@@ -1172,64 +1491,21 @@ onUnmounted(() => {
 </script>
 
 <style lang="less" scoped>
-.image-info-note {
-  margin: 0 0 10px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--td-text-color-secondary);
+.sandbox-skills-panel--list {
+  min-height: 36px;
 }
 
-.image-info {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.sandbox-skills-panel--focused .skill-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.image-info li {
-  display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
+  gap: 0;
 }
 
 .installer-model-hint {
-  margin: 0 0 10px;
+  margin: 0;
   font-size: 12px;
   line-height: 1.5;
   color: var(--td-text-color-secondary);
-}
-
-.skill-rollout-group {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.image-info__label {
-  color: var(--td-text-color-secondary);
-  font-size: 12px;
-  line-height: 1.45;
-  padding-top: 1px;
-}
-
-.image-info__value {
-  color: var(--td-text-color-primary);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.45;
-  min-width: 0;
-}
-
-.image-info__value--id {
-  font-family: var(--td-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
-  font-weight: 400;
-  overflow-wrap: anywhere;
-  word-break: break-all;
-  user-select: all;
 }
 
 .file-input-hidden {
@@ -1250,19 +1526,25 @@ onUnmounted(() => {
   justify-content: center;
 
   &:hover:not(.is-disabled) {
-    border-color: var(--td-brand-color);
-    background: var(--td-success-color-light);
+    border-color: var(--td-text-color-placeholder);
+    background: var(--td-bg-color-container-hover);
   }
 
   &.has-file {
     border-color: var(--td-brand-color);
-    background: var(--td-success-color-light);
+    background: var(--td-bg-color-container);
     border-style: solid;
   }
 
   &.is-disabled {
     cursor: not-allowed;
     opacity: 0.6;
+  }
+
+  &--large {
+    min-height: 180px;
+    border-radius: 12px;
+    border-width: 2px;
   }
 }
 
@@ -1276,6 +1558,35 @@ onUnmounted(() => {
   text-align: center;
   padding: 8px 12px;
   width: 100%;
+}
+
+.file-upload-area--large .file-upload-content {
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px 20px;
+}
+
+.file-upload-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
+}
+
+.file-upload-area--large .upload-text {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.file-upload-area--large .upload-primary-text {
+  font-size: 15px;
+}
+
+.file-upload-area--large .upload-secondary-text {
+  font-size: 13px;
 }
 
 .upload-icon {
@@ -1346,67 +1657,126 @@ onUnmounted(() => {
   }
 }
 
-.skill-empty {
-  margin: 0;
-  font-size: 13px;
-  color: var(--td-text-color-placeholder);
+.sandbox-skills-panel--focused {
+  min-height: 0;
 }
 
-.skill-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.skill-header-uninstall {
+  white-space: nowrap;
+}
+
+.skill-manage {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 16px;
 }
 
-// The install timeline opens in a popup, so the card stays a two-column row.
-.skill-item {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+.skill-manage__row {
+  display: flex;
   align-items: flex-start;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
-  background: var(--td-bg-color-container);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.skill-item--focused {
-  border-color: var(--td-brand-color);
-  box-shadow: 0 0 0 2px var(--td-brand-color-focus, rgba(0, 168, 112, 0.18));
+.skill-manage__controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
-.skill-item__envs {
-  grid-column: 1 / -1;
+.skill-manage__info {
+  min-width: 0;
+
+  label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--td-text-color-primary);
+  }
+
+  p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--td-text-color-secondary);
+  }
+}
+
+.skill-manage__section {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding-top: 12px;
   border-top: 1px solid var(--td-component-stroke);
-  padding-top: 10px;
+
+  h4 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+
+  .skill-manage__section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .skill-manage__progress {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--td-brand-color);
+
+    :deep(.t-progress--circle svg) {
+      display: block;
+    }
+  }
+
+  &--remove {
+    border-top: 0;
+    padding-top: 0;
+  }
 }
 
-.skill-envs__none {
-  margin: 0;
-  font-size: 12px;
-  color: var(--td-text-color-placeholder);
-}
-
-.skill-envs__title {
+.skill-manage__remove-stage {
   margin: 0;
   font-size: 13px;
-  font-weight: 600;
-  color: var(--td-text-color-primary);
+  line-height: 1.5;
+  color: var(--td-text-color-secondary);
+}
+
+.skill-manage__done {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0 4px;
+  color: var(--td-success-color, var(--td-brand-color));
+
+  p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--td-text-color-primary);
+  }
 }
 
 .skill-envs__hint {
-  margin: 2px 0 0;
+  margin: 0;
   font-size: 12px;
   line-height: 1.5;
   color: var(--td-text-color-secondary);
 }
 
 .skill-envs__rows {
-  margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1463,175 +1833,240 @@ onUnmounted(() => {
   gap: 8px;
 }
 
-.skill-envs__editor :deep(.t-input__wrap) {
-  flex: 1;
-  min-width: 0;
-}
-
-.skill-envs__footer {
-  margin-top: 10px;
+.skill-list {
+  margin: 0;
+  padding: 0;
   display: flex;
-  justify-content: flex-end;
-}
-
-.skill-status-ring {
-  width: 16px;
-  height: 16px;
-  margin-top: 3px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: var(--td-text-color-secondary);
-
-  :deep(.t-icon) {
-    width: 16px;
-    height: 16px;
-  }
-
-  /* The ring is already sized to 16px by the component. The svg is inline by
-     default, so without this it sits on a text baseline and pushes the ring
-     a few pixels below the icon the other two states draw. */
-  :deep(.t-progress--circle svg) {
-    display: block;
-  }
-
-  &__ready {
-    color: var(--td-success-color);
-  }
-
-  &__failed {
-    color: var(--td-error-color);
-  }
-}
-
-.skill-item__body {
-  min-width: 0;
-}
-
-.skill-item__header {
-  display: flex;
-  align-items: flex-start;
+  flex-direction: column;
   gap: 8px;
 }
 
-.skill-item__heading {
-  min-width: 0;
-  flex: 1;
+.sandbox-skills-panel--list .skill-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
 }
 
-.skill-item__title {
+.skill-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 14px 14px 12px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 10px;
+  background: var(--td-bg-color-container);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  min-width: 0;
+
+  &--focused {
+    border-color: var(--td-brand-color);
+    box-shadow: 0 0 0 2px var(--td-brand-color-focus, rgba(0, 168, 112, 0.18));
+  }
+
+  &--bare {
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  &--add {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 68px;
+    border-style: dashed;
+    background: transparent;
+    color: var(--td-text-color-placeholder);
+    cursor: pointer;
+    font: inherit;
+    text-align: center;
+
+    &:hover,
+    &:focus-visible {
+      color: var(--td-brand-color);
+      border-color: var(--td-brand-color);
+      background: color-mix(in srgb, var(--td-brand-color) 6%, transparent);
+      box-shadow: none;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--td-brand-color);
+      outline-offset: 2px;
+    }
+
+    &__icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
+      color: var(--td-brand-color);
+      font-size: 18px;
+    }
+
+    &__label {
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+  }
+}
+
+.skill-card__badge {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
+  color: var(--td-brand-color);
+  overflow: hidden;
+
+  :deep(.t-progress--circle svg) {
+    display: block;
+  }
+}
+
+.skill-card__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.skill-card__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+
+  &--toolbar {
+    justify-content: flex-end;
+    width: 100%;
+  }
+}
+
+.skill-card__title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
   font-size: 14px;
   font-weight: 600;
-  line-height: 22px;
+  line-height: 1.4;
   color: var(--td-text-color-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.skill-item__meta {
-  margin: 2px 0 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--td-text-color-secondary);
-}
-
-.skill-item__desc,
-.skill-item__error {
-  margin: 0;
-  padding: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  word-break: break-word;
-  list-style: none;
-}
-
-/* Verification reports every problem it found, so a failure is often several
-   lines. They are bulleted only when there is more than one: a lone problem
-   reads as a sentence, not as a one-item list. */
-.skill-item__error li:not(:only-child) {
-  padding-left: 10px;
-  text-indent: -10px;
-}
-
-.skill-item__error li:not(:only-child)::before {
-  content: '· ';
-}
-
-.skill-item__error li + li {
-  margin-top: 2px;
-}
-
-.skill-item__copy {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.skill-item__desc {
-  min-width: 0;
-  flex: 1;
-  color: var(--td-text-color-secondary);
-}
-
-.skill-item__desc:not(.skill-item__desc--expanded) {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.skill-item__error {
-  margin-top: 6px;
-  color: var(--td-error-color);
-}
-
-.skill-item__toggle {
+.skill-card__status {
   flex-shrink: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--td-text-color-placeholder);
-  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px 1px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  border-radius: 10px;
+  background: var(--td-bg-color-secondarycontainer);
 
-  &:hover {
+  &--on {
+    color: var(--td-success-color-7, #118053);
+
+    .skill-card__status-dot {
+      background: var(--td-success-color, #118053);
+    }
+  }
+
+  &--off {
+    color: var(--td-text-color-placeholder);
+
+    .skill-card__status-dot {
+      background: var(--td-gray-color-5);
+    }
+  }
+
+  &--busy {
     color: var(--td-brand-color);
+
+    .skill-card__status-dot {
+      background: var(--td-brand-color);
+    }
+  }
+
+  &--failed {
+    color: var(--td-warning-color-7, #b85c00);
+
+    .skill-card__status-dot {
+      background: var(--td-warning-color, #e37318);
+    }
   }
 }
 
-.skill-item__actions {
+.skill-card__status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+
+  &.is-live {
+    animation: skill-status-dot 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes skill-status-dot {
+  0%,
+  100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.skill-card__actions {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
+  gap: 0;
+
+  :deep(.t-switch) {
+    transform: scale(0.84);
+    transform-origin: center right;
+    margin-right: 2px;
+  }
+
+  :deep(.t-popup),
+  :deep(.t-popup__reference),
+  :deep(.t-popconfirm) {
+    display: inline-flex;
+  }
 }
 
-.skill-item__actions-divider {
-  width: 1px;
-  height: 12px;
-  margin: 0 4px;
-  background: var(--td-component-stroke);
-}
-
-.skill-item__icon-btn {
+.skill-card__icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: var(--td-text-color-placeholder);
   cursor: pointer;
+  line-height: 0;
   transition: background 0.15s ease, color 0.15s ease;
+
+  :deep(.t-icon) {
+    display: block;
+  }
 
   &:hover:not(:disabled) {
     background: var(--td-bg-color-secondarycontainer);
@@ -1650,14 +2085,6 @@ onUnmounted(() => {
 
   &.is-live {
     color: var(--td-brand-color);
-    background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
-  }
-
-  &.is-live-chip {
-    width: auto;
-    min-width: 26px;
-    padding: 0 8px;
-    gap: 5px;
   }
 
   &--danger:hover:not(:disabled) {
@@ -1666,35 +2093,70 @@ onUnmounted(() => {
   }
 }
 
-.skill-item__live-dot {
-  width: 6px;
-  height: 6px;
+.skill-card__live-dot {
+  width: 5px;
+  height: 5px;
+  margin-right: 1px;
   border-radius: 50%;
   background: var(--td-brand-color);
-  animation: skill-transcript-dot 2.4s ease-in-out infinite;
+  animation: skill-status-dot 2.4s ease-in-out infinite;
 }
 
-.skill-item__live-label {
-  font-size: 12px;
+.skill-card__type {
+  font-size: 11px;
   font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
+  line-height: 1.3;
+  color: var(--td-text-color-placeholder);
 }
 
-@keyframes skill-transcript-dot {
-  0%,
-  100% {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0.45;
-  }
+.skill-card__desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--td-text-color-secondary);
 }
+
+.skill-card__log {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--td-text-color-placeholder);
+}
+
+.skill-card__error {
+  margin: 2px 0 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+  list-style: none;
+  color: var(--td-error-color);
+}
+
+.skill-card__error li:not(:only-child) {
+  padding-left: 10px;
+  text-indent: -10px;
+}
+
+.skill-card__error li:not(:only-child)::before {
+  content: '· ';
+}
+
+.skill-card__error li + li {
+  margin-top: 2px;
+}
+
 </style>
 
 <style lang="less">
-.skill-transcript-popup {
+.skill-transcript-popup,
+.skill-env-popup {
   z-index: 3200 !important;
 
   .t-popup__content {
@@ -1749,6 +2211,27 @@ onUnmounted(() => {
     color: var(--td-text-color-placeholder);
   }
 
+  &__close {
+    flex-shrink: 0;
+    color: var(--td-text-color-secondary);
+  }
+
+  &__body {
+    max-height: min(360px, 52vh);
+    overflow: auto;
+
+    &::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: var(--td-bg-color-component-disabled);
+      border-radius: 3px;
+    }
+  }
+}
+
+.skill-transcript-popup {
   &__status {
     color: var(--td-text-color-secondary);
 
@@ -1766,24 +2249,103 @@ onUnmounted(() => {
     }
   }
 
-  &__close {
-    flex-shrink: 0;
-    color: var(--td-text-color-secondary);
+  &__body {
+    background: var(--td-bg-color-secondarycontainer);
+  }
+}
+
+.skill-env-popup {
+  .t-popup__content {
+    width: 440px;
+    max-width: min(440px, calc(100vw - 32px));
   }
 
   &__body {
-    max-height: min(360px, 52vh);
-    overflow: auto;
+    padding: 12px 14px 14px;
+    background: var(--td-bg-color-container);
+  }
+
+  &__footer {
+    display: flex;
+    justify-content: flex-end;
+    padding: 10px 14px;
+    border-top: 1px solid var(--td-component-stroke);
+  }
+
+  .skill-envs__hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--td-text-color-secondary);
+  }
+
+  .skill-envs__rows {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .skill-envs__row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .skill-envs__meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .skill-envs__name {
+    font-family: var(--td-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+    font-size: 12px;
+    color: var(--td-text-color-primary);
+    overflow-wrap: anywhere;
+  }
+
+  .skill-envs__tag {
+    font-size: 12px;
+    line-height: 18px;
+    padding: 0 8px;
+    border-radius: 10px;
     background: var(--td-bg-color-secondarycontainer);
+    color: var(--td-text-color-secondary);
+  }
 
-    &::-webkit-scrollbar {
-      width: 6px;
-    }
+  .skill-envs__tag--required {
+    background: var(--td-warning-color-light);
+    color: var(--td-warning-color);
+  }
 
-    &::-webkit-scrollbar-thumb {
-      background: var(--td-bg-color-component-disabled);
-      border-radius: 3px;
-    }
+  .skill-envs__tag--set {
+    background: var(--td-success-color-light);
+    color: var(--td-success-color);
+  }
+
+  .skill-envs__desc {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--td-text-color-secondary);
+  }
+
+  .skill-envs__editor {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .skill-envs__editor .t-input__wrap {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* readonly is only there to block password-manager fill; keep the field looking editable. */
+  .skill-envs__editor .t-input.t-is-readonly {
+    cursor: text;
+    background-color: var(--td-bg-color-specialcomponent);
   }
 }
 </style>

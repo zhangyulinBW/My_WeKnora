@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/sandbox"
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +19,7 @@ type fakeShellExecutor struct {
 	result  *sandbox.ExecuteResult
 	err     error
 	timeout time.Duration
+	calls   int
 }
 
 func (f *fakeShellExecutor) ExecShellCommand(
@@ -28,6 +31,7 @@ func (f *fakeShellExecutor) ExecShellCommand(
 	_ map[string]string,
 ) (*sandbox.ExecuteResult, error) {
 	f.timeout = timeout
+	f.calls++
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -70,18 +74,89 @@ func TestShellExecTimeoutHonorsAndCapsRequestedValue(t *testing.T) {
 
 type fakeInstallShellExecutor struct {
 	timeout time.Duration
+	workDir string
+	calls   int
 }
 
 func (f *fakeInstallShellExecutor) ExecShellCommandWithOptions(
 	_ context.Context, _ string, _ string, opts sandbox.ShellExecOptions,
 ) (*sandbox.ExecuteResult, error) {
 	f.timeout = opts.Timeout
+	f.workDir = opts.WorkDir
+	f.calls++
 	return &sandbox.ExecuteResult{ExitCode: 0}, nil
+}
+
+// installShellSkillDir is the directory an install owns, and the working
+// directory its shell must default to.
+const installShellSkillDir = sandbox.SkillsImageRoot + "/pdf-tools"
+
+func TestInstallShellExecDescriptionDoesNotPointAtWriteSandboxFile(t *testing.T) {
+	description := NewInstallShellExecTool(&fakeInstallShellExecutor{}, installShellSkillDir).Description()
+
+	assert.Contains(t, description, ToolWriteSkillFile,
+		"the writer for this tree is write_skill_file, not a heredoc")
+	assert.Contains(t, description, installShellSkillDir)
+	assert.NotContains(t, description, "Do NOT dump large files through")
+	assert.NotContains(t, NewShellExecTool(&fakeShellExecutor{}, nil).Description(),
+		"write_sandbox_file is not available")
+}
+
+// The model reached for `cd <skill-dir> && …` on command after command because
+// the default landed it in /workspace — a directory an install is told not to
+// touch, since it is wiped before the snapshot. Naming the skill directory as
+// the default is what removes the prefix.
+func TestInstallShellExecDefaultsToTheSkillDirectory(t *testing.T) {
+	inner := &fakeInstallShellExecutor{}
+	tool := NewInstallShellExecTool(inner, installShellSkillDir)
+
+	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
+		`{"command":"ls -la scripts/"}`,
+	))
+
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	assert.Equal(t, installShellSkillDir, inner.workDir)
+	assert.Equal(t, installShellSkillDir, result.Data["work_dir"],
+		"the transcript must show where the command actually ran")
+
+	assert.Contains(t, tool.Description(), "Do NOT prefix",
+		"the default alone did not stop the model; it has to be told")
+}
+
+// An explicit work_dir still wins: an install occasionally has to leave its own
+// directory, and the allowed roots have not changed.
+func TestInstallShellExecStillHonoursAnExplicitWorkDir(t *testing.T) {
+	inner := &fakeInstallShellExecutor{}
+
+	result, err := NewInstallShellExecTool(inner, installShellSkillDir).Execute(
+		shellExecTestContext(),
+		json.RawMessage(`{"command":"ls","work_dir":"/workspace"}`),
+	)
+
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	assert.Equal(t, "/workspace", inner.workDir)
+}
+
+// A run that somehow carries no valid skill directory must not invent one, and
+// must not send commands to a path outside the allowed roots.
+func TestInstallShellExecFallsBackToWorkspaceWithoutAValidSkillDir(t *testing.T) {
+	for _, dir := range []string{"", sandbox.SkillsImageRoot, "/etc", "/opt/weknora/tenant/skills/a/b"} {
+		inner := &fakeInstallShellExecutor{}
+
+		result, err := NewInstallShellExecTool(inner, dir).Execute(
+			shellExecTestContext(), json.RawMessage(`{"command":"ls"}`))
+
+		require.NoError(t, err)
+		require.True(t, result.Success, result.Error)
+		assert.Equal(t, "/workspace", inner.workDir, "skillDir %q must not become a default", dir)
+	}
 }
 
 func TestInstallShellExecDefaultsToTheTenMinuteBudget(t *testing.T) {
 	inner := &fakeInstallShellExecutor{}
-	tool := NewInstallShellExecTool(inner)
+	tool := NewInstallShellExecTool(inner, installShellSkillDir)
 
 	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
 		`{"command":"pip install -r requirements.txt"}`,
@@ -143,14 +218,13 @@ func TestShellExecSuppressesBinaryStreams(t *testing.T) {
 	assert.Equal(t, "text error", result.Data["stderr"])
 }
 
-func TestShellExecDescriptionSupportsGeneralExploration(t *testing.T) {
+func TestShellExecDescriptionDefinesOneExecutionEntry(t *testing.T) {
 	description := NewShellExecTool(&fakeShellExecutor{}, nil).Description()
-
-	for _, command := range []string{"find", "file", "sed", "head", "tail", "cat", "grep", "awk"} {
-		assert.Contains(t, description, command)
+	for _, fact := range []string{"/workspace", "skill_name", "virtualenv", "read-only", "non-root", "write_sandbox_file", "edit_sandbox_file", "not automatically saved"} {
+		require.Contains(t, description, fact)
 	}
-	assert.Contains(t, description, "Use freely to explore")
-	assert.Contains(t, description, "Binary output is never returned")
+	require.NotContains(t, description, "execute_skill_script")
+	require.Less(t, len(description), 2500)
 }
 
 func TestShellExecBoundsStdoutStderrErrorAndTotal(t *testing.T) {
@@ -166,7 +240,7 @@ func TestShellExecBoundsStdoutStderrErrorAndTotal(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.True(t, result.Success)
+	require.False(t, result.Success)
 	assert.LessOrEqual(t, len(result.Output), maxShellExecVisibleBytes)
 	assert.LessOrEqual(t, result.Data["stdout_returned_bytes"].(int), maxShellExecOutputBytes)
 	assert.LessOrEqual(t, result.Data["stderr_returned_bytes"].(int), maxShellExecStderrBytes)
@@ -215,6 +289,7 @@ func (r *recordedCapture) capture(_ context.Context, skillName string, pairs map
 // the workspace or this caller already has stored, missing is what a required
 // declaration still needs.
 type stubEnvResolver struct {
+	err      error
 	resolved map[string]string
 	missing  []string
 }
@@ -222,12 +297,12 @@ type stubEnvResolver struct {
 func (r stubEnvResolver) ResolveEnv(
 	_ context.Context, _ string,
 ) (map[string]string, []string, error) {
-	return r.resolved, r.missing, nil
+	return r.resolved, r.missing, r.err
 }
 
 func TestShellExecCapturesUsedEnvAfterSuccessfulCommand(t *testing.T) {
 	recorder := &recordedCapture{}
-	tool := NewShellExecTool(&fakeShellExecutor{}, nil).WithEnvCapture(recorder.capture)
+	tool := NewShellExecTool(&fakeShellExecutor{}, nil).WithEnvCapture(recorder.capture).WithSkillEnvironment(shellTestSkillEnvironment(t))
 
 	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
 		`{"command":"export USER_TOKEN=from-command; python x.py","skill_name":"pdf-tools","env":{"EXTRA_TOKEN":"from-tool"}}`,
@@ -245,7 +320,7 @@ func TestShellExecCapturesUsedEnvAfterSuccessfulCommand(t *testing.T) {
 // mentions a skill directory write into that skill's credentials.
 func TestShellExecDoesNotCaptureWithoutAnExplicitSkillName(t *testing.T) {
 	recorder := &recordedCapture{}
-	tool := NewShellExecTool(&fakeShellExecutor{}, nil).WithEnvCapture(recorder.capture)
+	tool := NewShellExecTool(&fakeShellExecutor{}, nil).WithEnvCapture(recorder.capture).WithSkillEnvironment(shellTestSkillEnvironment(t))
 
 	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
 		`{"command":"export USER_TOKEN=from-command; cd /opt/weknora/tenant/skills/pdf-tools && python x.py"}`,
@@ -261,7 +336,7 @@ func TestShellExecDoesNotCaptureWithoutAnExplicitSkillName(t *testing.T) {
 func TestShellExecDoesNotCaptureAlreadyResolvedNames(t *testing.T) {
 	recorder := &recordedCapture{}
 	resolver := stubEnvResolver{resolved: map[string]string{"USER_TOKEN": "stored"}}
-	tool := NewShellExecTool(&fakeShellExecutor{}, resolver).WithEnvCapture(recorder.capture)
+	tool := NewShellExecTool(&fakeShellExecutor{}, resolver).WithEnvCapture(recorder.capture).WithSkillEnvironment(shellTestSkillEnvironment(t))
 
 	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
 		`{"command":"python x.py","skill_name":"pdf-tools","env":{"USER_TOKEN":"model-made-this-up","NEW_TOKEN":"fresh"}}`,
@@ -279,7 +354,7 @@ func TestShellExecDoesNotCaptureAlreadyResolvedNames(t *testing.T) {
 func TestShellExecRunsWhenTheCallSuppliesTheMissingRequiredValue(t *testing.T) {
 	recorder := &recordedCapture{}
 	resolver := stubEnvResolver{missing: []string{"USER_TOKEN"}}
-	tool := NewShellExecTool(&fakeShellExecutor{}, resolver).WithEnvCapture(recorder.capture)
+	tool := NewShellExecTool(&fakeShellExecutor{}, resolver).WithEnvCapture(recorder.capture).WithSkillEnvironment(shellTestSkillEnvironment(t))
 
 	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
 		`{"command":"python x.py","skill_name":"pdf-tools","env":{"USER_TOKEN":"typed-in-chat"}}`,
@@ -293,7 +368,7 @@ func TestShellExecRunsWhenTheCallSuppliesTheMissingRequiredValue(t *testing.T) {
 
 func TestShellExecStillRefusesAMissingRequiredValueNobodySupplied(t *testing.T) {
 	resolver := stubEnvResolver{missing: []string{"USER_TOKEN"}}
-	tool := NewShellExecTool(&fakeShellExecutor{}, resolver)
+	tool := NewShellExecTool(&fakeShellExecutor{}, resolver).WithSkillEnvironment(shellTestSkillEnvironment(t))
 
 	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
 		`{"command":"python x.py","skill_name":"pdf-tools"}`,
@@ -307,7 +382,7 @@ func TestShellExecStillRefusesAMissingRequiredValueNobodySupplied(t *testing.T) 
 func TestShellExecDoesNotCaptureWhenCommandFails(t *testing.T) {
 	recorder := &recordedCapture{}
 	tool := NewShellExecTool(&fakeShellExecutor{result: &sandbox.ExecuteResult{ExitCode: 1}}, nil).
-		WithEnvCapture(recorder.capture)
+		WithEnvCapture(recorder.capture).WithSkillEnvironment(shellTestSkillEnvironment(t))
 
 	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
 		`{"command":"export USER_TOKEN=x; false","skill_name":"pdf-tools"}`,
@@ -321,7 +396,7 @@ func TestShellExecDoesNotCaptureWhenCommandFails(t *testing.T) {
 func TestShellExecDoesNotCaptureWhenExecutorErrors(t *testing.T) {
 	recorder := &recordedCapture{}
 	tool := NewShellExecTool(&fakeShellExecutor{err: errors.New("sandbox down")}, nil).
-		WithEnvCapture(recorder.capture)
+		WithEnvCapture(recorder.capture).WithSkillEnvironment(shellTestSkillEnvironment(t))
 
 	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
 		`{"command":"export USER_TOKEN=x; true","skill_name":"pdf-tools"}`,
@@ -334,13 +409,144 @@ func TestShellExecDoesNotCaptureWhenExecutorErrors(t *testing.T) {
 
 func TestInstallShellExecDoesNotCapture(t *testing.T) {
 	recorder := &recordedCapture{}
-	tool := NewInstallShellExecTool(&fakeInstallShellExecutor{}).WithEnvCapture(recorder.capture)
+	tool := NewInstallShellExecTool(&fakeInstallShellExecutor{}, installShellSkillDir).WithEnvCapture(recorder.capture)
 
 	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
-		`{"command":"export USER_TOKEN=x; pip install x","skill_name":"pdf-tools"}`,
+		`{"command":"export USER_TOKEN=x; pip install x"}`,
 	))
 
 	require.NoError(t, err)
 	require.True(t, result.Success)
 	require.Zero(t, recorder.calls)
+}
+
+func TestShellExecOversizeCommandPointsAtWriteSandboxFile(t *testing.T) {
+	command := strings.Repeat("a", shellExecMaxCommandBytes+1)
+	raw, err := json.Marshal(map[string]string{"command": command})
+	require.NoError(t, err)
+
+	result, err := NewShellExecTool(&fakeShellExecutor{}, nil).Execute(
+		shellExecTestContext(), raw,
+	)
+
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	assert.Contains(t, result.Error, "command too long")
+	assert.Contains(t, result.Error, "write_sandbox_file")
+}
+
+func TestShellExecHintsWhenTreeCommandIsMissing(t *testing.T) {
+	tool := NewShellExecTool(&fakeShellExecutor{result: &sandbox.ExecuteResult{
+		ExitCode: 127,
+		Stderr:   "/bin/bash: line 1: tree: command not found\n",
+	}}, nil)
+
+	result, err := tool.Execute(
+		shellExecTestContext(),
+		json.RawMessage(`{"command":"tree -L 2 /workspace/output"}`),
+	)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	assert.Equal(t, 127, result.Data["exit_code"])
+	assert.Contains(t, result.Output, "not in the default sandbox image")
+	assert.Contains(t, result.Output, "Use find/ls")
+	assert.Contains(t, result.Output, "Do not apt-get install")
+}
+
+func TestInferredMissingCommandFromBashStderr(t *testing.T) {
+	assert.Equal(t, "file", inferredMissingCommand(
+		"file /tmp/x",
+		"/bin/bash: line 1: file: command not found\n",
+	))
+	assert.Equal(t, "tree", inferredMissingCommand("tree -L 2", "tree: command not found"))
+}
+
+func TestShellExecHintsWhenSystemPythonMissesASkillModule(t *testing.T) {
+	script := `cd /workspace/output && python3 -c "
+from docx import Document
+doc = Document('brief.docx')
+print(len(doc.paragraphs))
+"`
+	tool := NewShellExecTool(&fakeShellExecutor{result: &sandbox.ExecuteResult{
+		ExitCode: 1,
+		Stderr:   "ModuleNotFoundError: No module named 'docx'\n",
+	}}, nil)
+
+	raw, err := json.Marshal(map[string]string{"command": script})
+	require.NoError(t, err)
+	result, err := tool.Execute(shellExecTestContext(), raw)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	assert.Contains(t, result.Output, "Do not pip install")
+	assert.Contains(t, result.Output, "write_sandbox_file")
+	assert.Contains(t, result.Output, "shell_exec")
+	assert.Contains(t, result.Output, ".venv/bin/python -c")
+}
+
+func TestSkillNameFromShellCommandExtractsImageSkill(t *testing.T) {
+	assert.Equal(t, "meeting-and-brief", skillNameFromShellCommand(
+		`/opt/weknora/tenant/skills/meeting-and-brief/.venv/bin/python -c "print(1)"`,
+	))
+	assert.Empty(t, skillNameFromShellCommand(`python3 -c "print(1)"`))
+}
+
+func TestShellExecAllowsOverlayInstallThatMentionsTheSkillTree(t *testing.T) {
+	// Previously an up-front command blacklist rejected this recovery path
+	// because the line contained both `pip install` and the skills root.
+	executor := &fakeShellExecutor{result: &sandbox.ExecuteResult{ExitCode: 0}}
+	tool := NewShellExecTool(executor, nil)
+
+	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
+		`{"command":"python3 -m pip install --target /workspace/.skill-packages/foo -r /opt/weknora/tenant/skills/foo/requirements.txt"}`,
+	))
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	assert.Equal(t, 1, executor.calls)
+}
+
+func TestInstallShellExecStillPipsIntoTheSkillTree(t *testing.T) {
+	inner := &fakeInstallShellExecutor{}
+	tool := NewInstallShellExecTool(inner, installShellSkillDir)
+
+	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
+		`{"command":"pip install python-docx","work_dir":"/opt/weknora/tenant/skills/律师助手"}`,
+	))
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	require.Equal(t, 1, inner.calls)
+}
+
+func TestShellExecHintsWhenVenvHasNoPip(t *testing.T) {
+	tool := NewShellExecTool(&fakeShellExecutor{result: &sandbox.ExecuteResult{
+		ExitCode: 1,
+		Stderr:   "/opt/weknora/tenant/skills/律师助手/.venv/bin/python: No module named pip\n",
+	}}, nil)
+
+	result, err := tool.Execute(shellExecTestContext(), json.RawMessage(
+		`{"command":"/opt/weknora/tenant/skills/律师助手/.venv/bin/python /opt/weknora/tenant/skills/律师助手/scripts/install_deps.py --word --yes"}`,
+	))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	assert.Contains(t, result.Output, "frozen")
+	assert.Contains(t, result.Output, "/workspace/.skill-packages/律师助手")
+	assert.NotContains(t, result.Output, "write_sandbox_file")
+}
+
+func shellTestSkillEnvironment(t *testing.T) *skills.Manager {
+	t.Helper()
+	manager := skills.NewManager(&skills.ManagerConfig{Enabled: true}, nil)
+	manager.WithTenantSource(skills.NewTenantSkillSource([]*types.TenantSkillEntity{
+		{Name: "pdf-tools", Status: types.SkillStatusReady, Enabled: true},
+	}, nil))
+	require.NoError(t, manager.Initialize(context.Background()))
+	return manager
+}
+
+func TestShellExecNeverSilentlyFallsBackFromNamedSkill(t *testing.T) {
+	executor := &fakeShellExecutor{}
+	result, err := NewShellExecTool(executor, nil).Execute(shellExecTestContext(), json.RawMessage(`{"command":"python3 report.py","skill_name":"missing"}`))
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Zero(t, executor.calls)
+	require.Contains(t, result.Error, "no skill environment")
 }

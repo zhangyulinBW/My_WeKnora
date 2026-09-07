@@ -40,6 +40,25 @@
                 </div>
               </div>
 
+              <!-- Context Compaction -->
+              <div v-if="event.type === 'context_compacted'" class="tool-event">
+                <div class="action-card">
+                  <div class="action-header" @click="toggleEvent(event.event_id)">
+                    <div class="action-title">
+                      <span class="action-title-icon icon-mask" :style="maskIconStyle(compactionIcon)"
+                        aria-hidden="true" />
+                      <span class="action-name">{{ $t('agent.contextCompacted') }}</span>
+                      <span class="action-summary">{{ compactionSummaryText(event) }}</span>
+                    </div>
+                  </div>
+                  <div v-if="event.summary && isEventExpanded(event.event_id)" class="action-details">
+                    <div class="thinking-detail-content markdown-content">
+                      <div v-html="renderMarkdownContent(event.summary)"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <!-- Thinking Event (streaming / merged). When a round's retracted
                    preamble was folded in, it becomes the card title and the
                    reasoning is the expandable body. -->
@@ -136,6 +155,17 @@
                       <t-tooltip v-else :content="getToolTitle(event)" placement="top">
                         <span class="action-name">{{ getToolTitle(event) }}</span>
                       </t-tooltip>
+                      <span v-if="getSandboxDiffStat(event)" class="sandbox-diff-stat">
+                        <span v-if="getSandboxDiffStat(event)?.added" class="diff-add">+{{ getSandboxDiffStat(event)?.added }}</span>
+                        <span v-if="getSandboxDiffStat(event)?.removed" class="diff-del">-{{ getSandboxDiffStat(event)?.removed }}</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div v-if="event.pending && getSandboxFilePreview(event)" class="sandbox-file-preview">
+                    <pre>{{ getSandboxFilePreview(event) }}</pre>
+                    <div v-if="sandboxPreviewRemaining(event) > 0" class="sandbox-file-preview-more">
+                      {{ t('agentStream.sandboxFiles.moreLines', { count: sandboxPreviewRemaining(event) }) }}
                     </div>
                   </div>
 
@@ -252,6 +282,25 @@
               </div>
             </div>
 
+            <!-- Context Compaction -->
+            <div v-if="event.type === 'context_compacted'" class="tool-event">
+              <div class="action-card">
+                <div class="action-header" @click="toggleEvent(event.event_id)">
+                  <div class="action-title">
+                    <span class="action-title-icon icon-mask" :style="maskIconStyle(compactionIcon)"
+                      aria-hidden="true" />
+                    <span class="action-name">{{ $t('agent.contextCompacted') }}</span>
+                    <span class="action-summary">{{ compactionSummaryText(event) }}</span>
+                  </div>
+                </div>
+                <div v-if="event.summary && isEventExpanded(event.event_id)" class="action-details">
+                  <div class="thinking-detail-content markdown-content">
+                    <div v-html="renderMarkdownContent(event.summary)"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- Thinking Event (streaming / merged). A folded preamble (retracted
              from the answer area) is shown as the card title; the reasoning is
              the expandable body. -->
@@ -341,7 +390,8 @@
                      mode is the primary path for skills, so this is where
                      the button is most likely to appear. -->
                 <span v-if="hasArtifacts || artifactsCollecting" class="answer-toolbar__artifact"
-                  :class="{ 'is-collecting': artifactButtonCollecting }">
+                  :class="{ 'is-collecting': artifactButtonCollecting, 'is-arrived': artifactArrived }"
+                  @animationend="onArtifactArriveEnd">
                   <t-button size="small" variant="outline" shape="round"
                     :disabled="artifactButtonCollecting"
                     :title="hasArtifacts ? $t('agent.artifactDrawer.buttonTitle') : $t('agent.artifactDrawer.collecting')"
@@ -394,6 +444,17 @@
                     <t-tooltip v-else :content="getToolTitle(event)" placement="top">
                       <span class="action-name">{{ getToolTitle(event) }}</span>
                     </t-tooltip>
+                    <span v-if="getSandboxDiffStat(event)" class="sandbox-diff-stat">
+                      <span v-if="getSandboxDiffStat(event)?.added" class="diff-add">+{{ getSandboxDiffStat(event)?.added }}</span>
+                      <span v-if="getSandboxDiffStat(event)?.removed" class="diff-del">-{{ getSandboxDiffStat(event)?.removed }}</span>
+                    </span>
+                  </div>
+                </div>
+
+                <div v-if="event.pending && getSandboxFilePreview(event)" class="sandbox-file-preview">
+                  <pre>{{ getSandboxFilePreview(event) }}</pre>
+                  <div v-if="sandboxPreviewRemaining(event) > 0" class="sandbox-file-preview-more">
+                    {{ t('agentStream.sandboxFiles.moreLines', { count: sandboxPreviewRemaining(event) }) }}
                   </div>
                 </div>
 
@@ -538,6 +599,7 @@ import ChatCitationFloat from '@/components/ChatCitationFloat.vue';
 import picturePreview from '@/components/picture-preview.vue';
 import ChatArtifactsDrawer from './ChatArtifactsDrawer.vue';
 import { isCollectingSkillArtifacts } from '@/utils/skillArtifacts';
+import { useArtifactArriveMotion } from '@/composables/useArtifactArriveMotion';
 import ChatMemoryStep from './ChatMemoryStep.vue';
 import { useChatMemoryRow, type UsedMemory } from '@/composables/useChatMemoryRow';
 import { countGrepDocuments, groupGrepChunkResults } from '@/utils/grepResultsGroup';
@@ -564,6 +626,16 @@ import type { ProtectedFileAccessContext } from '@/utils/protectedFileAccess';
 import { unwrapFinalAnswerWrappers, thinkingEqualsAnswer } from '@/utils/finalAnswer';
 import { getAgentToolIconName } from '@/utils/agent-tool-icons';
 import { getQueryText, getWikiPageText } from '@/utils/agent-tool-display';
+import {
+  formatToolTitleWithDetail,
+  getEventSkillName,
+  getReadSkillTarget,
+  getSandboxDiffStat,
+  getSandboxFilePreview,
+  getSandboxToolPath,
+  sandboxPreviewRemaining,
+  skillScriptTitleCommand,
+} from '@/utils/skillToolDisplay';
 import { previewShellCommand } from '@/utils/shellExecResult';
 import type { DisplayType } from '@/types/tool-results';
 import { parseWikiToolReferences } from '@/utils/wikiToolReferences';
@@ -572,8 +644,9 @@ import {
   formatManualTitle,
   replaceIncompleteMermaidWithPlaceholder,
   prepareStreamingMermaidMarkdown,
-  extractFirstMermaidCode,
+  extractMermaidCodes,
   injectCachedMermaidSvg,
+  type CachedMermaidSvgHtml,
 } from '@/utils/chatMessageShared';
 import { copyWithToast } from '@/utils/clipboard';
 import {
@@ -582,10 +655,10 @@ import {
   wrapChatMarkdownTables,
 } from '@/utils/chatMarkdownRenderer';
 import {
+  appendMermaidSvgCache,
   createMermaidCodeRenderer,
   ensureMermaidInitialized,
   enhanceMarkdownContainer,
-  renderMermaidToSvg,
 } from '@/utils/mermaidShared';
 import { attachMarkdownEnhancementListeners, refreshMarkdownEnhancements } from '@/utils/markdownEnhancements';
 import { useTypewriter } from '@/composables/useTypewriter';
@@ -630,7 +703,12 @@ const TOOL_NAME_KEYS: Record<string, string> = {
   query_understand: 'agentStream.tools.queryUnderstand',
   query_knowledge_graph: 'agentStream.tools.queryKnowledgeGraph',
   read_skill: 'agentStream.tools.readSkill',
+  read_file: 'agentStream.tools.readFile',
   execute_skill_script: 'agentStream.tools.executeSkillScript',
+  list_sandbox_files: 'agentStream.tools.listSandboxFiles',
+  read_sandbox_file: 'agentStream.tools.readSandboxFile',
+  write_sandbox_file: 'agentStream.tools.writeSandboxFile',
+  edit_sandbox_file: 'agentStream.tools.editSandboxFile',
   shell_exec: 'agentStream.tools.shellExec',
   data_analysis: 'agentStream.tools.dataAnalysis',
   data_schema: 'agentStream.tools.dataSchema',
@@ -833,6 +911,7 @@ const handleWikiDrawerClick = (e: MouseEvent) => {
 // Import icons
 import agentIcon from '@/assets/img/agent.svg';
 import thinkingIcon from '@/assets/img/Frame3718.svg';
+import compactionIcon from '@/assets/img/context-compaction.svg';
 
 interface SessionData {
   id?: string;
@@ -936,6 +1015,7 @@ const artifactList = computed(() => {
 });
 const hasArtifacts = computed(() => artifactList.value.length > 0);
 const artifactCount = computed(() => artifactList.value.length);
+const { artifactArrived, onArtifactArriveEnd } = useArtifactArriveMotion(artifactCount);
 const artifactsCollecting = computed(() => isCollectingSkillArtifacts(props.session as any));
 const artifactButtonCollecting = computed(() => artifactsCollecting.value && !hasArtifacts.value);
 const sessionIdForArtifacts = computed(() => props.sessionId ?? '');
@@ -1071,7 +1151,21 @@ const isMcpTool = (toolName?: string | null): boolean => String(toolName || '').
 
 const resolveToolDisplayType = (event: any): DisplayType | undefined => {
   if (event?.display_type) return event.display_type as DisplayType
-  if (event?.tool_name === 'shell_exec') return 'shell_exec'
+  if (event?.tool_name === 'shell_exec' || event?.tool_name === 'execute_skill_script') {
+    return 'shell_exec'
+  }
+  if (event?.tool_name === 'list_sandbox_files' && event?.success !== false) {
+    return 'list_sandbox_files'
+  }
+  if (event?.tool_name === 'write_sandbox_file' && event?.success !== false) {
+    return 'write_sandbox_file'
+  }
+  if (event?.tool_name === 'edit_sandbox_file' && event?.success !== false) {
+    return 'edit_sandbox_file'
+  }
+  if (event?.tool_name === 'read_skill' && event?.success !== false) {
+    return 'read_skill'
+  }
   return undefined
 };
 
@@ -1471,9 +1565,8 @@ const isConversationDone = computed(() => {
   return !!doneAnswer;
 });
 
-const streamingMermaidSvgCache = ref<string | null>(null);
+const streamingMermaidSvgCache = ref<string[]>([]);
 let streamingMermaidRenderTask: Promise<void> | null = null;
-let streamingMermaidRenderId = 0;
 
 const activeAnswerMarkdown = computed(() => {
   const stream = eventStream.value;
@@ -1501,25 +1594,31 @@ const { displayed: typedAnswer } = useTypewriter(
 );
 
 const cacheStreamingMermaidSvg = async () => {
-  if (streamingMermaidSvgCache.value) return;
-  const code = extractFirstMermaidCode(activeAnswerMarkdown.value);
-  if (!code) return;
+  const codes = extractMermaidCodes(activeAnswerMarkdown.value);
+  if (codes.length <= streamingMermaidSvgCache.value.length) return;
 
   if (!streamingMermaidRenderTask) {
     streamingMermaidRenderTask = (async () => {
-      const svg = await renderMermaidToSvg(code, `mermaid-agent-stream-${++streamingMermaidRenderId}`);
-      if (svg) streamingMermaidSvgCache.value = svg;
+      streamingMermaidSvgCache.value = await appendMermaidSvgCache(
+        extractMermaidCodes(activeAnswerMarkdown.value),
+        streamingMermaidSvgCache.value,
+        'mermaid-agent-stream',
+      );
     })().finally(() => {
       streamingMermaidRenderTask = null;
     });
   }
 
   await streamingMermaidRenderTask;
+
+  if (extractMermaidCodes(activeAnswerMarkdown.value).length > streamingMermaidSvgCache.value.length) {
+    await cacheStreamingMermaidSvg();
+  }
 };
 
 watch(isConversationDone, (done) => {
   if (!done) {
-    streamingMermaidSvgCache.value = null;
+    streamingMermaidSvgCache.value = [];
     streamingMermaidRenderTask = null;
   }
 });
@@ -1529,7 +1628,6 @@ watch(streamingMermaidSvgCache, () => {
 });
 
 watch(activeAnswerMarkdown, () => {
-  if (isConversationDone.value || streamingMermaidSvgCache.value) return;
   void cacheStreamingMermaidSvg();
 });
 
@@ -1554,6 +1652,7 @@ watch(answerFullyRendered, (ready) => {
   clearProtectedFileFailureCache();
   nextTick(async () => {
     await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+    await enhanceMarkdownContainer(rootElement.value);
   });
 }, { immediate: true });
 
@@ -2427,9 +2526,18 @@ agentRenderer.image = function agentImageRenderer(token) {
   return defaultImageRenderer.call(this, token);
 };
 
-const prepareAgentMarkdown = (markdown: string, cachedSvgHtml?: string | null): string => {
-  const mermaidSafe = !isConversationDone.value
-    ? prepareStreamingMermaidMarkdown(markdown, cachedSvgHtml ?? streamingMermaidSvgCache.value)
+const hasCachedMermaidSvg = (cached: CachedMermaidSvgHtml): boolean => {
+  if (!cached) return false;
+  if (typeof cached === 'string') return cached.length > 0;
+  return cached.some((svg) => Boolean(svg));
+};
+
+const prepareAgentMarkdown = (markdown: string, cachedSvgHtml?: CachedMermaidSvgHtml): string => {
+  const cache = cachedSvgHtml ?? streamingMermaidSvgCache.value;
+  // Keep masking after the turn ends when SVG is already cached so v-html /
+  // v-stable-html cannot replace a painted diagram with mermaid source.
+  const mermaidSafe = !isConversationDone.value || hasCachedMermaidSvg(cache)
+    ? prepareStreamingMermaidMarkdown(markdown, cache)
     : replaceIncompleteMermaidWithPlaceholder(markdown);
   return mermaidSafe.replace(/<(?:kb|web)\b[^>]*$/i, '');
 };
@@ -2592,6 +2700,27 @@ const getPlanStatusSummary = (event: any): string => {
   return textParts.length > 0 ? textParts.join(' · ') : '';
 };
 
+/**
+ * One-line caption for a compaction card. The token counts are the point: they
+ * are what tells the user how much of the conversation the agent can no longer
+ * see verbatim.
+ */
+const compactionSummaryText = (event: any): string => {
+  const before = Number(event?.tokens_before) || 0;
+  const after = Number(event?.tokens_after) || 0;
+  const parts: string[] = [];
+  if (before > 0 && after > 0) {
+    parts.push(
+      t('agent.contextCompactedSummary', {
+        before: before.toLocaleString(),
+        after: after.toLocaleString(),
+      }),
+    );
+  }
+  if (event?.degraded) parts.push(t('agent.contextCompactedDegraded'));
+  return parts.join(t('agent.stepSummarySeparator'));
+};
+
 /** Render SVG assets in the channel / brand color via CSS mask. */
 function maskIconStyle(src: string, size = 18): Record<string, string> {
   if (!src) return {}
@@ -2675,6 +2804,18 @@ const getToolTitle = (event: any): string => {
     }
     if (event.tool_name === 'wiki_search' || event.tool_name === 'wiki_read_page') {
       return `${getLocalizedToolName(event.tool_name)}...`;
+    }
+    if (event.tool_name === 'read_skill') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getReadSkillTarget(event))}...`;
+    }
+    if (event.tool_name === 'execute_skill_script') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getEventSkillName(event))}...`;
+    }
+    if (event.tool_name === 'list_sandbox_files' || event.tool_name === 'read_file' || event.tool_name === 'read_sandbox_file' || event.tool_name === 'write_sandbox_file' || event.tool_name === 'edit_sandbox_file') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getSandboxToolPath(event))}...`;
     }
     if (event.tool_name === 'shell_exec') {
       return t('agentStream.toolStatus.shellExecRunning');
@@ -2774,10 +2915,23 @@ const getToolTitle = (event: any): string => {
     return pageLabel ? `${baseTitle}：「${sanitizeForDisplay(pageLabel)}」` : baseTitle;
   }
 
+  if (toolName === 'read_skill') {
+    return formatToolTitleWithDetail(getToolDescription(event), getReadSkillTarget(event));
+  }
+
+  if (toolName === 'list_sandbox_files' || toolName === 'read_file' || toolName === 'read_sandbox_file' || toolName === 'write_sandbox_file' || toolName === 'edit_sandbox_file') {
+    return formatToolTitleWithDetail(getToolDescription(event), getSandboxToolPath(event));
+  }
+
+  if (toolName === 'execute_skill_script') {
+    const command = previewShellCommand(skillScriptCommandLabel(event))
+    const baseTitle = formatToolTitleWithDetail(getToolDescription(event), getEventSkillName(event))
+    const rest = skillScriptTitleCommand(getEventSkillName(event), command)
+    return rest ? `${baseTitle}：${rest}` : baseTitle
+  }
+
   if (toolName === 'shell_exec') {
-    const command = previewShellCommand(
-      String(event.tool_data?.command || event.arguments?.command || ''),
-    )
+    const command = previewShellCommand(skillScriptCommandLabel(event))
     const baseTitle = getToolDescription(event)
     return command ? `${baseTitle}：${command}` : baseTitle
   }
@@ -2786,6 +2940,19 @@ const getToolTitle = (event: any): string => {
   const summary = getToolSummary(event);
   return summary || getToolDescription(event);
 };
+
+const skillScriptCommandLabel = (event: any): string => {
+  const fromData = String(event?.tool_data?.command || event?.arguments?.command || '').trim()
+  if (fromData) return fromData
+  const skill = String(event?.tool_data?.skill_name || event?.arguments?.skill_name || '').trim()
+  const script = String(event?.tool_data?.script_path || event?.arguments?.script_path || '').trim()
+  const path = [skill, script].filter(Boolean).join('/')
+  const args = event?.tool_data?.args || event?.arguments?.args
+  if (Array.isArray(args) && args.length) {
+    return [path, ...args.map((arg: unknown) => String(arg))].filter(Boolean).join(' ')
+  }
+  return path
+}
 
 // Tool description
 const getToolDescription = (event: any): string => {
@@ -2798,6 +2965,18 @@ const getToolDescription = (event: any): string => {
     }
     if (event.tool_name === 'query_understand') {
       return t('agentStream.toolStatus.queryUnderstanding');
+    }
+    if (event.tool_name === 'read_skill') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getReadSkillTarget(event))}...`;
+    }
+    if (event.tool_name === 'execute_skill_script') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getEventSkillName(event))}...`;
+    }
+    if (event.tool_name === 'list_sandbox_files' || event.tool_name === 'read_file' || event.tool_name === 'read_sandbox_file' || event.tool_name === 'write_sandbox_file' || event.tool_name === 'edit_sandbox_file') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getSandboxToolPath(event))}...`;
     }
     if (event.tool_name === 'shell_exec') {
       return t('agentStream.toolStatus.shellExecRunning');
@@ -2832,7 +3011,7 @@ const getToolDescription = (event: any): string => {
     return success ? t('agentStream.toolStatus.attachmentParsingDone') : t('agentStream.toolStatus.attachmentParsingFailed');
   } else if (toolName === 'query_understand') {
     return success ? t('agentStream.toolStatus.queryUnderstandDone') : t('agentStream.toolStatus.calledFailed', { name: getLocalizedToolName(toolName) });
-  } else if (toolName === 'shell_exec') {
+  } else if (toolName === 'shell_exec' || toolName === 'execute_skill_script' || toolName === 'read_skill' || toolName === 'list_sandbox_files' || toolName === 'read_file' || toolName === 'read_sandbox_file' || toolName === 'write_sandbox_file' || toolName === 'edit_sandbox_file') {
     const localizedName = getLocalizedToolName(toolName);
     return success ? localizedName : t('agentStream.toolStatus.calledFailed', { name: localizedName });
   } else {
@@ -3433,6 +3612,51 @@ const handleAddToKnowledge = (answerEvent: any) => {
   display: inline-block;
   max-width: 100%;
   vertical-align: middle;
+}
+
+.sandbox-diff-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+
+  .diff-add {
+    color: var(--td-success-color);
+  }
+
+  .diff-del {
+    color: var(--td-error-color);
+  }
+}
+
+.sandbox-file-preview {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  font-family: var(--app-font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondarycontainer);
+  border-radius: 6px;
+
+  pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 180px;
+    overflow: hidden;
+  }
+}
+
+.sandbox-file-preview-more {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
 }
 
 .action-show-icon {
