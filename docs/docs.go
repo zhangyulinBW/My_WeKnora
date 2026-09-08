@@ -22680,7 +22680,8 @@ const docTemplate = `{
                 "keenable",
                 "zhipu",
                 "exa",
-                "metaso"
+                "metaso",
+                "bocha"
             ],
             "x-enum-varnames": [
                 "WebSearchProviderTypeBing",
@@ -22693,7 +22694,8 @@ const docTemplate = `{
                 "WebSearchProviderTypeKeenable",
                 "WebSearchProviderTypeZhipu",
                 "WebSearchProviderTypeExa",
-                "WebSearchProviderTypeMetaso"
+                "WebSearchProviderTypeMetaso",
+                "WebSearchProviderTypeBocha"
             ]
         },
         "github_com_Tencent_WeKnora_internal_types.WikiConfig": {
@@ -23741,10 +23743,6 @@ const docTemplate = `{
                 "generated_password": {
                     "description": "GeneratedPassword is the plaintext password when the server\nauto-generated one. Absent when the caller supplied the password.",
                     "type": "string"
-                },
-                "idempotent": {
-                    "description": "Idempotent is true when the identity already existed (HTTP 200).\nThe SPA axios interceptor discards status codes, so this flag is\nthe body-level signal that nothing was created or changed.",
-                    "type": "boolean"
                 },
                 "user": {
                     "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.UserInfo"

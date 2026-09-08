@@ -19,6 +19,7 @@ import enUSConfig from 'tdesign-vue-next/esm/locale/en_US'
 import zhCNConfig from 'tdesign-vue-next/esm/locale/zh_CN'
 import zhTWConfig from 'tdesign-vue-next/esm/locale/zh_TW'
 import koKRConfig from 'tdesign-vue-next/esm/locale/ko_KR'
+import jaJPConfig from 'tdesign-vue-next/esm/locale/ja_JP'
 import ruRUConfig from 'tdesign-vue-next/esm/locale/ru_RU'
 
 const { locale, t, tm } = useI18n()
@@ -32,6 +33,7 @@ const tdLocaleMap: Record<string, object> = {
   'zh-CN': zhCNConfig,
   'zh-TW': zhTWConfig,
   'ko-KR': koKRConfig,
+  'ja-JP': jaJPConfig,
   'ru-RU': ruRUConfig,
 }
 

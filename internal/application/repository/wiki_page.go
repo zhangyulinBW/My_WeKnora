@@ -30,6 +30,13 @@ func NewWikiPageRepository(db *gorm.DB) interfaces.WikiPageRepository {
 	return &wikiPageRepository{db: db}
 }
 
+func (r *wikiPageRepository) wikiDialect() string {
+	if r.db == nil || r.db.Dialector == nil {
+		return ""
+	}
+	return r.db.Name()
+}
+
 func (r *wikiPageRepository) wikiCategoryRankOrder() string {
 	if r.db != nil && r.db.Dialector != nil && r.db.Dialector.Name() == "sqlite" {
 		return "CASE WHEN COALESCE(json_array_length(category_path), 0) > 0 THEN 0 ELSE 1 END ASC"
@@ -365,20 +372,28 @@ func (r *wikiPageRepository) List(ctx context.Context, req *types.WikiPageListRe
 	// Directory filters are pushed to SQL so the DB does the counting and
 	// pagination instead of loading every page of the type into memory. `depth`
 	// is a cached column (= len(category_path)); `category_path` is a JSON column
-	// whose stored text is json.Marshal of the cleaned path, so we compare
-	// against the same encoding. Postgres needs an explicit jsonb cast for array
-	// equality; SQLite stores JSON as TEXT and compares directly.
+	// whose stored text is json.Marshal of the folder path segments, so we
+	// compare against the same encoding (literal segments, since the filter is a
+	// folder path and folder names are authoritative). Postgres needs an explicit
+	// jsonb cast for array equality; SQLite stores JSON as TEXT and compares
+	// directly.
 	if req.FolderID != nil {
 		query = query.Where("folder_id = ?", *req.FolderID)
 	}
 	if req.CategoryDepth != nil {
 		query = query.Where("depth = ?", *req.CategoryDepth)
 	}
-	if wantPath := types.CleanWikiCategoryPath(req.CategoryPath); len(wantPath) > 0 {
+	if wantPath := types.TrimWikiFolderSegments(req.CategoryPath); len(wantPath) > 0 {
 		if encoded, err := json.Marshal([]string(wantPath)); err == nil {
-			if r.db.Dialector != nil && r.db.Dialector.Name() == "postgres" {
+			switch r.wikiDialect() {
+			case "postgres":
 				query = query.Where("category_path::jsonb = ?::jsonb", string(encoded))
-			} else {
+			case "sqlite":
+				// StringArray.Value yields []byte, which SQLite stores as a BLOB;
+				// a BLOB never compares equal to a TEXT bind, so compare the
+				// text form instead.
+				query = query.Where("CAST(category_path AS TEXT) = ?", string(encoded))
+			default:
 				query = query.Where("category_path = ?", string(encoded))
 			}
 		}

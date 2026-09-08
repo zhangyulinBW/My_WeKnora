@@ -4397,6 +4397,7 @@ definitions:
     - zhipu
     - exa
     - metaso
+    - bocha
     type: string
     x-enum-varnames:
     - WebSearchProviderTypeBing
@@ -4410,6 +4411,7 @@ definitions:
     - WebSearchProviderTypeZhipu
     - WebSearchProviderTypeExa
     - WebSearchProviderTypeMetaso
+    - WebSearchProviderTypeBocha
   github_com_Tencent_WeKnora_internal_types.WikiConfig:
     properties:
       content_instructions:
@@ -5194,12 +5196,6 @@ definitions:
           GeneratedPassword is the plaintext password when the server
           auto-generated one. Absent when the caller supplied the password.
         type: string
-      idempotent:
-        description: |-
-          Idempotent is true when the identity already existed (HTTP 200).
-          The SPA axios interceptor discards status codes, so this flag is
-          the body-level signal that nothing was created or changed.
-        type: boolean
       user:
         $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.UserInfo'
     type: object
