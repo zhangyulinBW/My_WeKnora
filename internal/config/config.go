@@ -76,6 +76,24 @@ type AIChatConfig struct {
 	// intent generates structured search conditions; otherwise it falls back to
 	// normal streaming Q&A (e.g. singleData, where the answer lives in itemdata).
 	SearchEnabled bool `yaml:"search_enabled" json:"search_enabled"`
+	// Agent inline-defines the agent used by the normal intent (regular Q&A)
+	// directly in config.yaml, without a pre-created custom_agents DB row.
+	// When non-nil it takes precedence over AgentID.
+	Agent *AIChatAgentConfig `yaml:"agent" json:"agent,omitempty"`
+}
+
+// AIChatAgentConfig is the inline agent definition under ai_chat.agent. The
+// full CustomAgentConfig is embedded with an explicit `,squash` tag so its
+// fields sit directly under `agent:` in YAML: LoadConfig unmarshals via
+// viper/mapstructure (TagName "yaml"), which only flattens embedded fields
+// that carry the squash option.
+type AIChatAgentConfig struct {
+	// ID is the synthetic agent ID recorded on assistant messages. Empty falls
+	// back to a built-in constant at resolution time.
+	ID          string `yaml:"id" json:"id,omitempty"`
+	Name        string `yaml:"name" json:"name,omitempty"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	types.CustomAgentConfig `yaml:",squash"`
 }
 
 // IMConfig configures the IM integration service.
@@ -596,6 +614,8 @@ func LoadConfig() (*Config, error) {
 	// (e.g. system_prompt_id -> actual content from agent_system_prompt.yaml)
 	if cfg.PromptTemplates != nil {
 		resolveBuiltinAgentPromptIDs(cfg.PromptTemplates)
+		// Same resolution for the inline ai_chat.agent definition.
+		resolveAIChatAgentPromptRefs(&cfg)
 		// Validate that every preset references an existing prompt template.
 		types.ResolveAgentTypePresetPromptRefs(func(id string) string {
 			if t := FindTemplateByID(cfg.PromptTemplates, id); t != nil {
@@ -1096,6 +1116,31 @@ func resolveBuiltinAgentPromptIDs(pt *PromptTemplatesConfig) {
 		}
 		return ""
 	})
+}
+
+// resolveAIChatAgentPromptRefs resolves system_prompt_id / context_template_id
+// references in the inline ai_chat.agent definition against the loaded prompt
+// templates, mirroring what ResolveBuiltinAgentPromptRefs does for YAML-defined
+// builtin agents. A missing template keeps the field empty (and warns) so the
+// agent still resolves with its own literal prompt, if any.
+func resolveAIChatAgentPromptRefs(cfg *Config) {
+	if cfg == nil || cfg.AIChat == nil || cfg.AIChat.Agent == nil || cfg.PromptTemplates == nil {
+		return
+	}
+	agent := cfg.AIChat.Agent
+	resolve := func(field, id string) string {
+		if t := FindTemplateByID(cfg.PromptTemplates, id); t != nil {
+			return t.Content
+		}
+		fmt.Printf("Warning: ai_chat.agent %s %q references a prompt template that was not found\n", field, id)
+		return ""
+	}
+	if agent.SystemPromptID != "" && agent.SystemPrompt == "" {
+		agent.SystemPrompt = resolve("system_prompt_id", agent.SystemPromptID)
+	}
+	if agent.ContextTemplateID != "" && agent.ContextTemplate == "" {
+		agent.ContextTemplate = resolve("context_template_id", agent.ContextTemplateID)
+	}
 }
 
 // promptTemplateFile 用于解析模板文件

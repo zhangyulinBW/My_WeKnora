@@ -95,8 +95,35 @@ handleMessage
   `need_search_context` 并写入内存态 `h.actions`（`pendingAction`），等前端用 `search_context`
   阶段回传字段后再生成草稿。**该状态仅存内存，重启丢失。**
 - **模型优先级**：`ai_chat.model_id`（配置）> 智能体自身 `model_id`，见 `applyModelOverride`。
-- **智能体 ID 解析顺序**：`config.yaml ai_chat.agent_id` → 环境变量 `WEKNORA_AI_AGENT_ID`
+- **主智能体解析顺序**：`ai_chat.agent` 内联定义（config.yaml 直接定义，无需建库）
+  → `ai_chat.agent_id`（custom_agents 表）→ 环境变量 `WEKNORA_AI_AGENT_ID`
   → 内置默认值 `defaultAIAgentID`（`handler.go`）。
+
+## 内联定义主智能体（ai_chat.agent）
+
+`ai_chat.agent` 段可直接在 config.yaml 中定义 normal 意图使用的主智能体，字段即完整的
+`CustomAgentConfig`（与智能体编辑器一致），未写的字段由 `EnsureDefaults` 补默认值。
+存在即优先于 `agent_id`，不查 `custom_agents` 表：
+
+```yaml
+ai_chat:
+  agent:
+    id: "ai-chat-main"              # 可选；留空用合成 ID "ai-chat-inline-agent"
+    name: "AI 问答主智能体"
+    agent_mode: "smart-reasoning"
+    system_prompt_id: "default_kb"  # 引用 prompt_templates，或直接写 system_prompt
+    model_id: "..."                 # 须为 models 表中有效的问答模型
+    kb_selection_mode: "none"
+    allowed_tools: ["knowledge_search"]
+```
+
+注意：
+
+- `system_prompt_id` / `context_template_id` 在启动时对照 `prompt_templates/` 解析（同内置智能体）。
+- `ai_chat.model_id` 覆盖对内联定义同样生效。
+- 助手消息落库时 `agent_id` 记内联 `id`（或合成 ID），`agent_tenant_id` 记请求租户。
+- `intent_agent_id` / `search_agent_id` / `recommend_agent_id` 仍指向 DB 智能体；未配置时
+  回退主智能体，即继承内联定义。
 
 ## 相关配置
 
@@ -104,7 +131,11 @@ handleMessage
 
 ```yaml
 ai_chat:
-  agent_id:            "..."   # 主智能体
+  agent:               # 内联定义主智能体（可选）；存在则忽略 agent_id
+    agent_mode: "smart-reasoning"
+    system_prompt_id:  "..."
+    model_id:          "..."
+  agent_id:            "..."   # 主智能体（DB）；agent 段存在时被忽略
   model_id:            "..."   # 覆盖智能体自身对话模型
   intent_agent_id:     "..."   # 意图分类智能体
   recommend_agent_id:  "..."   # 推荐问题智能体

@@ -114,8 +114,26 @@ tenant:
 
 # 自定义 AI 接口 /api/v1/ai/chat 配置
 ai_chat:
-  # 使用的智能体 ID（其 system_prompt 驱动该接口）；留空则用代码内置默认值
+  # 使用的智能体 ID（其 system_prompt 驱动该接口）；留空则用代码内置默认值。
+  # 若下方 agent: 内联定义存在，则 agent_id 被忽略。
   agent_id: "6a188aae-b3fb-45c7-b59b-1d0a4620a113"
+  # 可选：直接在 config.yaml 内联定义 normal 意图（普通问答）使用的智能体，
+  # 无需在 custom_agents 表预建。存在即优先生效（忽略上面的 agent_id）。
+  # 字段与智能体编辑器一致（完整 CustomAgentConfig），未写的字段由系统补默认值。
+  # 注意：model_id 须为 models 表中有效的问答模型 ID（或留空靠下方 model_id 覆盖）；
+  # system_prompt_id 可引用 config/prompt_templates/agent_system_prompt.yaml 里的模板。
+  # 取消注释即可启用：
+  # agent:
+  #   id: "ai-chat-main"                # 可选；留空则用内置合成 ID "ai-chat-inline-agent"
+  #   name: "AI 问答主智能体"
+  #   description: "驱动 /api/v1/ai/chat 普通问答的内联智能体"
+  #   agent_mode: "smart-reasoning"     # 或 "quick-answer"
+  #   system_prompt_id: "default_kb"    # 或直接写 system_prompt: |
+  #   model_id: "c108a7a9-2f09-4399-ad61-9e90fb6f9ce5"
+  #   kb_selection_mode: "none"         # none 可免去 rerank 模型依赖
+  #   allowed_tools:
+  #     - "knowledge_search"
+  #   max_iterations: 10
   # 可选：覆盖 agent 自己配置的对话模型；留空则用 agent 的模型(c108a7a9-2f09-4399-ad61-9e90fb6f9ce5 GLM)
   model_id: "c108a7a9-2f09-4399-ad61-9e90fb6f9ce5"
   # 意图分析智能体 ID（custom_agents 表里已建立的意图识别智能体）；留空则回退到 agent_id

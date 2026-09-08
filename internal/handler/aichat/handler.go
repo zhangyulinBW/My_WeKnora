@@ -23,6 +23,11 @@ import (
 // 部署时可通过环境变量 WEKNORA_AI_AGENT_ID 覆盖。
 const defaultAIAgentID = "6a188aae-b3fb-45c7-b59b-1d0a4620a113"
 
+// inlineAIAgentID 是 ai_chat.agent 内联定义未声明 id 时使用的合成智能体 ID，
+// 会随助手消息落库（messages.agent_id）。该 ID 不存在于 custom_agents 表，
+// 仅用于标识「本轮由 config.yaml 内联定义的智能体驱动」。
+const inlineAIAgentID = "ai-chat-inline-agent"
+
 // AIChatHandler 实现自定义 /api/v1/ai/chat 协议。
 // 它是协议入口 + 智能体解析/会话/SSE 输出等基础设施；意图分类与分发见 intent.go，
 // 搜索流程见 search.go，Agent 执行见 agent_turn.go，start 流程见 start.go。
@@ -120,8 +125,12 @@ func (h *AIChatHandler) Chat(c *gin.Context) {
 }
 
 // resolveAgent 加载 OPLink 智能体，该智能体的系统提示词和模型驱动此端点。
-// 智能体 ID 的解析顺序：config.yaml (ai_chat.agent_id) -> 环境变量 WEKNORA_AI_AGENT_ID -> 内置默认值。
+// 解析顺序：config.yaml 内联定义 (ai_chat.agent) -> config.yaml (ai_chat.agent_id)
+// -> 环境变量 WEKNORA_AI_AGENT_ID -> 内置默认值。内联定义存在时不查 custom_agents 表。
 func (h *AIChatHandler) resolveAgent(ctx context.Context) (*types.CustomAgent, error) {
+	if agent := h.agentFromInlineConfig(ctx); agent != nil {
+		return agent, nil
+	}
 	id := defaultAIAgentID
 	if h.config != nil && h.config.AIChat != nil && h.config.AIChat.AgentID != "" {
 		id = h.config.AIChat.AgentID
@@ -133,6 +142,31 @@ func (h *AIChatHandler) resolveAgent(ctx context.Context) (*types.CustomAgent, e
 		return nil, fmt.Errorf("AI agent %s not found", id)
 	}
 	return agent, nil
+}
+
+// agentFromInlineConfig 把 config.yaml 的 ai_chat.agent 内联定义构造成一次性的
+// *types.CustomAgent（不落库）。未配置内联定义时返回 nil，由调用方回退到
+// agent_id 解析链。构造方式对齐内置智能体的 buildAgentFromEntry：按请求 tenant
+// 盖章、补默认值，从而正常走 AgentQA 的检索租户与模型解析。
+func (h *AIChatHandler) agentFromInlineConfig(ctx context.Context) *types.CustomAgent {
+	if h.config == nil || h.config.AIChat == nil || h.config.AIChat.Agent == nil {
+		return nil
+	}
+	def := h.config.AIChat.Agent
+	id := strings.TrimSpace(def.ID)
+	if id == "" {
+		id = inlineAIAgentID
+	}
+	tenantID, _ := types.TenantIDFromContext(ctx)
+	agent := &types.CustomAgent{
+		ID:          id,
+		Name:        def.Name,
+		Description: def.Description,
+		TenantID:    tenantID,
+		Config:      def.CustomAgentConfig,
+	}
+	agent.EnsureDefaults()
+	return agent
 }
 
 // resolveIntentAgent 加载用于意图分类的意图分析智能体。
@@ -239,17 +273,25 @@ func (h *AIChatHandler) setSSEHeaders(c *gin.Context) {
 // writeEvent 以 `data: {json}\n\n` 格式序列化一个 SSE 事件。
 func (h *AIChatHandler) writeEvent(c *gin.Context, ev AIEvent) {
 	b, _ := json.Marshal(ev)
-	_, _ = c.Writer.WriteString("data: " + string(b) + "\n\n")
+	// Be explicit about the SSE event name. It is semantically equivalent to
+	// omitting it ("message" is the SSE default), but makes this endpoint's
+	// frames match the standard chat stream for raw SSE consumers.
+	_, _ = c.Writer.WriteString("event: message\n" + "data: " + string(b) + "\n\n")
 	c.Writer.Flush()
 }
 
 // errorEvent 构建一个终止性错误事件。
 func (h *AIChatHandler) errorEvent(req *AIChatRequest, msg string) AIEvent {
 	return AIEvent{
+		ID:             req.RequestID,
+		ResponseType:   AIEventError,
 		Version:        req.Version,
 		Type:           AIEventError,
 		ConversationID: req.ConversationID,
 		RequestID:      req.RequestID,
+		Content:        msg,
 		Message:        msg,
+		Done:           true,
+		Data:           map[string]interface{}{"error": msg},
 	}
 }

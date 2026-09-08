@@ -104,6 +104,12 @@ type AISearchResult struct {
 // AIEvent is the SSE event payload emitted by this endpoint. Fields are
 // optional so each event kind carries only the fields it needs.
 type AIEvent struct {
+	// ID and ResponseType mirror the standard session-stream envelope.  They
+	// are populated for terminal errors so clients shared with /agent-chat can
+	// render a streamed failure instead of treating the 200 SSE response as an
+	// empty answer.
+	ID             string                 `json:"id,omitempty"`
+	ResponseType   string                 `json:"response_type,omitempty"`
 	Version        string                 `json:"version"`
 	Type           string                 `json:"type"`
 	ConversationID string                 `json:"conversationId"`

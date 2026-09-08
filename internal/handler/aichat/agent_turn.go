@@ -100,7 +100,17 @@ func (h *AIChatHandler) handleAgentTurn(
 
 	go func() {
 		defer translator.close()
-		_ = h.sessionService.AgentQA(ctx, qaReq, bus)
+		// Most runtime failures are emitted by AgentQA onto the event bus. Some
+		// setup failures (for example an enabled knowledge_search tool without a
+		// rerank model) occur before the engine exists and are returned directly.
+		// Do not discard those errors: the HTTP status is already 200 for this
+		// SSE response, so the client can only learn about the failure from a
+		// terminal stream error frame.
+		if err := h.sessionService.AgentQA(ctx, qaReq, bus); err != nil {
+			translator.write(AIEventError, err.Error(), true, map[string]interface{}{
+				"stage": "agent_execution",
+			})
+		}
 	}()
 
 	select {
@@ -153,7 +163,7 @@ func (t *aiStreamTranslator) write(typ, content string, done bool, data map[stri
 	if t.c.Request.Context().Err() != nil {
 		return
 	}
-	t.h.writeEvent(t.c, AIEvent{
+	ev := AIEvent{
 		Version:        t.req.Version,
 		Type:           typ,
 		ConversationID: t.req.ConversationID,
@@ -161,7 +171,19 @@ func (t *aiStreamTranslator) write(typ, content string, done bool, data map[stri
 		Content:        content,
 		Done:           done,
 		Data:           data,
-	})
+	}
+	if typ == AIEventError {
+		// SSE has already started, so an upstream HTTP 429 cannot change this
+		// request's HTTP status. Emit the standard stream error shape as well as
+		// the AI-chat fields, allowing clients to surface quota/reset messages.
+		ev.ID = t.req.RequestID
+		ev.ResponseType = AIEventError
+		if ev.Data == nil {
+			ev.Data = make(map[string]interface{})
+		}
+		ev.Data["error"] = content
+	}
+	t.h.writeEvent(t.c, ev)
 }
 
 // writeAnswerDone 发出终止的 answer_done 事件，携带会话和助手消息 ID，
