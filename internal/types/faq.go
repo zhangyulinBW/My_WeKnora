@@ -49,6 +49,31 @@ func GeneratedQuestionSourceID(chunkID, questionID string) string {
 	return chunkID + "-q" + hex.EncodeToString(digest[:12])
 }
 
+// GeneratedQuestionItem is one AI-generated question flattened for a
+// KB-wide listing (the wiki browser's 问题 tab): the question text plus
+// enough coordinates to trace it back to its source chunk and document.
+type GeneratedQuestionItem struct {
+	ID              string `json:"id"`                        // question ID within the chunk
+	Question        string `json:"question"`                  // question text
+	ChunkID         string `json:"chunk_id"`                  // source chunk
+	KnowledgeID     string `json:"knowledge_id"`              // source document
+	KnowledgeTitle  string `json:"knowledge_title,omitempty"` // hydrated by the handler
+	ChunkIndex      int    `json:"chunk_index"`               // position within the document
+	ContentRevision int    `json:"content_revision"`          // chunk revision at listing time
+	Current         bool   `json:"current"`                   // question still matches the chunk body
+}
+
+// GeneratedQuestionListResult pages through a KB's generated questions.
+// Pagination is chunk-based: one page covers the questions carried by
+// page_size chunks, so the number of questions per response varies.
+type GeneratedQuestionListResult struct {
+	Questions []GeneratedQuestionItem `json:"questions"`
+	Total     int64                   `json:"total"` // total questions across the KB
+	Page      int                     `json:"page"`
+	PageSize  int                     `json:"page_size"` // chunks per page
+	HasMore   bool                    `json:"has_more"`
+}
+
 // DocumentChunkMetadata 定义文档 Chunk 的元数据结构
 // 用于存储AI生成的问题等增强信息
 type DocumentChunkMetadata struct {

@@ -1302,6 +1302,80 @@ func (r *chunkRepository) ListRecentDocumentChunksWithQuestions(
 	return chunks, nil
 }
 
+// generatedQuestionsPredicate returns the dialect-specific SQL predicate
+// matching chunks whose metadata carries at least one generated question.
+// Kept in one place so the KB-wide listing stays consistent with
+// ListRecentDocumentChunksWithQuestions.
+func (r *chunkRepository) generatedQuestionsPredicate() string {
+	switch r.db.Name() {
+	case "postgres":
+		return "metadata IS NOT NULL AND metadata::text != '{}' AND jsonb_array_length(COALESCE(metadata->'generated_questions', '[]'::jsonb)) > 0"
+	case "mysql":
+		return "metadata IS NOT NULL AND JSON_LENGTH(JSON_EXTRACT(metadata, '$.generated_questions')) > 0"
+	default: // sqlite
+		return "metadata IS NOT NULL AND json_array_length(json_extract(metadata, '$.generated_questions')) > 0"
+	}
+}
+
+// ListGeneratedQuestionChunksByKB pages through the KB's text chunks that
+// carry generated questions, ordered so chunks of the same document stay
+// adjacent (knowledge_id, chunk_index). Only listing-relevant columns are
+// selected; the questions themselves are expanded from metadata by the
+// caller.
+func (r *chunkRepository) ListGeneratedQuestionChunksByKB(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	page int,
+	pageSize int,
+) ([]*types.Chunk, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 50
+	}
+	var chunks []*types.Chunk
+	err := r.db.WithContext(ctx).
+		Model(&types.Chunk{}).
+		Select("id, knowledge_id, knowledge_base_id, chunk_index, content_revision, metadata, updated_at").
+		Where("tenant_id = ? AND knowledge_base_id = ? AND chunk_type = ? AND status IN ? AND is_enabled = ?",
+			tenantID, kbID, types.ChunkTypeText, []int{int(types.ChunkStatusIndexed), int(types.ChunkStatusDefault)}, true).
+		Where(r.generatedQuestionsPredicate()).
+		Order("knowledge_id ASC, chunk_index ASC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&chunks).Error
+	return chunks, err
+}
+
+// CountGeneratedQuestionsByKB sums the per-chunk question counts across the
+// KB's text chunks. The aggregation runs in SQL so computing the total does
+// not require transferring every chunk's metadata.
+func (r *chunkRepository) CountGeneratedQuestionsByKB(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+) (int64, error) {
+	var lengthExpr string
+	switch r.db.Name() {
+	case "postgres":
+		lengthExpr = "jsonb_array_length(COALESCE(metadata->'generated_questions', '[]'::jsonb))"
+	case "mysql":
+		lengthExpr = "JSON_LENGTH(JSON_EXTRACT(metadata, '$.generated_questions'))"
+	default: // sqlite
+		lengthExpr = "json_array_length(json_extract(metadata, '$.generated_questions'))"
+	}
+	var total int64
+	err := r.db.WithContext(ctx).
+		Model(&types.Chunk{}).
+		Select("COALESCE(SUM("+lengthExpr+"), 0)").
+		Where("tenant_id = ? AND knowledge_base_id = ? AND chunk_type = ? AND status IN ? AND is_enabled = ?",
+			tenantID, kbID, types.ChunkTypeText, []int{int(types.ChunkStatusIndexed), int(types.ChunkStatusDefault)}, true).
+		Scan(&total).Error
+	return total, err
+}
+
 func (r *chunkRepository) ListAllChunksByKnowledgeID(
 	ctx context.Context,
 	tenantID uint64,

@@ -133,6 +133,14 @@ type ChunkRepository interface {
 	// Filter by kbIDs and/or knowledgeIDs. At least one of them must be non-empty.
 	// Returns up to `limit` chunks sorted by updated_at descending.
 	ListRecentDocumentChunksWithQuestions(ctx context.Context, tenantID uint64, kbIDs []string, knowledgeIDs []string, limit int) ([]*types.Chunk, error)
+	// ListGeneratedQuestionChunksByKB pages through the KB's text chunks that
+	// carry generated questions, ordered by (knowledge_id, chunk_index) so
+	// chunks of the same document stay adjacent. Questions are expanded from
+	// metadata by the caller.
+	ListGeneratedQuestionChunksByKB(ctx context.Context, tenantID uint64, kbID string, page int, pageSize int) ([]*types.Chunk, error)
+	// CountGeneratedQuestionsByKB returns the total number of generated
+	// questions across the KB's text chunks (aggregated in SQL).
+	CountGeneratedQuestionsByKB(ctx context.Context, tenantID uint64, kbID string) (int64, error)
 }
 
 // ChunkService mutations require explicit KB write grants and validate persisted
@@ -182,4 +190,8 @@ type ChunkService interface {
 	RevertDocumentChunk(ctx context.Context, chunkID string, revision int, expectedRevision *int) (*types.Chunk, error)
 	// UpsertGeneratedQuestion creates or updates a generated retrieval question.
 	UpsertGeneratedQuestion(ctx context.Context, chunkID string, questionID string, question string) (*types.GeneratedQuestion, error)
+	// ListGeneratedQuestionsByKB lists the KB's AI-generated recall questions
+	// (postprocess.question output), paged by the chunks that carry them.
+	// KnowledgeTitle is left empty; the handler hydrates it.
+	ListGeneratedQuestionsByKB(ctx context.Context, kbID string, page int, pageSize int) (*types.GeneratedQuestionListResult, error)
 }

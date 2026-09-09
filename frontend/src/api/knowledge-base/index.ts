@@ -451,6 +451,41 @@ export function regenerateGeneratedQuestions(chunkId: string) {
   return post(`/api/v1/chunks/by-id/${chunkId}/questions/regenerate`, {});
 }
 
+// KBGeneratedQuestion 是 postprocess.question 阶段为分块生成的召回问题，
+// 展平后附带定位信息（来源分块 / 文档）；供 Wiki 浏览的「问题」标签使用。
+export interface KBGeneratedQuestion {
+  id: string;
+  question: string;
+  chunk_id: string;
+  knowledge_id: string;
+  knowledge_title: string;
+  chunk_index: number;
+  content_revision: number;
+  current: boolean;
+}
+
+export interface KBGeneratedQuestionListResponse {
+  questions: KBGeneratedQuestion[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
+
+// 分页列出知识库下 AI 生成的召回问题（按携带问题的分块分页）
+export function listKBGeneratedQuestions(kbId: string, params?: { page?: number; page_size?: number }) {
+  const query = new URLSearchParams();
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        query.set(key, String(value));
+      }
+    });
+  }
+  const qs = query.toString();
+  return get(`/api/v1/chunks/kb/${kbId}/generated-questions${qs ? '?' + qs : ''}`);
+}
+
 export function listKnowledgeTags(
   kbId: string,
   params?: { page?: number; page_size?: number; keyword?: string },

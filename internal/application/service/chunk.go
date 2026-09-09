@@ -773,6 +773,70 @@ func (s *chunkService) UpsertGeneratedQuestion(
 	return nil, fmt.Errorf("question not found")
 }
 
+// ListGeneratedQuestionsByKB lists the AI-generated recall questions across
+// a knowledge base's documents (postprocess.question output), paged by the
+// chunks that carry them. KnowledgeTitle is hydrated by the handler.
+func (s *chunkService) ListGeneratedQuestionsByKB(
+	ctx context.Context,
+	kbID string,
+	page int,
+	pageSize int,
+) (*types.GeneratedQuestionListResult, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 50
+	}
+
+	chunks, err := s.chunkRepository.ListGeneratedQuestionChunksByKB(ctx, tenantID, kbID, page, pageSize)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"kb_id":     kbID,
+			"tenant_id": tenantID,
+		})
+		return nil, err
+	}
+	total, err := s.chunkRepository.CountGeneratedQuestionsByKB(ctx, tenantID, kbID)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"kb_id":     kbID,
+			"tenant_id": tenantID,
+		})
+		return nil, err
+	}
+
+	result := &types.GeneratedQuestionListResult{
+		Questions: []types.GeneratedQuestionItem{},
+		Total:     total,
+		Page:      page,
+		PageSize:  pageSize,
+		HasMore:   len(chunks) == pageSize,
+	}
+	for _, chunk := range chunks {
+		meta, metaErr := chunk.DocumentMetadata()
+		if metaErr != nil || meta == nil {
+			continue
+		}
+		for _, question := range meta.GeneratedQuestions {
+			if strings.TrimSpace(question.Question) == "" {
+				continue
+			}
+			result.Questions = append(result.Questions, types.GeneratedQuestionItem{
+				ID:              question.ID,
+				Question:        question.Question,
+				ChunkID:         chunk.ID,
+				KnowledgeID:     chunk.KnowledgeID,
+				ChunkIndex:      chunk.ChunkIndex,
+				ContentRevision: chunk.ContentRevision,
+				Current:         meta.IsQuestionCurrent(question, chunk.ContentRevision),
+			})
+		}
+	}
+	return result, nil
+}
+
 // DeleteGeneratedQuestion deletes a single generated question from a chunk by question ID
 // This updates the chunk metadata and removes the corresponding vector index
 func (s *chunkService) DeleteGeneratedQuestion(ctx context.Context, chunkID string, questionID string) error {

@@ -227,7 +227,9 @@
                     <span class="wiki-tab-count">{{ tab.total }}</span>
                   </div>
                 </div>
-                <div class="wiki-tab-bar-actions">
+                <!-- Folder/page actions and the tree/list toggle only apply to
+                     wiki page tabs; the questions tab hides them. -->
+                <div v-if="activeTab !== QUESTIONS_TAB" class="wiki-tab-bar-actions">
                   <div class="wiki-view-toggle" role="group"
                     :aria-label="$t('knowledgeEditor.wikiBrowser.viewModeToggle')">
                     <t-tooltip :content="$t('knowledgeEditor.wikiBrowser.viewTree')" placement="top">
@@ -370,6 +372,36 @@
                   <t-loading size="small" />
                 </div>
               </template>
+
+              <!-- Questions tab: postprocess.question output (AI-generated
+                   recall questions from chunk metadata). Source documents act
+                   as dividers; a document's questions arrive adjacent because
+                   the backend orders by (knowledge_id, chunk_index). -->
+              <template v-else-if="activeTab === QUESTIONS_TAB">
+                <div class="wiki-question-list">
+                  <template v-for="row in questionRows" :key="row.key">
+                    <div v-if="row.kind === 'doc'" class="wiki-question-doc" :title="row.title">
+                      <t-icon name="file" class="wiki-question-doc-icon" />
+                      <span class="wiki-question-doc-title">{{ row.title }}</span>
+                    </div>
+                    <div v-else
+                      :class="['wiki-question-item', { active: selectedQuestion?.chunk_id === row.item.chunk_id && selectedQuestion?.id === row.item.id }]"
+                      :title="row.item.question" @click="selectQuestion(row.item)">
+                      <t-icon name="chat" class="wiki-question-item-icon" />
+                      <span class="wiki-question-item-text">{{ row.item.question }}</span>
+                    </div>
+                  </template>
+                  <div v-if="questionsHasMore" ref="groupSentinelRef" class="wiki-group-sentinel"
+                    data-type="questions"></div>
+                  <div v-if="questionsLoading" class="wiki-group-loading">
+                    <t-loading size="small" />
+                  </div>
+                  <div v-if="questionsInitialized && questionRows.length === 0 && !questionsLoading"
+                    class="wiki-empty-state">
+                    <p class="wiki-empty-desc">{{ $t('knowledgeEditor.wikiBrowser.questionsEmpty') }}</p>
+                  </div>
+                </div>
+              </template>
             </div>
 
             <!-- Empty state -->
@@ -388,7 +420,49 @@
       <div class="wiki-content">
         <div class="wiki-reader">
           <div class="wiki-reader-inner">
-            <template v-if="selectedPage">
+            <!-- Question detail (postprocess.question): the selected generated
+                 question over its source chunk excerpt. -->
+            <template v-if="selectedQuestion">
+              <div class="wiki-reader-header">
+                <div class="wiki-reader-title-row">
+                  <div class="wiki-reader-title-block">
+                    <h2 class="wiki-reader-title">
+                      <span class="wiki-reader-title-text">{{ selectedQuestion.question }}</span>
+                    </h2>
+                    <div class="wiki-reader-title-badges wiki-reader-title-badges--secondary">
+                      <span class="wiki-badge wiki-badge--type">
+                        <t-icon name="chat" />
+                        {{ getTypeLabel(QUESTIONS_TAB) }}
+                      </span>
+                      <span class="wiki-badge wiki-badge--alias" :title="questionDocTitle">
+                        <t-icon name="file" />
+                        {{ questionDocTitle }}
+                      </span>
+                      <span class="wiki-badge wiki-badge--ver">
+                        {{ $t('knowledgeEditor.wikiBrowser.questionChunkBadge', { index: selectedQuestion.chunk_index + 1 }) }}
+                      </span>
+                      <span v-if="!selectedQuestion.current" class="wiki-badge wiki-badge--stale">
+                        <t-icon name="error-circle" />
+                        {{ $t('knowledgeEditor.wikiBrowser.questionOutdated') }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="wiki-question-source">
+                <div class="wiki-question-source-label">{{ $t('knowledgeEditor.wikiBrowser.questionSourceLabel') }}</div>
+                <div v-if="questionChunkLoading" class="wiki-question-source-body">
+                  <t-loading size="small" />
+                </div>
+                <div v-else-if="questionChunkExcerpt" class="wiki-question-source-body">{{ questionChunkExcerpt }}
+                </div>
+                <div v-else class="wiki-question-source-body wiki-question-source-body--missing">
+                  {{ $t('knowledgeEditor.wikiBrowser.questionSourceMissing') }}
+                </div>
+              </div>
+            </template>
+
+            <template v-else-if="selectedPage">
               <!-- Navigation -->
               <div v-if="navHistory.length || navFromSystemView" class="wiki-nav-bar">
                 <a href="#" class="wiki-nav-back" @click.prevent="goBack">
@@ -808,7 +882,8 @@ import {
   expandedWikiDirectoryPaths,
   expandWikiDirectoryPath,
 } from './wikiDirectoryState'
-import { getKnowledgeDetails } from '@/api/knowledge-base'
+import { getKnowledgeDetails, getChunkByIdOnly, listKBGeneratedQuestions } from '@/api/knowledge-base'
+import type { KBGeneratedQuestion } from '@/api/knowledge-base'
 import { createSessions } from '@/api/chat'
 import ChatView from '@/views/chat/index.vue'
 import {
@@ -932,6 +1007,132 @@ interface WikiTreeDirectory {
   count: number
 }
 const pagesByType = ref<Record<string, PageTypeBucket>>({})
+
+// Questions tab state. The postprocess.question output lives on chunk
+// metadata rather than on wiki pages, so it bypasses the page-type bucket
+// machinery entirely: its own paged list (paged by the chunks that carry
+// the questions), its own sentinel and its own reader branch.
+const questionsItems = ref<KBGeneratedQuestion[]>([])
+const questionsTotal = ref(0)
+const questionsPage = ref(1)
+const questionsPageSize = 50
+const questionsLoading = ref(false)
+const questionsInitialized = ref(false)
+// questionsExhausted stops the sentinel once a fetch no longer brings new
+// rows (question deleted between pages, or the total drifted), so the
+// observer can't spin on a page that will never fill the gap.
+const questionsExhausted = ref(false)
+const selectedQuestion = ref<KBGeneratedQuestion | null>(null)
+// Source chunk of the selected question, lazily fetched for the reader.
+const questionChunk = ref<{ content?: string } | null>(null)
+const questionChunkLoading = ref(false)
+
+const questionsHasMore = computed(() =>
+  questionsInitialized.value && !questionsExhausted.value && questionsItems.value.length < questionsTotal.value)
+
+// questionRows interleaves document dividers with question rows: the
+// backend returns questions ordered by (knowledge_id, chunk_index), so a
+// divider is emitted whenever the document changes.
+const questionRows = computed(() => {
+  const rows: Array<
+    | { kind: 'doc'; key: string; title: string }
+    | { kind: 'question'; key: string; item: KBGeneratedQuestion }
+  > = []
+  let lastKnowledgeID = ''
+  for (const item of questionsItems.value) {
+    if (item.knowledge_id !== lastKnowledgeID) {
+      lastKnowledgeID = item.knowledge_id
+      rows.push({
+        kind: 'doc',
+        key: `doc:${item.knowledge_id}`,
+        title: item.knowledge_title || item.knowledge_id,
+      })
+    }
+    rows.push({ kind: 'question', key: `${item.chunk_id}:${item.id}`, item })
+  }
+  return rows
+})
+
+// loadQuestions appends the next chunk page of generated questions. A reset
+// reload re-fetches from page 1 (used when the tab is first opened).
+async function loadQuestions(opts: { reset?: boolean } = {}) {
+  if (questionsLoading.value) return
+  if (!opts.reset && !questionsHasMore.value) return
+  questionsLoading.value = true
+  try {
+    const page = opts.reset ? 1 : questionsPage.value
+    const res = await listKBGeneratedQuestions(props.knowledgeBaseId, {
+      page,
+      page_size: questionsPageSize,
+    })
+    const body: any = (res as any).data || res
+    const batch: KBGeneratedQuestion[] = body?.questions || []
+    questionsTotal.value = Number(body?.total) || 0
+    questionsPage.value = page + 1
+    let added = 0
+    if (opts.reset) {
+      questionsItems.value = batch
+      added = batch.length
+    } else {
+      const seen = new Set(questionsItems.value.map(q => `${q.chunk_id}:${q.id}`))
+      for (const q of batch) {
+        const key = `${q.chunk_id}:${q.id}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        questionsItems.value.push(q)
+        added++
+      }
+    }
+    if (batch.length === 0 || added === 0) questionsExhausted.value = true
+    questionsInitialized.value = true
+  } catch (e) {
+    console.error('Failed to load generated questions:', e)
+  } finally {
+    questionsLoading.value = false
+  }
+  await nextTick()
+}
+
+// loadQuestionsCount only refreshes the tab badge total, so the sidebar can
+// decide whether the questions tab should be visible without pulling items.
+async function loadQuestionsCount() {
+  try {
+    const res = await listKBGeneratedQuestions(props.knowledgeBaseId, { page: 1, page_size: 1 })
+    const body: any = (res as any).data || res
+    questionsTotal.value = Number(body?.total) || 0
+  } catch (e) {
+    console.error('Failed to load generated question count:', e)
+  }
+}
+
+// selectQuestion opens the question in the reader and lazily pulls its
+// source chunk for the excerpt below the question.
+async function selectQuestion(item: KBGeneratedQuestion) {
+  selectedQuestion.value = item
+  selectedPage.value = null
+  activeSystemView.value = ''
+  navHistory.value = []
+  navFromSystemView.value = ''
+  questionChunk.value = null
+  questionChunkLoading.value = true
+  try {
+    const res = await getChunkByIdOnly(item.chunk_id)
+    questionChunk.value = (res as any).data || res as any
+  } catch (e) {
+    console.error('Failed to load question source chunk:', e)
+  } finally {
+    questionChunkLoading.value = false
+  }
+}
+
+const questionChunkExcerpt = computed(() => {
+  const content = (questionChunk.value?.content || '').trim()
+  if (!content) return ''
+  return content.length > 2000 ? content.slice(0, 2000) + '…' : content
+})
+
+const questionDocTitle = computed(() =>
+  selectedQuestion.value?.knowledge_title || selectedQuestion.value?.knowledge_id || '')
 const collapsedDirectories = ref<Set<string>>(new Set())
 const touchedDirectories = ref<Set<string>>(new Set())
 // Index view state. The reader renders an incrementally-built markdown
@@ -1161,6 +1362,10 @@ const KNOWLEDGE_TYPES = ['entity', 'concept', 'synthesis', 'comparison']
 // CONTENT_TABS are the sidebar tabs in display order: the merged knowledge tab
 // first, then summary. Each tab maps to its own bucket keyed by the tab id.
 const CONTENT_TABS = [KNOWLEDGE_TAB, 'summary']
+// QUESTIONS_TAB lists the postprocess.question output (AI-generated recall
+// questions living on chunk metadata, not on wiki pages). It renders through
+// its own sidebar branch and keeps its own list state below.
+const QUESTIONS_TAB = 'questions'
 
 // tabPageTypes maps a sidebar tab onto the comma-separated page_type filter the
 // backend expects. The knowledge tab folds every non-summary content type into
@@ -1234,6 +1439,7 @@ const groupedPages = computed(() => {
 // decide whether the wiki was truly empty. Now we check bucket totals
 // reported by the backend — zero everywhere means no content pages.
 const hasContentPages = computed(() => {
+  if (questionsTotal.value > 0) return true
   for (const bucket of Object.values(pagesByType.value)) {
     if (bucket.total > 0 || bucket.categoryPaths.length > 0) return true
   }
@@ -1595,6 +1801,9 @@ watch(sidebarViewMode, (mode) => {
 
 async function switchSidebarViewMode(mode: SidebarViewMode) {
   if (mode === sidebarViewMode.value || sidebarViewSwitching.value) return
+  // The questions tab renders a single plain list and hides the toggle, so
+  // a mode switch can only arrive here while a page-type tab is active.
+  if (activeTab.value === QUESTIONS_TAB) return
   sidebarViewSwitching.value = true
   try {
     // The flat list has its own unscoped pagination stream. Fetch its first
@@ -1638,21 +1847,28 @@ function waitForTabData(type: string, mode: SidebarViewMode): Promise<void> {
 async function setActiveTab(type: string) {
   if (activeTab.value === type || sidebarTabSwitching.value) return
   sidebarTabSwitching.value = true
-  ensureBucket(type)
   try {
-    // Initial sidebar requests run in parallel. A tab can become visible from
-    // stats before its page/folder requests finish, so prepare the target
-    // bucket before replacing the current content instead of briefly mounting
-    // an empty tree/list on the first click after refresh.
-    if (sidebarViewMode.value === 'list') {
-      await loadFlatPagesForType(type)
+    // The questions tab has no page-type bucket; it owns its list state and
+    // renders through a dedicated branch, so only its first page is fetched
+    // before switching the sidebar over.
+    if (type === QUESTIONS_TAB) {
+      if (!questionsInitialized.value) await loadQuestions({ reset: true })
     } else {
-      await Promise.all([
-        loadPagesForType(type),
-        loadCategoriesForType(type),
-      ])
+      ensureBucket(type)
+      // Initial sidebar requests run in parallel. A tab can become visible from
+      // stats before its page/folder requests finish, so prepare the target
+      // bucket before replacing the current content instead of briefly mounting
+      // an empty tree/list on the first click after refresh.
+      if (sidebarViewMode.value === 'list') {
+        await loadFlatPagesForType(type)
+      } else {
+        await Promise.all([
+          loadPagesForType(type),
+          loadCategoriesForType(type),
+        ])
+      }
+      await waitForTabData(type, sidebarViewMode.value)
     }
-    await waitForTabData(type, sidebarViewMode.value)
 
     cancelCreateRootFolder()
     activeTab.value = type
@@ -1666,10 +1882,15 @@ async function setActiveTab(type: string) {
 
 // visibleTabs mirrors groupedPages but is meant for rendering the
 // horizontal tab bar: only non-empty types survive, in typeOrder with
-// any unknown types appended after.
-const visibleTabs = computed(() =>
-  groupedPages.value.map(g => ({ type: g.type, label: g.label, total: g.total }))
-)
+// any unknown types appended after. The questions tab is appended once its
+// count is known so it behaves like a page-type tab (hidden when empty).
+const visibleTabs = computed(() => {
+  const tabs = groupedPages.value.map(g => ({ type: g.type, label: g.label, total: g.total }))
+  if (questionsTotal.value > 0) {
+    tabs.push({ type: QUESTIONS_TAB, label: getTypeLabel(QUESTIONS_TAB), total: questionsTotal.value })
+  }
+  return tabs
+})
 
 // activeGroup resolves activeTab into the current group descriptor,
 // or null when the active type has been deselected (e.g. after a
@@ -1904,6 +2125,10 @@ watch([groupSentinelRef, sidebarViewMode], ([el]) => {
       if (!entry.isIntersecting) continue
       const type = (entry.target as HTMLElement).dataset.type
       if (!type) continue
+      if (type === QUESTIONS_TAB) {
+        loadQuestions()
+        continue
+      }
       if (sidebarViewMode.value === 'list') loadFlatPagesForType(type)
       else loadPagesForType(type)
     }
@@ -1969,6 +2194,7 @@ function getTypeLabel(type: string): string {
     concept: t('knowledgeEditor.wikiBrowser.filterConcept'),
     synthesis: t('knowledgeEditor.wikiBrowser.filterSynthesis'),
     comparison: t('knowledgeEditor.wikiBrowser.filterComparison'),
+    questions: t('knowledgeEditor.wikiBrowser.questionsTab'),
     index: 'Index',
   }
   return map[type] || type
@@ -2639,6 +2865,7 @@ async function loadIndex() {
 // re-fetches on first ever open or if a prior attempt failed.
 async function openIndexView() {
   selectedPage.value = null
+  selectedQuestion.value = null
   activeSystemView.value = 'index'
   if (!indexMarkdown.value) {
     indexLoading.value = true
@@ -2816,11 +3043,16 @@ async function loadPages() {
   try {
     searchResults.value = null
     for (const tab of CONTENT_TABS) ensureBucket(tab)
-    await loadIndex()
-    await Promise.all(CONTENT_TABS.map(async tab => {
-      await loadPagesForType(tab, { reset: true })
-      await loadCategoriesForType(tab, { reset: true })
-    }))
+    // The questions tab's badge total rides along with the bucket probes so
+    // the tab bar settles in one round of requests.
+    await Promise.all([
+      loadIndex(),
+      loadQuestionsCount(),
+      ...CONTENT_TABS.map(async tab => {
+        await loadPagesForType(tab, { reset: true })
+        await loadCategoriesForType(tab, { reset: true })
+      }),
+    ])
 
     // Default to the knowledge tab (first in CONTENT_TABS) once every
     // bucket has had a chance to load. On later reloads (e.g. after
@@ -2834,7 +3066,7 @@ async function loadPages() {
         activeTab.value = preferredDefaultTab(visibleTabs.value)
       }
     }
-    if (sidebarViewMode.value === 'list' && activeTab.value) {
+    if (sidebarViewMode.value === 'list' && activeTab.value && activeTab.value !== QUESTIONS_TAB) {
       await loadFlatPagesForType(activeTab.value, true)
     }
 
@@ -3547,6 +3779,7 @@ async function selectPage(page: WikiPage) {
       navFromSystemView.value = activeSystemView.value
     }
     activeSystemView.value = ''
+    selectedQuestion.value = null
     const res = await getWikiPage(props.knowledgeBaseId, page.slug)
     selectedPage.value = (res as any).data || res as any
     await loadPageIssues(page.slug)
@@ -3566,6 +3799,7 @@ async function navigateToSlug(slug: string) {
       navFromSystemView.value = activeSystemView.value
     }
     activeSystemView.value = ''
+    selectedQuestion.value = null
     const res = await getWikiPage(props.knowledgeBaseId, slug)
     selectedPage.value = (res as any).data || res as any
     await loadPageIssues(slug)
@@ -5244,6 +5478,112 @@ onUnmounted(() => {
   color: var(--td-text-color-placeholder);
 }
 
+// Questions tab list: document dividers followed by that document's
+// generated questions. Rows are plain DOM (not virtualized) and page in
+// through the shared group sentinel.
+.wiki-question-list {
+  padding: 4px 0;
+}
+
+.wiki-question-doc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px 0 var(--wiki-list-inset-x);
+  margin: 6px 0 2px;
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  user-select: none;
+
+  .wiki-question-doc-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+    color: var(--td-brand-color);
+  }
+
+  .wiki-question-doc-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-weight: 500;
+  }
+}
+
+.wiki-question-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 10px 6px var(--wiki-list-inset-x);
+  border-radius: var(--wiki-list-row-radius);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    background: var(--td-bg-color-container-hover);
+  }
+
+  &.active {
+    background: var(--td-bg-color-container-hover);
+
+    .wiki-question-item-text {
+      color: var(--td-brand-color);
+    }
+  }
+
+  .wiki-question-item-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+    margin-top: 3px;
+    color: var(--td-text-color-placeholder);
+  }
+
+  .wiki-question-item-text {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 20px;
+    color: var(--td-text-color-primary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    transition: color 0.15s ease;
+  }
+}
+
+// Reader: source chunk excerpt under the selected question.
+.wiki-question-source {
+  margin-top: 4px;
+}
+
+.wiki-question-source-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+  margin-bottom: 8px;
+}
+
+.wiki-question-source-body {
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: var(--td-bg-color-secondarycontainer);
+  color: var(--td-text-color-primary);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.wiki-question-source-body--missing {
+  color: var(--td-text-color-placeholder);
+}
+
 .wiki-directory-item {
   height: 34px;
   box-sizing: border-box;
@@ -5532,6 +5872,11 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.wiki-badge--stale {
+  color: var(--td-warning-color);
+  background: var(--td-warning-color-1);
 }
 
 .wiki-nav-bar {

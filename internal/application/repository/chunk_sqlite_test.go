@@ -351,3 +351,67 @@ func TestListRecentDocumentChunksWithQuestions_UnionsExplicitKBAndKnowledge(t *t
 	require.Len(t, got, 2)
 	assert.ElementsMatch(t, []string{fromExplicitKB.ID, fromExplicitDocument.ID}, []string{got[0].ID, got[1].ID})
 }
+
+func TestListGeneratedQuestionChunksByKB_SQLite(t *testing.T) {
+	db := setupChunkTestDB(t)
+	repo := NewChunkRepository(db)
+	ctx := context.Background()
+
+	kbID := uuid.New().String()
+	docA := uuid.New().String()
+	docB := uuid.New().String()
+
+	// docA carries three questions across two chunks, docB one.
+	docA0 := makeSuggestedDocumentChunk(t, kbID, docA, "A-1")
+	meta := &types.DocumentChunkMetadata{GeneratedQuestions: []types.GeneratedQuestion{
+		{ID: uuid.NewString(), Question: "A-2a"},
+		{ID: uuid.NewString(), Question: "A-2b"},
+	}}
+	docA1 := makeChunk(kbID, docA, types.ChunkTypeText)
+	require.NoError(t, docA1.SetDocumentMetadata(meta))
+	docA1.ChunkIndex = 1
+	docB0 := makeSuggestedDocumentChunk(t, kbID, docB, "B-1")
+
+	// Rows that must NOT be listed.
+	summaryWithQuestions := makeSuggestedDocumentChunk(t, kbID, docA, "summary question")
+	summaryWithQuestions.ChunkType = types.ChunkTypeSummary
+	disabled := makeSuggestedDocumentChunk(t, kbID, docA, "disabled question")
+	otherKB := makeSuggestedDocumentChunk(t, uuid.NewString(), docA, "other KB question")
+	otherTenant := makeSuggestedDocumentChunk(t, kbID, docA, "other tenant question")
+	otherTenant.TenantID = 2
+	noQuestions := makeChunk(kbID, docA, types.ChunkTypeText)
+
+	require.NoError(t, repo.CreateChunks(ctx, []*types.Chunk{
+		docA0, docA1, docB0, summaryWithQuestions, disabled, otherKB, otherTenant, noQuestions,
+	}))
+	// CreateChunks doesn't reliably persist IsEnabled=false through GORM's
+	// default-value behaviour (see TestListPagedChunksByKnowledgeID_...).
+	require.NoError(t, db.Model(&types.Chunk{}).
+		Where("id = ?", disabled.ID).
+		Update("is_enabled", false).Error)
+
+	got, err := repo.ListGeneratedQuestionChunksByKB(ctx, 1, kbID, 1, 50)
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+
+	// Rows arrive ordered by (knowledge_id, chunk_index): whatever document
+	// sorts first, its chunks follow each other in chunk_index order.
+	if got[0].KnowledgeID == docA {
+		assert.Equal(t, []string{docA0.ID, docA1.ID, docB0.ID}, []string{got[0].ID, got[1].ID, got[2].ID})
+	} else {
+		assert.Equal(t, []string{docB0.ID, docA0.ID, docA1.ID}, []string{got[0].ID, got[1].ID, got[2].ID})
+	}
+
+	total, err := repo.CountGeneratedQuestionsByKB(ctx, 1, kbID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), total)
+
+	// Chunk-level pagination: page size 2 splits the three chunks.
+	page1, err := repo.ListGeneratedQuestionChunksByKB(ctx, 1, kbID, 1, 2)
+	require.NoError(t, err)
+	require.Len(t, page1, 2)
+	page2, err := repo.ListGeneratedQuestionChunksByKB(ctx, 1, kbID, 2, 2)
+	require.NoError(t, err)
+	require.Len(t, page2, 1)
+	assert.Equal(t, got[2].ID, page2[0].ID)
+}

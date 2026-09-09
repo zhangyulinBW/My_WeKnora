@@ -3,6 +3,8 @@ package handler
 import (
 	stderrors "errors"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -350,6 +352,89 @@ func (h *ChunkHandler) RegenerateGeneratedQuestions(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+}
+
+// ListGeneratedQuestions godoc
+// @Summary      列出知识库下 AI 生成的召回问题
+// @Description  分页列出知识库下 postprocess.question 阶段为分块生成的问题，按文档分组排序，供 Wiki 浏览的「问题」标签使用
+// @Tags         分块管理
+// @Accept       json
+// @Produce      json
+// @Param        kb_id      path  string  true  "知识库 ID"
+// @Param        page       query int  false "页码（按携带问题的分块分页）" default(1)
+// @Param        page_size  query int  false "每页分块数"                  default(50)
+// @Success      200        {object} map[string]interface{} "问题列表"
+// @Failure      400        {object} errors.AppError        "请求参数错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /chunks/kb/{kb_id}/generated-questions [get]
+func (h *ChunkHandler) ListGeneratedQuestions(c *gin.Context) {
+	ctx := c.Request.Context()
+	logger.Info(ctx, "Start listing generated questions by knowledge base")
+
+	kbID := secutils.SanitizeForLog(c.Param("kb_id"))
+	if kbID == "" {
+		logger.Error(ctx, "Knowledge base ID is empty")
+		c.Error(errors.NewBadRequestError("Knowledge base ID cannot be empty"))
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "50"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 50
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	// The route-level guard has rewritten the request's tenant context to
+	// the effective tenant for shared KBs.
+	result, err := h.service.ListGeneratedQuestionsByKB(ctx, kbID, page, pageSize)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(errors.NewInternalServerError(err.Error()))
+		return
+	}
+
+	// Hydrate document titles for the questions' source documents. A lookup
+	// failure only degrades the display (empty title), not the listing.
+	if len(result.Questions) > 0 {
+		ids := make([]string, 0, len(result.Questions))
+		seen := make(map[string]struct{}, len(result.Questions))
+		for _, q := range result.Questions {
+			if _, ok := seen[q.KnowledgeID]; ok {
+				continue
+			}
+			seen[q.KnowledgeID] = struct{}{}
+			ids = append(ids, q.KnowledgeID)
+		}
+		tenantID := c.GetUint64(types.TenantIDContextKey.String())
+		knowledge, err := h.kgService.GetKnowledgeBatch(ctx, tenantID, ids)
+		if err != nil {
+			logger.Warnf(ctx, "Failed to load knowledge titles for generated questions: %v", err)
+		} else {
+			titles := make(map[string]string, len(knowledge))
+			for _, k := range knowledge {
+				title := strings.TrimSpace(k.Title)
+				if title == "" {
+					title = k.FileName
+				}
+				titles[k.ID] = title
+			}
+			for i := range result.Questions {
+				result.Questions[i].KnowledgeTitle = titles[result.Questions[i].KnowledgeID]
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    result,
+	})
 }
 
 // DeleteChunk godoc
