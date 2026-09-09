@@ -114,9 +114,9 @@ tenant:
 
 # 自定义 AI 接口 /api/v1/ai/chat 配置
 ai_chat:
-  # 使用的智能体 ID（其 system_prompt 驱动该接口）；留空则用代码内置默认值。
-  # 若下方 agent: 内联定义存在，则 agent_id 被忽略。
-  agent_id: "6a188aae-b3fb-45c7-b59b-1d0a4620a113"
+  # normal 意图使用内置 Smart Reasoning 智能体；其他专用意图仍由下方各自的
+  # intent/search/recommend_agent_id 驱动。若下方 agent: 内联定义存在，则本项会被忽略。
+  agent_id: "builtin-smart-reasoning"
   # 可选：直接在 config.yaml 内联定义 normal 意图（普通问答）使用的智能体，
   # 无需在 custom_agents 表预建。存在即优先生效（忽略上面的 agent_id）。
   # 字段与智能体编辑器一致（完整 CustomAgentConfig），未写的字段由系统补默认值。

@@ -90,7 +90,12 @@ func (h *AIChatHandler) handleAgentTurn(
 		Query:              req.Message,
 		AssistantMessageID: assistantMsg.ID,
 		CustomAgent:        agent,
-		Metadata:           buildAIMetadata(req),
+		// AgentQA combines this per-request switch with the agent-level setting.
+		// AI chat has no separate request toggle, so preserve the configured
+		// agent capability for normal-intent turns instead of letting the bool
+		// zero value disable web search.
+		WebSearchEnabled: agent.Config.WebSearchEnabled,
+		Metadata:         buildAIMetadata(req),
 	}
 
 	bus := event.NewEventBus()
