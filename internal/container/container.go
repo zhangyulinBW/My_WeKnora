@@ -56,6 +56,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/database"
 	"github.com/Tencent/WeKnora/internal/datasource"
+	dingtalkConnector "github.com/Tencent/WeKnora/internal/datasource/connector/dingtalk"
 	"github.com/Tencent/WeKnora/internal/datasource/connector/feishu/core"
 	"github.com/Tencent/WeKnora/internal/datasource/connector/feishu/drive"
 	"github.com/Tencent/WeKnora/internal/datasource/connector/feishu/wiki"
@@ -325,6 +326,13 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// the frontend terminal panel. First-use provisioning takes a sandbox
 	// config ID already resolved by the WebSocket handler (own or shared agent).
 	must(container.Provide(service.NewSandboxTerminalService))
+	// One-shot desktop handshake tickets. Falls back to an in-process store
+	// when Redis is absent (Lite mode), same as the binding store.
+	must(container.Provide(service.NewSandboxDesktopTicketStore))
+	must(container.Provide(service.NewSandboxDesktopLastStore))
+	// Desktop relay. It rides SandboxTerminalService's resolution path so the
+	// desktop always lands on the session's existing sandbox.
+	must(container.Provide(service.NewSandboxDesktopService))
 
 	logger.Debugf(ctx, "[Container] Registering task enqueuer...")
 	redisAvailable := os.Getenv("REDIS_ADDR") != ""
@@ -1702,6 +1710,9 @@ func initConnectorRegistry() (*datasource.ConnectorRegistry, error) {
 	}
 	if err := registry.Register(yuqueConnector.NewConnector()); err != nil {
 		errs = errors.Join(errs, fmt.Errorf("register yuque connector: %w", err))
+	}
+	if err := registry.Register(dingtalkConnector.NewConnector()); err != nil {
+		errs = errors.Join(errs, fmt.Errorf("register dingtalk connector: %w", err))
 	}
 	if err := registry.Register(imaConnector.NewConnector()); err != nil {
 		errs = errors.Join(errs, fmt.Errorf("register ima connector: %w", err))
