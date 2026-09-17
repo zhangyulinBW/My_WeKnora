@@ -21,4 +21,15 @@ cli/acceptance/testdata/**/*.json text eol=lf
 .trellis/workspace/*/journal-*.md merge=union
 
 # Unified diffs use a space to mark empty context lines.
-patches/browserskill/*.patch whitespace=-blank-at-eol
+# text eol=lf: build_browserskill.sh 在 Linux 容器内 `git apply` 此补丁到
+# LF 检出的上游仓库；Windows autocrlf 检出成 CRLF 会导致所有 hunk 失配。
+patches/browserskill/*.patch text eol=lf whitespace=-blank-at-eol
+
+# check-license-bundle.sh 逐行 read modules.tsv 并用 ^[0-9a-f]{64}$ 校验
+# 第三列；CRLF 会让校验和带 \r 而失配（构建 app 镜像时触发）。
+*.tsv text eol=lf
+
+# check-license-bundle.sh 用 awk 从 go.mod 提取版本号与 modules.tsv 比对；
+# CRLF 会让 awk 的 $2 变成 "v1.10.0\r"（注意 *.go 规则匹配不到 go.mod）。
+go.mod text eol=lf
+go.sum text eol=lf

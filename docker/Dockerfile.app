@@ -1,6 +1,7 @@
 # Build the paired extension and fetch the checksum-pinned native daemon.
 # Node runs on the builder architecture; only bsk targets the runtime image.
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS browserskill
+# 基础镜像已加国内源前缀（原: node:24-bookworm-slim@sha256:...）；digest 与上游钉扎一致
+FROM --platform=$BUILDPLATFORM docker.m.daocloud.io/library/node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS browserskill
 WORKDIR /build
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git python3 ca-certificates && \
@@ -12,7 +13,7 @@ ARG TARGETARCH
 RUN bash scripts/build_browserskill.sh /opt/weknora/browserskill "${TARGETOS}/${TARGETARCH}"
 
 # Build stage
-FROM golang:1.26-bookworm AS builder
+FROM docker.m.daocloud.io/library/golang:1.26-bookworm AS builder
 
 WORKDIR /app
 
@@ -84,7 +85,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN --mount=type=cache,target=/go/pkg/mod cp -r /go/pkg/mod/github.com/yanyiwu/ /app/yanyiwu/
 
 # Final stage
-FROM debian:12.12-slim
+FROM docker.m.daocloud.io/library/debian:12.12-slim
 
 WORKDIR /app
 

@@ -44,6 +44,7 @@ services:
       args:
         - APK_MIRROR_ARG=${APK_MIRROR_ARG:-}
         - WITH_ANYDOC=${WITH_ANYDOC:-1}
+        - GOPROXY_ARG=${GOPROXY_ARG:-}
     container_name: WeKnora-app
     ports:
       - "${APP_PORT:-8080}:8080"

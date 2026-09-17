@@ -23,7 +23,8 @@
 # Pin by digest: compiled JS is shipped in the runtime image, so a floating
 # node tag could change production assets. This index includes linux/amd64
 # and linux/arm64 (Node 24 / Debian bookworm slim).
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS builder
+# 基础镜像已加国内源前缀（原: node:24-bookworm-slim@sha256:...）；digest 与上游钉扎一致
+FROM --platform=$BUILDPLATFORM docker.m.daocloud.io/library/node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS builder
 
 WORKDIR /frontend
 
@@ -56,7 +57,8 @@ RUN npm run build
 # newer Alpine base (3.24+) fails to start on old hosts such as CentOS 7
 # (kernel 3.10 + old libseccomp), which broke v0.7.0. This digest is
 # nginx 1.30.3 / Alpine 3.23.5, the same base as the working v0.6.3 image.
-FROM nginx:1.30.3-alpine@sha256:0d3b80406a13a767339fbe2f41406d6c7da727ab89cf8fae399e81f780f814d1
+# 基础镜像已加国内源前缀（原: nginx:1.30.3-alpine@sha256:...）；digest 与上游钉扎一致
+FROM docker.m.daocloud.io/library/nginx:1.30.3-alpine@sha256:0d3b80406a13a767339fbe2f41406d6c7da727ab89cf8fae399e81f780f814d1
 
 COPY --from=builder /frontend/dist /usr/share/nginx/html
 

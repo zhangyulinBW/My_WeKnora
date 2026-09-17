@@ -1,7 +1,8 @@
 # =========================
 # 构建阶段（轻量化：仅文档解析 + 图片提取，无 OCR/VLM）
 # =========================
-FROM python:3.10.18-bookworm AS builder
+# 基础镜像已加国内源前缀（原: python:3.10.18-bookworm）；digest/tag 与上游一致
+FROM docker.m.daocloud.io/library/python:3.10.18-bookworm AS builder
 
 ARG APT_MIRROR=""
 RUN if [ -n "$APT_MIRROR" ]; then \
@@ -79,7 +80,7 @@ RUN chmod +x docreader/scripts/generate_proto.sh && \
 # =========================
 # 运行阶段（轻量化）
 # =========================
-FROM python:3.10.18-bookworm AS runner
+FROM docker.m.daocloud.io/library/python:3.10.18-bookworm AS runner
 
 ARG APT_MIRROR=""
 RUN if [ -n "$APT_MIRROR" ]; then \
