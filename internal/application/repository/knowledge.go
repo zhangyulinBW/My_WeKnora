@@ -362,8 +362,16 @@ func (r *knowledgeRepository) CheckKnowledgeExists(
 	kbID string,
 	params *types.KnowledgeCheckParams,
 ) (bool, *types.Knowledge, error) {
+	// Failed rows never block a retry, and neither do rows whose deletion is
+	// in flight: a deleting row is on its way out, so an upload landing while
+	// the async delete task is still queued/running ends with exactly one
+	// live row whichever way the task concludes (success soft-deletes the old
+	// row; exhaustion marks it failed). Letting deleting rows block the
+	// duplicate check turned a task that never finishes into a permanent
+	// "document already exists" that only manual SQL could clear (issue #3338).
 	query := r.db.WithContext(ctx).Model(&types.Knowledge{}).
-		Where("tenant_id = ? AND knowledge_base_id = ? AND parse_status <> ?", tenantID, kbID, "failed")
+		Where("tenant_id = ? AND knowledge_base_id = ? AND parse_status NOT IN ?",
+			tenantID, kbID, []string{"failed", "deleting"})
 
 	switch params.Type {
 	case "file":
@@ -688,6 +696,24 @@ func (r *knowledgeRepository) SetFinalizing(
 		return false, res.Error
 	}
 	return res.RowsAffected > 0, nil
+}
+
+// CompleteProcessingWithoutSubtasks is the zero-enrichment counterpart of
+// SetFinalizing. Keep the state check and completion fields in one write so a
+// concurrent cancel/delete or duplicate delivery cannot be overwritten.
+func (r *knowledgeRepository) CompleteProcessingWithoutSubtasks(ctx context.Context, id string) (bool, error) {
+	now := time.Now()
+	res := r.db.WithContext(ctx).Model(&types.Knowledge{}).
+		Where("id = ? AND parse_status = ?", id, types.ParseStatusProcessing).
+		Updates(map[string]interface{}{
+			"parse_status":           types.ParseStatusCompleted,
+			"summary_status":         types.SummaryStatusNone,
+			"pending_subtasks_count": 0,
+			"error_message":          "",
+			"processed_at":           now,
+			"updated_at":             now,
+		})
+	return res.RowsAffected > 0, res.Error
 }
 
 // CountKnowledgeByKnowledgeBaseID counts the number of knowledge items in a knowledge base

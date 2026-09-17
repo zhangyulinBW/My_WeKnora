@@ -525,8 +525,8 @@ services:
 
   # 修改的PostgreSQL配置
   postgres:
-    # 已替换为华为云国内镜像，原镜像: paradedb/paradedb:v0.22.2-pg17
-    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/paradedb/paradedb:v0.22.2-pg17
+    # 已替换为华为云国内镜像，原镜像: paradedb/paradedb:v0.22.6-pg17
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/paradedb/paradedb:v0.22.6-pg17
     container_name: WeKnora-postgres
     environment:
       - POSTGRES_USER=${DB_USER}
@@ -806,8 +806,8 @@ services:
   # 一次性初始化脚本：在已有的 WeKnora-postgres 里创建 langfuse 数据库（幂等，数据库已存在则跳过）
   # 复用 WeKnora-postgres 的 ParadeDB 镜像，避免多拉一个 postgres 镜像
   langfuse-db-init:
-    # 已替换为华为云国内镜像，原镜像: paradedb/paradedb:v0.22.2-pg17
-    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/paradedb/paradedb:v0.22.2-pg17
+    # 已替换为华为云国内镜像，原镜像: paradedb/paradedb:v0.22.6-pg17
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/paradedb/paradedb:v0.22.6-pg17
     container_name: WeKnora-langfuse-db-init
     depends_on:
       postgres:

@@ -11,24 +11,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-// formatFileSize formats file size in human-readable format
-func formatFileSize(size int64) string {
-	const (
-		KB = 1024
-		MB = 1024 * KB
-		GB = 1024 * MB
-	)
-
-	if size < KB {
-		return fmt.Sprintf("%d B", size)
-	} else if size < MB {
-		return fmt.Sprintf("%.2f KB", float64(size)/KB)
-	} else if size < GB {
-		return fmt.Sprintf("%.2f MB", float64(size)/MB)
-	}
-	return fmt.Sprintf("%.2f GB", float64(size)/GB)
-}
-
 // formatDocSummary cleans and truncates document summaries for table display
 func formatDocSummary(summary string, maxLen int) string {
 	cleaned := strings.TrimSpace(summary)
@@ -265,7 +247,7 @@ func formatToolGuidanceForMode(names []string, skillInstallMode bool) string {
 	}
 	if !skillInstallMode && (has("shell_exec") || has("write_sandbox_file")) {
 		b.WriteString("Session workspace: /workspace. Preserve uploaded originals in /workspace/input. " +
-			"/workspace/output is the only directory collected for download, " +
+			skills.ArtifactOutputDir() + " is the only directory collected for download, " +
 			"so it takes finished deliverables only; " +
 			"keep drafts and intermediate files in another directory under /workspace. " +
 			"Commands start from their specified working directory on every call. " +
@@ -307,6 +289,15 @@ func sandboxArtifactReferenceGuidance() string {
 	var builder strings.Builder
 	builder.WriteString("  - Include key generated deliverables in your final answer as ")
 	builder.WriteString("`![description](sandbox:<file name>)` using the exact file name and no directory path\n")
+	builder.WriteString("    - Copy the exact links supplied in the tool result's appended Output files list. ")
+	builder.WriteString("Each list covers that call's changes; earlier supplied links remain usable. ")
+	builder.WriteString("A path or filename in stdout/stderr (including ls output) is not a user-visible file link. ")
+	builder.WriteString("Never construct sandbox: links from it.\n")
+	builder.WriteString("    - Files outside the output directory, including /tmp/task/previews, " +
+		"are internal working files. ")
+	builder.WriteString("Rendering pages for your own layout checks does not publish them to the user. ")
+	builder.WriteString("If the user requests those previews, copy the requested files into the output directory ")
+	builder.WriteString("and use the output links returned by the tool.\n")
 	builder.WriteString("    - Images render inline; charts, tables, and documents ")
 	builder.WriteString("render as a card the user clicks to preview\n")
 	builder.WriteString("    - Never reference a sandbox path (`/workspace/output/...`) ")

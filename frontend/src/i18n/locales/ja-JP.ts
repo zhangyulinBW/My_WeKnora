@@ -59,6 +59,7 @@ export default {
     "previewIdle": "最後の画面を保持しています",
     "previewLive": "画面を同期中",
     "previewLoading": "画面を取得中",
+    "borrowHint": "借用するページに切り替え、BrowserSkill の確認で許可または拒否を選択してください。許可後は自動で続行します。「操作を続行」は一時停止の解除のみで、借用の許可にはなりません。",
     "helpHint": "確認または許可が必要です。プレビューをクリックして移動してください。",
 
     "settingsTitle": "ブラウザー接続",
@@ -786,6 +787,11 @@ export default {
     chunkLoadFailed: 'チャンクの読み込みに失敗しました'
   },
   uploadConfirm: {
+    documentSummary: "ドキュメントの要約",
+    documentSummaryDescription: "今回インポートするドキュメントの要約を自動生成するか選択します。",
+    generateSummary: "ドキュメントの要約を生成",
+    generateSummaryHint: "既定で有効です。無効にすると要約生成をスキップし、解析、インデックス作成、その他の処理は設定どおり実行されます。",
+
     title: 'アップロードの確認',
     parseConfig: '解析設定',
     configNav: '解析設定のナビゲーション',

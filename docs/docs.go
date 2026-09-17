@@ -22943,7 +22943,8 @@ const docTemplate = `{
                 "zhipu",
                 "exa",
                 "metaso",
-                "bocha"
+                "bocha",
+                "serply"
             ],
             "x-enum-varnames": [
                 "WebSearchProviderTypeBrave",
@@ -22958,7 +22959,8 @@ const docTemplate = `{
                 "WebSearchProviderTypeZhipu",
                 "WebSearchProviderTypeExa",
                 "WebSearchProviderTypeMetaso",
-                "WebSearchProviderTypeBocha"
+                "WebSearchProviderTypeBocha",
+                "WebSearchProviderTypeSerply"
             ]
         },
         "github_com_Tencent_WeKnora_internal_types.WikiConfig": {

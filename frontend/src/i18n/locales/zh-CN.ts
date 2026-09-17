@@ -59,6 +59,7 @@ export default {
     "previewIdle": "已保留最后画面",
     "previewLive": "画面同步中",
     "previewLoading": "正在获取画面",
+    "borrowHint": "请切换到要借用的网页，在 BrowserSkill 授权提示中选择「允许」或「拒绝」。授权通过后会自动继续；「继续操作」只恢复暂停的任务，不代替借用授权。",
     "helpHint": "点击预览前往浏览器，完成上述步骤后，在浏览器帮助提示中确认完成。",
 
     "settingsTitle": "浏览器连接",
@@ -6456,6 +6457,11 @@ export default {
     }
   },
   uploadConfirm: {
+    documentSummary: "文档摘要",
+    documentSummaryDescription: "为本次导入的文档选择是否自动生成摘要。",
+    generateSummary: "生成文档摘要",
+    generateSummaryHint: "默认开启。关闭后跳过摘要生成，文档解析、索引及其他处理步骤仍按配置执行。",
+
     title: '上传文档确认',
     parseConfig: '解析配置',
     configNav: '解析配置导航',

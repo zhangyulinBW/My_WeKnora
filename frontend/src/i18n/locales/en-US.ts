@@ -59,6 +59,7 @@ export default {
     "previewIdle": "Last preview retained",
     "previewLive": "Preview syncing",
     "previewLoading": "Fetching preview",
+    "borrowHint": "Switch to the page being borrowed and choose Allow or Deny in the BrowserSkill confirmation. Approval continues automatically. Continue operation only resumes a paused task; it does not approve borrowing.",
     "helpHint": "Open the browser from the preview, complete the requested step, then confirm completion in the browser help overlay.",
 
     "settingsTitle": "Browser connection",
@@ -786,6 +787,11 @@ export default {
     chunkLoadFailed: 'Failed to load chunks'
   },
   uploadConfirm: {
+    documentSummary: "Document summary",
+    documentSummaryDescription: "Choose whether to automatically summarize documents in this import.",
+    generateSummary: "Generate document summaries",
+    generateSummaryHint: "Enabled by default. Disable to skip summaries while parsing, indexing, and other configured steps continue.",
+
     title: 'Confirm Upload',
     parseConfig: 'Parse settings',
     configNav: 'Parse settings navigation',

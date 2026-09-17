@@ -59,6 +59,7 @@ export default {
     "previewIdle": "마지막 화면 유지 중",
     "previewLive": "화면 동기화 중",
     "previewLoading": "화면 가져오는 중",
+    "borrowHint": "사용하려는 페이지로 전환하여 BrowserSkill 확인 창에서 허용 또는 거부를 선택하세요. 허용하면 자동으로 계속됩니다. 작업 계속은 일시 중지만 해제하며 탭 사용을 승인하지 않습니다.",
     "helpHint": "인증 또는 권한 승인이 필요합니다. 미리보기를 클릭하여 이동하세요.",
 
     "settingsTitle": "브라우저 연결",
@@ -6454,6 +6455,11 @@ export default {
     }
   },
   uploadConfirm: {
+    documentSummary: "문서 요약",
+    documentSummaryDescription: "이번에 가져오는 문서의 요약을 자동으로 생성할지 선택합니다.",
+    generateSummary: "문서 요약 생성",
+    generateSummaryHint: "기본적으로 활성화됩니다. 비활성화하면 요약 생성을 건너뛰며 파싱, 인덱싱 및 기타 단계는 설정대로 진행됩니다.",
+
     title: '문서 업로드 확인',
     parseConfig: '파싱 설정',
     configNav: '파싱 설정 탐색',
