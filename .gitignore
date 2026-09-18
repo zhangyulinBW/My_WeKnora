@@ -63,3 +63,10 @@ miniprogram/project.private.config.json
 
 # Locally built BrowserSkill runtime and extension bundles
 /artifacts/browserskill/
+docs/代码更新部署流程.md
+
+# 本地环境变量导出（含数据库/Redis 密码、JWT_SECRET 等真实凭据）
+env_*.txt
+
+# 本地 stage 的技能目录（运行时数据，见 docs/agent-skills.md）
+skills/
