@@ -7,6 +7,17 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:$PATH
+# 国内镜像：static.rust-lang.org / crates.io 不可达。rustup 与 cargo 走 rsproxy.cn，
+# 可用 build-arg RUSTUP_DIST_ARG 覆盖回官方源（https://static.rust-lang.org）。
+ARG RUSTUP_DIST_ARG=https://rsproxy.cn
+ENV RUSTUP_DIST_SERVER=${RUSTUP_DIST_ARG} RUSTUP_UPDATE_ROOT=${RUSTUP_DIST_ARG}/rustup
+RUN mkdir -p /usr/local/cargo && printf '%s\n' \
+    '[source.crates-io]' 'replace-with = "rsproxy-sparse"' \
+    '[source.rsproxy-sparse]' 'registry = "sparse+https://rsproxy.cn/index/"' \
+    '[net]' 'git-fetch-with-cli = true' \
+    > /usr/local/cargo/config.toml
+# build_browserskill.sh 里的 npx/pnpm 走国内 npm 镜像
+ENV npm_config_registry=https://registry.npmmirror.com
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
 COPY scripts/build_browserskill.sh scripts/browserskill-release.json ./scripts/
 COPY patches/browserskill ./patches/browserskill
@@ -69,6 +80,14 @@ ENV GO_VERSION=${GO_VERSION_ARG}
 ARG WITH_ANYDOC=1
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:$PATH
+# 同 browserskill 阶段：rustup/cargo 走 rsproxy.cn（见上方说明）
+ARG RUSTUP_DIST_ARG=https://rsproxy.cn
+ENV RUSTUP_DIST_SERVER=${RUSTUP_DIST_ARG} RUSTUP_UPDATE_ROOT=${RUSTUP_DIST_ARG}/rustup
+RUN mkdir -p /usr/local/cargo && printf '%s\n' \
+    '[source.crates-io]' 'replace-with = "rsproxy-sparse"' \
+    '[source.rsproxy-sparse]' 'registry = "sparse+https://rsproxy.cn/index/"' \
+    '[net]' 'git-fetch-with-cli = true' \
+    > /usr/local/cargo/config.toml
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     if [ "$WITH_ANYDOC" = "1" ]; then \
