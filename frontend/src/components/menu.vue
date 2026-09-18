@@ -85,7 +85,7 @@
                         <div class="menu_item-box">
                             <div class="menu_icon">
                                 <img class="icon"
-                                    :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'agent' ? agentIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : prefixIcon)"
+                                    :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'agent' ? agentIcon : item.icon == 'artifact' ? artifactIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : prefixIcon)"
                                     alt="">
                             </div>
                             <template v-if="!uiStore.sidebarCollapsed">
@@ -411,6 +411,8 @@ const isMenuItemActive = (itemPath: string): boolean => {
                 currentRoute === 'knowledgeBaseSettings';
         case 'agents':
             return currentRoute === 'agentList';
+        case 'artifacts':
+            return currentRoute === 'artifactLibrary';
         case 'organizations':
             return currentRoute === 'organizationList';
         case 'creatChat':
@@ -439,19 +441,14 @@ const getIconActiveState = (itemPath: string) => {
 };
 
 // 分离上下两部分菜单（使用 visibleMenuArr 以便 lite 模式过滤 logout）
+const TOP_MENU_PATHS = new Set(['creatChat', 'knowledge-bases', 'artifacts', 'agents', 'organizations']);
+
 const topMenuItems = computed<MenuItem[]>(() => {
-    return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) =>
-        item.path === 'knowledge-bases' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat'
-    );
+    return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) => TOP_MENU_PATHS.has(item.path));
 });
 
 const bottomMenuItems = computed<MenuItem[]>(() => {
-    return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) => {
-        if (item.path === 'knowledge-bases' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat') {
-            return false;
-        }
-        return true;
-    });
+    return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) => !TOP_MENU_PATHS.has(item.path));
 });
 
 // 当前知识库信息
@@ -1085,6 +1082,7 @@ let prefixIcon = ref('prefixIcon.svg');
 let logoutIcon = ref('logout.svg');
 let settingIcon = ref('setting.svg');
 let agentIcon = ref('agent.svg');
+let artifactIcon = ref('artifact.svg');
 let organizationIcon = ref('organization.svg');
 let pathPrefix = ref(route.name)
 const getIcon = (path: string) => {
@@ -1093,6 +1091,7 @@ const getIcon = (path: string) => {
     const creatChatActiveState = getIconActiveState('creatChat');
     const settingsActiveState = getIconActiveState('settings');
     const agentsActiveState = route.name === 'agentList';
+    const artifactsActiveState = route.name === 'artifactLibrary';
     const organizationsActiveState = route.name === 'organizationList';
 
     // 知识库图标：只在知识库页面显示绿色
@@ -1100,6 +1099,9 @@ const getIcon = (path: string) => {
 
     // 智能体图标：只在智能体页面显示绿色
     agentIcon.value = agentsActiveState ? 'agent-green.svg' : 'agent.svg';
+
+    // 产物图标：只在产物页面显示绿色
+    artifactIcon.value = artifactsActiveState ? 'artifact-green.svg' : 'artifact.svg';
 
     // 组织图标：只在组织页面显示绿色
     organizationIcon.value = organizationsActiveState ? 'organization-green.svg' : 'organization.svg';
@@ -1293,8 +1295,8 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         flex-shrink: 0;
         cursor: pointer;
         color: var(--td-text-color-secondary);
-        border-radius: 4px;
-        transition: background-color 0.2s ease;
+        border-radius: var(--app-radius-xs);
+        transition: background-color var(--app-motion-base) ease;
         box-sizing: border-box;
 
         &:hover {
@@ -1341,23 +1343,6 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         }
     }
 
-    .logo_img {
-        margin-left: 24px;
-        width: 30px;
-        height: 30px;
-        margin-right: 7.25px;
-    }
-
-    .logo_txt {
-        transform: rotate(0.049deg);
-        color: var(--td-text-color-primary);
-        font-family: "TencentSans";
-        font-size: 24.12px;
-        font-style: normal;
-        font-weight: W7;
-        line-height: 21.7px;
-    }
-
     .menu_top {
         flex: 1;
         display: flex;
@@ -1373,7 +1358,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         // Claude 风格细滚动条：默认透明，悬浮时显示一条圆角细灰条
         scrollbar-width: thin;
         scrollbar-color: transparent transparent;
-        transition: scrollbar-color 0.2s ease;
+        transition: scrollbar-color var(--app-motion-base) ease;
 
         &::-webkit-scrollbar {
             width: 6px;
@@ -1385,20 +1370,20 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
 
         &::-webkit-scrollbar-thumb {
             background-color: transparent;
-            border-radius: 6px;
-            transition: background-color 0.2s ease;
+            border-radius: var(--app-radius-sm);
+            transition: background-color var(--app-motion-base) ease;
         }
 
         &:hover {
-            scrollbar-color: var(--td-scrollbar-color, rgba(0, 0, 0, 0.18)) transparent;
+            scrollbar-color: var(--td-scrollbar-color) transparent;
 
             &::-webkit-scrollbar-thumb {
-                background-color: var(--td-scrollbar-color, rgba(0, 0, 0, 0.18));
+                background-color: var(--td-scrollbar-color);
             }
         }
 
         &::-webkit-scrollbar-thumb:hover {
-            background-color: var(--td-scrollbar-hover-color, rgba(0, 0, 0, 0.32));
+            background-color: var(--td-scrollbar-hover-color);
         }
     }
 
@@ -1423,32 +1408,12 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
     }
 
 
-    .upload-file-wrap {
-        padding: 6px;
-        border-radius: 3px;
-        height: 32px;
-        width: 32px;
-        box-sizing: border-box;
-    }
-
-    .upload-file-wrap:hover {
-        background-color: var(--td-brand-color-light);
-        color: var(--td-brand-color);
-
-    }
-
-    .upload-file-icon {
-        width: 20px;
-        height: 20px;
-        color: var(--td-text-color-secondary);
-    }
-
     .active-upload {
         color: var(--td-brand-color);
     }
 
     .menu_item_active {
-        border-radius: 4px;
+        border-radius: var(--app-radius-xs);
         background: var(--td-bg-color-secondarycontainer) !important;
 
         .menu_icon,
@@ -1465,12 +1430,6 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         }
     }
 
-    .menu_p {
-        height: 46px;
-        padding: 3px 0;
-        box-sizing: border-box;
-    }
-
     .menu_item {
         cursor: pointer;
         display: flex;
@@ -1480,8 +1439,8 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         padding: 8px 10px 8px var(--sidebar-inset-x);
         box-sizing: border-box;
         margin-bottom: 2px;
-        border-radius: 4px;
-        transition: background-color 0.2s ease;
+        border-radius: var(--app-radius-xs);
+        transition: background-color var(--app-motion-base) ease;
 
         .menu_item-box {
             display: flex;
@@ -1489,7 +1448,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         }
 
         &:hover {
-            border-radius: 4px;
+            border-radius: var(--app-radius-xs);
             background: var(--td-bg-color-container-hover);
 
             .menu_icon,
@@ -1517,7 +1476,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         color: var(--td-text-color-primary);
         text-overflow: ellipsis;
         font-family: var(--app-font-family);
-        font-size: 14px;
+        font-size: var(--app-text-base);
         font-style: normal;
         font-weight: 600;
         line-height: 20px;
@@ -1530,7 +1489,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
     .submenu {
         position: relative;
         font-family: var(--app-font-family);
-        font-size: 14px;
+        font-size: var(--app-text-base);
         font-style: normal;
         min-width: 0;
         padding-top: 3px;
@@ -1538,7 +1497,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
 
     :deep(.submenu_pin_icon) {
         color: inherit;
-        font-size: 12px;
+        font-size: var(--app-text-sm);
         margin-right: 4px;
         vertical-align: middle;
         flex-shrink: 0;
@@ -1546,7 +1505,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
 
     :deep(.submenu_fork_icon) {
         color: inherit;
-        font-size: 12px;
+        font-size: var(--app-text-sm);
         margin-right: 4px;
         vertical-align: middle;
         flex-shrink: 0;
@@ -1563,7 +1522,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         // 悬浮或选中时恢复彩色，交互时才引人注意。
         filter: grayscale(1);
         opacity: 0.55;
-        transition: filter 0.15s ease, opacity 0.15s ease;
+        transition: filter var(--app-motion-fast) ease, opacity var(--app-motion-fast) ease;
     }
 
     :deep(.submenu_item:hover .submenu_source_icon),
@@ -1613,7 +1572,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
 
     .timeline_header {
         font-family: var(--app-font-family);
-        font-size: 11px;
+        font-size: var(--app-text-xs);
         font-weight: 600;
         color: var(--td-text-color-disabled);
         padding-top: 4px;
@@ -1645,7 +1604,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
             min-width: 0;
             max-width: 100%;
             opacity: 0;
-            transition: opacity 0.15s ease;
+            transition: opacity var(--app-motion-fast) ease;
         }
     }
 
@@ -1664,8 +1623,8 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
 
         &.session-chat-row .session-list-row {
             min-height: 30px;
-            border-radius: 6px;
-            transition: background 0.15s ease, color 0.15s ease;
+            border-radius: var(--app-radius-sm);
+            transition: background var(--app-motion-fast) ease, color var(--app-motion-fast) ease;
         }
 
         &.session-chat-row--revealed {
@@ -1701,7 +1660,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         }
 
         &.session-chat-row--selected .session-list-row {
-            background: rgba(7, 192, 95, 0.05);
+            background: color-mix(in srgb, var(--td-brand-color) 5%, transparent);
         }
     }
 
@@ -1712,7 +1671,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         align-items: center;
         color: var(--td-text-color-primary);
         font-weight: 400;
-        font-size: 14px;
+        font-size: var(--app-text-base);
         line-height: 20px;
         height: 100%;
         width: 100%;
@@ -1744,7 +1703,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
 
         .menu-more-wrap {
             opacity: 0;
-            transition: opacity 0.2s ease;
+            transition: opacity var(--app-motion-base) ease;
             flex-shrink: 0;
         }
 
@@ -1786,7 +1745,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
     .batch-footer-left {
         display: flex;
         align-items: center;
-        font-size: 13px;
+        font-size: var(--app-text-md);
         color: var(--td-text-color-placeholder);
     }
 
@@ -1794,81 +1753,6 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         display: flex;
         align-items: center;
         gap: 6px;
-    }
-}
-
-/* 知识库下拉菜单样式 */
-.kb-dropdown-icon {
-    margin-left: auto;
-    color: var(--td-text-color-secondary);
-    transition: transform 0.3s ease, color 0.2s ease;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-
-    &.rotate-180 {
-        transform: rotate(180deg);
-    }
-
-    &:hover {
-        color: var(--td-brand-color);
-    }
-
-    &.active {
-        color: var(--td-brand-color);
-    }
-
-    &.active:hover {
-        color: var(--td-brand-color-active);
-    }
-
-    svg {
-        width: 12px;
-        height: 12px;
-        transition: inherit;
-    }
-}
-
-.kb-dropdown-menu {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    background: var(--td-bg-color-container);
-    border: 1px solid var(--td-component-stroke);
-    border-radius: 6px;
-    box-shadow: var(--td-shadow-2);
-    z-index: 1000;
-    max-height: 200px;
-    overflow-y: auto;
-}
-
-.kb-dropdown-item {
-    padding: 8px 16px;
-    cursor: pointer;
-    transition: background-color 0.2s ease;
-    font-size: 14px;
-    color: var(--td-text-color-primary);
-
-    &:hover {
-        background-color: var(--td-bg-color-container-hover);
-    }
-
-    &.active {
-        background-color: var(--td-brand-color-light);
-        color: var(--td-brand-color);
-        font-weight: 500;
-    }
-
-    &:first-child {
-        border-radius: 6px 6px 0 0;
-    }
-
-    &:last-child {
-        border-radius: 0 0 6px 6px;
     }
 }
 
@@ -1883,7 +1767,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
 .submenu_empty {
     padding: 24px 14px;
     text-align: center;
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     color: var(--td-text-color-placeholder);
     user-select: none;
 }
@@ -1904,9 +1788,9 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
     height: 26px;
     flex-shrink: 0;
     cursor: pointer;
-    border-radius: 6px;
+    border-radius: var(--app-radius-sm);
     color: var(--td-text-color-secondary);
-    transition: background-color 0.2s ease;
+    transition: background-color var(--app-motion-base) ease;
     box-sizing: border-box;
 
     &:hover {
@@ -1928,11 +1812,11 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
     white-space: nowrap;
 
     .cmdk-tip-label {
-        font-size: 13px;
+        font-size: var(--app-text-md);
     }
 
     .cmdk-tip-keys {
-        font-size: 13px;
+        font-size: var(--app-text-md);
         opacity: 0.6;
         letter-spacing: 0.5px;
     }
@@ -1946,7 +1830,7 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
     border-radius: 9px;
     background: rgba(250, 173, 20, 0.2);
     color: var(--td-warning-color);
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     font-weight: 600;
     line-height: 18px;
     text-align: center;
@@ -2026,10 +1910,10 @@ html[theme-mode="dark"] .aside_box .menu_item_active .menu_icon img.icon {
     .t-popconfirm__content {
         background: var(--td-bg-color-container);
         border: 1px solid var(--td-component-stroke);
-        border-radius: 6px;
+        border-radius: var(--app-radius-sm);
         box-shadow: var(--td-shadow-3);
         padding: 12px 16px;
-        font-size: 14px;
+        font-size: var(--app-text-base);
         color: var(--td-text-color-primary);
         max-width: 200px;
     }

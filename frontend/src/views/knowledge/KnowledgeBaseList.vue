@@ -26,54 +26,15 @@
              field are kept so a future "filter by member" entry point
              (e.g. clicking an avatar) can deep-link without re-plumbing. -->
 
-
         <!-- 未初始化知识库提示 -->
         <div v-if="hasUninitializedKbs" class="warning-banner">
           <t-icon name="info-circle" size="16px" />
           <span>{{ $t('knowledgeList.uninitializedBanner') }}</span>
         </div>
 
-        <!-- 上传进度提示 -->
-        <div v-if="uploadSummaries.length" class="upload-progress-panel">
-          <div v-for="summary in uploadSummaries" :key="summary.kbId" class="upload-progress-item">
-            <div class="upload-progress-icon">
-              <t-icon :name="summary.completed === summary.total ? 'check-circle-filled' : 'upload'" size="20px" />
-            </div>
-            <div class="upload-progress-content">
-              <div class="progress-title">
-                {{
-                  summary.completed === summary.total
-                    ? $t('knowledgeList.uploadProgress.completedTitle', { name: summary.kbName })
-                    : $t('knowledgeList.uploadProgress.uploadingTitle', { name: summary.kbName })
-                }}
-              </div>
-              <div class="progress-subtitle">
-                {{
-                  summary.completed === summary.total
-                    ? $t('knowledgeList.uploadProgress.completedDetail', { total: summary.total })
-                    : $t('knowledgeList.uploadProgress.detail', { completed: summary.completed, total: summary.total })
-                }}
-              </div>
-              <div class="progress-subtitle secondary">
-                {{
-                  summary.completed === summary.total
-                    ? $t('knowledgeList.uploadProgress.refreshing')
-                    : $t('knowledgeList.uploadProgress.keepPageOpen')
-                }}
-              </div>
-              <div v-if="summary.hasError" class="progress-subtitle error">
-                {{ $t('knowledgeList.uploadProgress.errorTip') }}
-              </div>
-              <div class="progress-bar">
-                <div class="progress-bar-inner" :style="{ width: summary.progress + '%' }"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- 骨架屏占位 -->
         <div v-if="loading && kbs.length === 0" class="kb-card-wrap">
-          <div v-for="n in 6" :key="'skel-' + n" class="kb-card kb-card-skeleton">
+          <div v-for="n in 6" :key="'skel-' + n" class="kb-card kb-card-skeleton is-skeleton">
             <div class="card-header">
               <t-skeleton animation="gradient" :row-col="[{ width: '60%', height: '20px' }]" />
             </div>
@@ -631,72 +592,39 @@
         </div>
 
         <!-- 全部空状态：保留「新建知识库」CTA，因为是空间没有任何 KB 的真空场景 -->
-        <div v-if="spaceSelection === 'all' && filteredKnowledgeBases.length === 0 && !loading" class="empty-state">
-          <img class="empty-img" src="@/assets/img/upload.svg" alt="">
-          <span class="empty-txt">{{ $t('knowledgeList.empty.title') }}</span>
-          <span class="empty-desc">{{ $t('knowledgeList.empty.description') }}</span>
-          <t-button v-if="authStore.hasRole('contributor')" class="kb-create-btn empty-state-btn"
+        <EmptyState v-if="spaceSelection === 'all' && filteredKnowledgeBases.length === 0 && !loading" icon="folder-open" :title="$t('knowledgeList.empty.title')"
+          :description="$t('knowledgeList.empty.description')">
+          <t-button v-if="authStore.hasRole('contributor')" theme="primary" class="kb-create-btn"
             data-guide="kb-list-create" @click="handleCreateKnowledgeBase">
             <template #icon><t-icon name="folder-add" /></template>
             {{ $t('knowledgeList.create') }}
           </t-button>
-        </div>
+        </EmptyState>
 
         <!-- 收藏空状态：不放创建按钮——「没有收藏」 ≠ 「没有知识库」，
              正确引导是「去星标一下」，不是「再建一个」。 -->
-        <div v-if="spaceSelection === 'favorites' && filteredKnowledgeBases.length === 0 && !loading"
-          class="empty-state">
-          <t-icon name="star" size="48px" class="empty-icon" />
-          <span class="empty-txt">{{ $t('knowledgeList.empty.favoritesTitle') }}</span>
-          <span class="empty-desc">{{ $t('knowledgeList.empty.favoritesDescription') }}</span>
-        </div>
+        <EmptyState v-if="spaceSelection === 'favorites' && filteredKnowledgeBases.length === 0 && !loading" icon="star" :title="$t('knowledgeList.empty.favoritesTitle')"
+          :description="$t('knowledgeList.empty.favoritesDescription')" />
 
         <!-- 最近空状态：同理，引导是「去打开一个」。 -->
-        <div v-if="spaceSelection === 'recents' && filteredKnowledgeBases.length === 0 && !loading" class="empty-state">
-          <t-icon name="history" size="48px" class="empty-icon" />
-          <span class="empty-txt">{{ $t('knowledgeList.empty.recentsTitle') }}</span>
-          <span class="empty-desc">{{ $t('knowledgeList.empty.recentsDescription') }}</span>
-        </div>
+        <EmptyState v-if="spaceSelection === 'recents' && filteredKnowledgeBases.length === 0 && !loading" icon="history" :title="$t('knowledgeList.empty.recentsTitle')"
+          :description="$t('knowledgeList.empty.recentsDescription')" />
 
         <!-- 我的知识库空状态 -->
-        <div v-if="spaceSelection === 'mine' && kbs.length === 0 && !loading" class="empty-state">
-          <img class="empty-img" src="@/assets/img/upload.svg" alt="">
-          <span class="empty-txt">{{ $t('knowledgeList.empty.title') }}</span>
-          <span class="empty-desc">{{ $t('knowledgeList.empty.description') }}</span>
-          <t-button v-if="authStore.hasRole('contributor')" class="kb-create-btn empty-state-btn"
+        <EmptyState v-if="spaceSelection === 'mine' && kbs.length === 0 && !loading" icon="folder-open" :title="$t('knowledgeList.empty.title')"
+          :description="$t('knowledgeList.empty.description')">
+          <t-button v-if="authStore.hasRole('contributor')" theme="primary" class="kb-create-btn"
             data-guide="kb-list-create" @click="handleCreateKnowledgeBase">
             <template #icon><t-icon name="folder-add" /></template>
             {{ $t('knowledgeList.create') }}
           </t-button>
-        </div>
+        </EmptyState>
 
         <!-- 空间下知识库空状态 -->
-        <div v-if="spaceSelectionOrgId && !spaceKbsLoading && spaceKbsList.length === 0" class="empty-state">
-          <img class="empty-img" src="@/assets/img/upload.svg" alt="">
-          <span class="empty-txt">{{ $t('knowledgeList.empty.sharedTitle') }}</span>
-          <span class="empty-desc">{{ $t('knowledgeList.empty.sharedDescription') }}</span>
-        </div>
+        <EmptyState v-if="spaceSelectionOrgId && !spaceKbsLoading && spaceKbsList.length === 0" icon="folder-open" :title="$t('knowledgeList.empty.sharedTitle')"
+          :description="$t('knowledgeList.empty.sharedDescription')" />
       </div>
     </div>
-
-    <!-- 删除确认对话框 -->
-    <t-dialog v-model:visible="deleteVisible" dialogClassName="del-knowledge-dialog" :closeBtn="false" :cancelBtn="null"
-      :confirmBtn="null">
-      <div class="circle-wrap">
-        <div class="dialog-header">
-          <img class="circle-img" src="@/assets/img/circle.png" alt="">
-          <span class="circle-title">{{ $t('knowledgeList.delete.confirmTitle') }}</span>
-        </div>
-        <span class="del-circle-txt">
-          {{ $t('knowledgeList.delete.confirmMessage', { name: deletingKb?.name ?? '' }) }}
-        </span>
-        <div class="circle-btn">
-          <span class="circle-btn-txt" @click="deleteVisible = false">{{ $t('common.cancel') }}</span>
-          <span class="circle-btn-txt confirm" @click="confirmDelete">{{ $t('knowledgeList.delete.confirmButton')
-          }}</span>
-        </div>
-      </div>
-    </t-dialog>
 
     <!-- 知识库编辑器（创建/编辑统一组件） -->
     <KnowledgeBaseEditorModal :visible="uiStore.showKBEditorModal" :mode="uiStore.kbEditorMode"
@@ -783,6 +711,8 @@
 import { onMounted, onUnmounted, ref, computed, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { MessagePlugin, Icon as TIcon } from 'tdesign-vue-next'
+import EmptyState from '@/components/EmptyState.vue'
+import { useConfirmDelete } from '@/components/settings/useConfirmDelete'
 import { deleteKnowledgeBase, duplicateKnowledgeBase, togglePinKnowledgeBase } from '@/api/knowledge-base'
 import { useChatResourcesStore } from '@/stores/chatResources'
 import { formatStringDate } from '@/utils/index'
@@ -871,15 +801,11 @@ interface KB {
 
 const kbs = ref<KB[]>([])
 const loading = ref(false)
-const deleteVisible = ref(false)
-const deletingKb = ref<KB | null>(null)
+const confirmDelete = useConfirmDelete()
 const currentMoreIndex = ref<number>(-1)
 const highlightedKbId = ref<string | null>(null)
 const highlightedCardRef = ref<HTMLElement | null>(null)
-const uploadTasks = ref<UploadTaskState[]>([])
-const uploadCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let uploadRefreshTimer: ReturnType<typeof setTimeout> | null = null
-const UPLOAD_CLEANUP_DELAY = 10000
 
 // Share dialog state
 const shareDialogVisible = ref(false)
@@ -1196,24 +1122,6 @@ const showKbListContextualGuide = computed(
   () => showKbListEmpty.value && !uiStore.showKBEditorModal,
 )
 
-interface UploadTaskState {
-  uploadId: string
-  kbId: string
-  fileName?: string
-  progress: number
-  status: 'uploading' | 'success' | 'error'
-  error?: string
-}
-
-interface UploadSummary {
-  kbId: string
-  kbName: string
-  total: number
-  completed: number
-  progress: number
-  hasError: boolean
-}
-
 const applyKbListData = (data: any[]) => {
   kbs.value = data.map((kb: any) => ({
     ...kb,
@@ -1288,20 +1196,12 @@ onMounted(() => {
     }
   })
 
-  window.addEventListener('knowledgeFileUploadStart', handleUploadStartEvent as EventListener)
-  window.addEventListener('knowledgeFileUploadProgress', handleUploadProgressEvent as EventListener)
-  window.addEventListener('knowledgeFileUploadComplete', handleUploadCompleteEvent as EventListener)
   window.addEventListener('knowledgeFileUploaded', handleUploadFinishedEvent as EventListener)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('knowledgeFileUploadStart', handleUploadStartEvent as EventListener)
-  window.removeEventListener('knowledgeFileUploadProgress', handleUploadProgressEvent as EventListener)
-  window.removeEventListener('knowledgeFileUploadComplete', handleUploadCompleteEvent as EventListener)
   window.removeEventListener('knowledgeFileUploaded', handleUploadFinishedEvent as EventListener)
 
-  uploadCleanupTimers.forEach(timer => clearTimeout(timer))
-  uploadCleanupTimers.clear()
   if (uploadRefreshTimer) {
     clearTimeout(uploadRefreshTimer)
     uploadRefreshTimer = null
@@ -1398,10 +1298,7 @@ const handleSettingsById = (id: string) => {
 // 通过 ID 处理删除（用于全部 Tab 下的知识库）
 const handleDeleteById = (id: string) => {
   const kb = kbs.value.find(k => k.id === id)
-  if (kb) {
-    deletingKb.value = kb
-    deleteVisible.value = true
-  }
+  if (kb) requestDelete(kb)
 }
 
 const handleTogglePin = async (kb: KB) => {
@@ -1528,24 +1425,26 @@ const goToSharedKbFromPanel = () => {
 const handleDelete = (kb: KB) => {
   // 手动关闭弹窗
   kb.showMore = false
-  deletingKb.value = kb
-  deleteVisible.value = true
+  requestDelete(kb)
 }
 
-const confirmDelete = () => {
-  if (!deletingKb.value) return
-
-  deleteKnowledgeBase(deletingKb.value.id).then((res: any) => {
-    if (res.success) {
-      MessagePlugin.success(t('knowledgeList.messages.deleted'))
-      deleteVisible.value = false
-      deletingKb.value = null
-      fetchList(true)
-    } else {
-      MessagePlugin.error(res.message || t('knowledgeList.messages.deleteFailed'))
-    }
-  }).catch((e: any) => {
-    MessagePlugin.error(e?.message || t('knowledgeList.messages.deleteFailed'))
+const requestDelete = (kb: KB) => {
+  confirmDelete({
+    title: t('knowledgeList.delete.confirmTitle'),
+    body: t('knowledgeList.delete.confirmMessage', { name: kb.name }),
+    onConfirm: async () => {
+      try {
+        const res: any = await deleteKnowledgeBase(kb.id)
+        if (res.success) {
+          MessagePlugin.success(t('knowledgeList.messages.deleted'))
+          fetchList(true)
+        } else {
+          MessagePlugin.error(res.message || t('knowledgeList.messages.deleteFailed'))
+        }
+      } catch (e: any) {
+        MessagePlugin.error(e?.message || t('knowledgeList.messages.deleteFailed'))
+      }
+    },
   })
 }
 
@@ -1566,101 +1465,6 @@ const isWikiKb = (kb: unknown) =>
 const hasUninitializedKbs = computed(() => {
   return kbs.value.some(kb => !isInitialized(kb))
 })
-
-const getKbDisplayName = (kbId: string) => {
-  const target = kbs.value.find(kb => kb.id === kbId)
-  if (target?.name) return target.name
-  return t('knowledgeList.uploadProgress.unknownKb', { id: kbId }) as string
-}
-
-const uploadSummaries = computed<UploadSummary[]>(() => {
-  if (!uploadTasks.value.length) return []
-  const grouped: Record<string, UploadTaskState[]> = {}
-  uploadTasks.value.forEach(task => {
-    const kbKey = String(task.kbId)
-    if (!grouped[kbKey]) grouped[kbKey] = []
-    grouped[kbKey].push(task)
-  })
-  return Object.entries(grouped).map(([kbId, tasks]) => {
-    const total = tasks.length
-    const completed = tasks.filter(task => task.status !== 'uploading').length
-    const progressSum = tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0)
-    const avgProgress = total === 0 ? 0 : Math.min(100, Math.max(0, Math.round(progressSum / total)))
-    const hasError = tasks.some(task => task.status === 'error')
-    return {
-      kbId,
-      kbName: getKbDisplayName(kbId),
-      total,
-      completed,
-      progress: avgProgress,
-      hasError
-    }
-  }).sort((a, b) => a.kbName.localeCompare(b.kbName))
-})
-
-const clampProgress = (value: number) => Math.min(100, Math.max(0, Math.round(value)))
-
-const addUploadTask = (task: UploadTaskState) => {
-  uploadTasks.value = [
-    ...uploadTasks.value.filter(item => item.uploadId !== task.uploadId),
-    task,
-  ]
-}
-
-const patchUploadTask = (uploadId: string, patch: Partial<UploadTaskState>) => {
-  const index = uploadTasks.value.findIndex(task => task.uploadId === uploadId)
-  if (index === -1) return
-  const nextTasks = [...uploadTasks.value]
-  nextTasks[index] = { ...nextTasks[index], ...patch }
-  uploadTasks.value = nextTasks
-}
-
-const removeUploadTask = (uploadId: string) => {
-  uploadTasks.value = uploadTasks.value.filter(task => task.uploadId !== uploadId)
-  const timer = uploadCleanupTimers.get(uploadId)
-  if (timer) {
-    clearTimeout(timer)
-    uploadCleanupTimers.delete(uploadId)
-  }
-}
-
-const scheduleUploadTaskCleanup = (uploadId: string) => {
-  const existing = uploadCleanupTimers.get(uploadId)
-  if (existing) {
-    clearTimeout(existing)
-  }
-  const timer = setTimeout(() => {
-    removeUploadTask(uploadId)
-  }, UPLOAD_CLEANUP_DELAY)
-  uploadCleanupTimers.set(uploadId, timer)
-}
-
-type UploadEventDetail = {
-  uploadId: string
-  kbId?: string | number
-  fileName?: string
-  progress?: number
-  status?: UploadTaskState['status']
-  error?: string
-}
-
-const ensureUploadTaskEntry = (detail?: UploadEventDetail) => {
-  if (!detail?.uploadId) return null
-  const existing = uploadTasks.value.find(task => task.uploadId === detail.uploadId)
-  if (existing) return existing
-  if (!detail.kbId) return null
-  const initialProgress = typeof detail.progress === 'number' ? clampProgress(detail.progress) : 0
-  const newTask: UploadTaskState = {
-    uploadId: detail.uploadId,
-    kbId: String(detail.kbId),
-    fileName: detail.fileName,
-    progress: initialProgress,
-    status: detail.status || 'uploading',
-    error: detail.error
-  }
-  addUploadTask(newTask)
-  return newTask
-}
 
 const handleCardClick = (kb: KB) => {
   // Track this open in the per-user "recent" list before navigating —
@@ -1737,45 +1541,12 @@ const triggerHighlightFlash = (kbId: string) => {
   })
 }
 
-const handleUploadStartEvent = (event: Event) => {
-  const detail = (event as CustomEvent<UploadEventDetail>).detail
-  if (!detail?.uploadId || !detail?.kbId) return
-  addUploadTask({
-    uploadId: detail.uploadId,
-    kbId: String(detail.kbId),
-    fileName: detail.fileName,
-    progress: typeof detail.progress === 'number' ? clampProgress(detail.progress) : 0,
-    status: 'uploading'
-  })
-}
-
-const handleUploadProgressEvent = (event: Event) => {
-  const detail = (event as CustomEvent<UploadEventDetail>).detail
-  if (!detail?.uploadId || typeof detail.progress !== 'number') return
-  if (!ensureUploadTaskEntry(detail)) return
-  patchUploadTask(detail.uploadId, {
-    progress: clampProgress(detail.progress)
-  })
-}
-
-const handleUploadCompleteEvent = (event: Event) => {
-  const detail = (event as CustomEvent<UploadEventDetail>).detail
-  if (!detail?.uploadId) return
-  const progress = typeof detail.progress === 'number'
-    ? clampProgress(detail.progress)
-    : 100
-  if (!ensureUploadTaskEntry({ ...detail, progress })) return
-  patchUploadTask(detail.uploadId, {
-    status: detail.status || 'success',
-    progress,
-    error: detail.error
-  })
-  scheduleUploadTaskCleanup(detail.uploadId)
-}
-
 const handleUploadFinishedEvent = (event: Event) => {
-  const detail = (event as CustomEvent<{ kbId?: string | number }>).detail
+  const detail = (event as CustomEvent<{ kbId?: string | number; settled?: boolean }>).detail
   if (!detail?.kbId) return
+  // Counts only need the batch's final refresh; a forced reload every couple
+  // of seconds mid-batch would also close any open card menu.
+  if (detail.settled === false) return
   if (uploadRefreshTimer) {
     clearTimeout(uploadRefreshTimer)
   }
@@ -1787,6 +1558,8 @@ const handleUploadFinishedEvent = (event: Event) => {
 </script>
 
 <style scoped lang="less">
+@import (reference) '@/components/css/resource-card.less';
+
 .kb-list-container {
   margin: 0;
   height: 100%;
@@ -1828,21 +1601,11 @@ const handleUploadFinishedEvent = (event: Event) => {
     margin: 0;
     color: var(--td-text-color-primary);
     font-family: var(--app-font-family);
-    font-size: 24px;
+    font-size: var(--app-text-4xl);
     font-weight: 600;
     line-height: 32px;
   }
 
-}
-
-.kb-create-btn {
-  background: linear-gradient(135deg, var(--td-brand-color) 0%, #00a67e 100%);
-  border: none;
-  color: var(--td-text-color-anti);
-
-  &:hover {
-    background: linear-gradient(135deg, var(--td-brand-color) 0%, var(--td-brand-color-active) 100%);
-  }
 }
 
 .kb-list-main {
@@ -1870,9 +1633,9 @@ const handleUploadFinishedEvent = (event: Event) => {
   display: inline-flex;
   align-items: center;
   padding: 2px 6px;
-  background: rgba(7, 192, 95, 0.1);
-  border-radius: 4px;
-  font-size: 12px;
+  background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
+  border-radius: var(--app-radius-xs);
+  font-size: var(--app-text-sm);
   color: var(--td-brand-color);
   margin-left: 6px;
 }
@@ -1881,30 +1644,30 @@ const handleUploadFinishedEvent = (event: Event) => {
   margin: 0;
   color: var(--td-text-color-placeholder);
   font-family: var(--app-font-family);
-  font-size: 14px;
+  font-size: var(--app-text-base);
   font-weight: 400;
   line-height: 20px;
 }
 
 .header-action-btn {
-  padding: 0 !important;
-  min-width: 28px !important;
-  width: 28px !important;
-  height: 28px !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  background: var(--td-bg-color-secondarycontainer) !important;
-  border: 1px solid var(--td-component-stroke) !important;
-  border-radius: 6px !important;
+  padding: 0;
+  min-width: 28px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--td-bg-color-secondarycontainer);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--app-radius-sm);
   color: var(--td-text-color-secondary);
   cursor: pointer;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--td-bg-color-container) 72%, transparent);
-  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  transition: background var(--app-motion-base), border-color var(--app-motion-base), color var(--app-motion-base);
 
   &:hover {
-    background: var(--td-bg-color-secondarycontainer) !important;
-    border-color: var(--td-component-stroke) !important;
+    background: var(--td-bg-color-secondarycontainer);
+    border-color: var(--td-component-stroke);
     color: var(--td-text-color-primary);
   }
 
@@ -1927,11 +1690,11 @@ const handleUploadFinishedEvent = (event: Event) => {
     cursor: pointer;
     color: var(--td-text-color-secondary);
     font-family: var(--app-font-family);
-    font-size: 14px;
+    font-size: var(--app-text-base);
     font-weight: 400;
     user-select: none;
     position: relative;
-    transition: color 0.2s ease;
+    transition: color var(--app-motion-base) ease;
 
     &:hover {
       color: var(--td-text-color-primary);
@@ -1955,7 +1718,6 @@ const handleUploadFinishedEvent = (event: Event) => {
   }
 }
 
-
 // 共享知识库卡片样式
 // 共享标识（文档类型默认绿色，位置贴右上角）
 .shared-badge {
@@ -1966,9 +1728,9 @@ const handleUploadFinishedEvent = (event: Event) => {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  background: rgba(7, 192, 95, 0.1);
-  border-radius: 4px;
-  font-size: 12px;
+  background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
+  border-radius: var(--app-radius-xs);
+  font-size: var(--app-text-sm);
   color: var(--td-brand-color);
   font-weight: 500;
 
@@ -1983,13 +1745,13 @@ const handleUploadFinishedEvent = (event: Event) => {
   align-items: center;
   gap: 5px;
   padding: 3px 8px;
-  background: rgba(7, 192, 95, 0.06);
-  border-radius: 6px;
-  font-size: 12px;
+  background: color-mix(in srgb, var(--td-brand-color) 6%, transparent);
+  border-radius: var(--app-radius-sm);
+  font-size: var(--app-text-sm);
   line-height: 1.4;
   color: var(--td-text-color-secondary);
   max-width: 140px;
-  transition: background-color 0.15s ease;
+  transition: background-color var(--app-motion-fast) ease;
 
   span {
     overflow: hidden;
@@ -2017,13 +1779,13 @@ const handleUploadFinishedEvent = (event: Event) => {
   align-items: center;
   gap: 5px;
   padding: 3px 8px;
-  background: rgba(7, 192, 95, 0.06);
-  border-radius: 6px;
-  font-size: 11px;
+  background: color-mix(in srgb, var(--td-brand-color) 6%, transparent);
+  border-radius: var(--app-radius-sm);
+  font-size: var(--app-text-xs);
   line-height: 1.4;
   color: var(--td-text-color-secondary);
   font-weight: 500;
-  transition: background-color 0.15s ease;
+  transition: background-color var(--app-motion-fast) ease;
 
   span {
     font-weight: 500;
@@ -2040,35 +1802,35 @@ const handleUploadFinishedEvent = (event: Event) => {
 
   // 共享知识库根据类型显示不同样式
   &.kb-type-document {
-    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, rgba(7, 192, 95, 0.04) 100%) !important;
+    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 4%, transparent) 100%) !important;
 
     &:hover {
       border-color: var(--td-brand-color) !important;
-      box-shadow: 0 4px 12px rgba(7, 192, 95, 0.12) !important;
-      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, rgba(7, 192, 95, 0.08) 100%) !important;
+      box-shadow: 0 4px 12px color-mix(in srgb, var(--td-brand-color) 12%, transparent) !important;
+      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 100%) !important;
     }
 
     &::after {
-      background: linear-gradient(135deg, rgba(7, 192, 95, 0.08) 0%, transparent 100%) !important;
+      background: linear-gradient(135deg, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 0%, transparent 100%) !important;
     }
   }
 
   &.kb-type-faq {
-    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, rgba(0, 82, 217, 0.04) 100%) !important;
+    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 4%, transparent) 100%) !important;
 
     &:hover {
       border-color: var(--td-brand-color) !important;
-      box-shadow: 0 4px 12px rgba(0, 82, 217, 0.12) !important;
-      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, rgba(0, 82, 217, 0.08) 100%) !important;
+      box-shadow: 0 4px 12px color-mix(in srgb, var(--td-brand-color) 12%, transparent) !important;
+      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 100%) !important;
     }
 
     &::after {
-      background: linear-gradient(135deg, rgba(0, 82, 217, 0.08) 0%, transparent 100%) !important;
+      background: linear-gradient(135deg, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 0%, transparent 100%) !important;
     }
 
     // FAQ 类型共享标识使用蓝色
     .shared-badge {
-      background: rgba(0, 82, 217, 0.1);
+      background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
       color: var(--td-brand-color);
 
       .t-icon {
@@ -2081,17 +1843,16 @@ const handleUploadFinishedEvent = (event: Event) => {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-size: 12px;
-    border-color: rgba(0, 82, 217, 0.15);
+    font-size: var(--app-text-sm);
+    border-color: color-mix(in srgb, var(--td-brand-color) 15%, transparent);
     color: var(--td-brand-color);
-    background: rgba(0, 82, 217, 0.04);
+    background: color-mix(in srgb, var(--td-brand-color) 4%, transparent);
     font-weight: 500;
     padding: 2px 8px;
-    border-radius: 4px;
+    border-radius: var(--app-radius-xs);
     max-width: fit-content;
   }
 }
-
 
 .warning-banner {
   display: flex;
@@ -2101,84 +1862,15 @@ const handleUploadFinishedEvent = (event: Event) => {
   margin-bottom: 20px;
   background: var(--td-warning-color-light);
   border: 1px solid var(--td-warning-color-focus);
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
   color: var(--td-warning-color);
   font-family: var(--app-font-family);
-  font-size: 14px;
+  font-size: var(--app-text-base);
 
   .t-icon {
     color: var(--td-warning-color);
     flex-shrink: 0;
   }
-}
-
-.upload-progress-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-bottom: 20px;
-}
-
-.upload-progress-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
-  background: var(--td-bg-color-container);
-}
-
-.upload-progress-icon {
-  color: var(--td-brand-color);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.upload-progress-content {
-  flex: 1;
-}
-
-.progress-title {
-  color: var(--td-text-color-primary);
-  font-family: var(--app-font-family);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 22px;
-  margin-bottom: 2px;
-}
-
-.progress-subtitle {
-  color: var(--td-text-color-secondary);
-  font-family: var(--app-font-family);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.progress-subtitle.secondary {
-  color: var(--td-text-color-placeholder);
-  margin-top: 2px;
-}
-
-.progress-subtitle.error {
-  color: var(--td-error-color);
-  margin-top: 4px;
-}
-
-.progress-bar {
-  width: 100%;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--td-bg-color-secondarycontainer);
-  margin-top: 10px;
-  overflow: hidden;
-}
-
-.progress-bar-inner {
-  height: 100%;
-  background: linear-gradient(90deg, var(--td-brand-color-active) 0%, var(--td-brand-color) 100%);
-  transition: width 0.2s ease;
 }
 
 @keyframes contentFadeIn {
@@ -2194,10 +1886,7 @@ const handleUploadFinishedEvent = (event: Event) => {
 }
 
 .kb-card-wrap {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: 1fr;
-  animation: contentFadeIn 0.32s ease-out;
+  .resource-card-grid();
 }
 
 .kb-section-header {
@@ -2227,7 +1916,7 @@ const handleUploadFinishedEvent = (event: Event) => {
   padding: 6px 4px 6px 0;
   color: var(--td-text-color-secondary);
   font-family: var(--app-font-family);
-  font-size: 13px;
+  font-size: var(--app-text-md);
   font-weight: 600;
   line-height: 20px;
   cursor: pointer;
@@ -2239,7 +1928,7 @@ const handleUploadFinishedEvent = (event: Event) => {
   }
 
   &:focus-visible {
-    box-shadow: 0 0 0 2px var(--td-brand-color-focus, rgba(0, 82, 217, 0.2));
+    box-shadow: 0 0 0 2px var(--td-brand-color-focus);
   }
 
   // Icons inherit the section header's text color so the whole row
@@ -2254,7 +1943,7 @@ const handleUploadFinishedEvent = (event: Event) => {
   .kb-section-toggle {
     margin-left: 4px;
     opacity: 0.7;
-    transition: opacity 0.15s ease;
+    transition: opacity var(--app-motion-fast) ease;
   }
 
   // 共享给我的两个子分组共用一个主图标 usergroup-add，再用子图标
@@ -2269,10 +1958,10 @@ const handleUploadFinishedEvent = (event: Event) => {
   .kb-section-count {
     margin-left: 2px;
     padding: 0 6px;
-    border-radius: 8px;
+    border-radius: var(--app-radius-md);
     background: var(--td-bg-color-secondarycontainer);
     color: var(--td-text-color-secondary);
-    font-size: 11px;
+    font-size: var(--app-text-xs);
     line-height: 16px;
     font-weight: 500;
   }
@@ -2283,41 +1972,7 @@ const handleUploadFinishedEvent = (event: Event) => {
 }
 
 .kb-card {
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
-  overflow: hidden;
-  box-sizing: border-box;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  background: var(--td-bg-color-container);
-  position: relative;
-  cursor: pointer;
-  transition: all 0.25s ease;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  height: 136px;
-  min-height: 136px;
-
-  &.kb-card-skeleton {
-    cursor: default;
-
-    .card-header {
-      margin-bottom: 12px;
-    }
-
-    .card-content {
-      flex: 1;
-    }
-
-    .card-bottom {
-      margin-top: auto;
-    }
-  }
-
-  &:hover {
-    border-color: var(--td-brand-color);
-    box-shadow: 0 4px 12px rgba(7, 192, 95, 0.12);
-  }
+  .resource-card();
 
   &.uninitialized {
     opacity: 0.9;
@@ -2325,11 +1980,11 @@ const handleUploadFinishedEvent = (event: Event) => {
 
   // 文档类型样式
   &.kb-type-document {
-    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, rgba(7, 192, 95, 0.04) 100%);
+    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 4%, transparent) 100%);
 
     &:hover {
       border-color: var(--td-brand-color);
-      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, rgba(7, 192, 95, 0.08) 100%);
+      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 100%);
     }
 
     // 右上角装饰
@@ -2340,7 +1995,7 @@ const handleUploadFinishedEvent = (event: Event) => {
       right: 0;
       width: 60px;
       height: 60px;
-      background: linear-gradient(135deg, rgba(7, 192, 95, 0.08) 0%, transparent 100%);
+      background: linear-gradient(135deg, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 0%, transparent 100%);
       border-radius: 0 12px 0 100%;
       pointer-events: none;
       z-index: 0;
@@ -2349,12 +2004,12 @@ const handleUploadFinishedEvent = (event: Event) => {
 
   // 问答类型样式
   &.kb-type-faq {
-    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, rgba(0, 82, 217, 0.04) 100%);
+    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 4%, transparent) 100%);
 
     &:hover {
       border-color: var(--td-brand-color);
-      box-shadow: 0 4px 12px rgba(0, 82, 217, 0.12);
-      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, rgba(0, 82, 217, 0.08) 100%);
+      box-shadow: 0 4px 12px color-mix(in srgb, var(--td-brand-color) 12%, transparent);
+      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 100%);
     }
 
     // 右上角装饰
@@ -2365,7 +2020,7 @@ const handleUploadFinishedEvent = (event: Event) => {
       right: 0;
       width: 60px;
       height: 60px;
-      background: linear-gradient(135deg, rgba(0, 82, 217, 0.08) 0%, transparent 100%);
+      background: linear-gradient(135deg, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 0%, transparent 100%);
       border-radius: 0 12px 0 100%;
       pointer-events: none;
       z-index: 0;
@@ -2386,20 +2041,20 @@ const handleUploadFinishedEvent = (event: Event) => {
     justify-content: center;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--app-radius-sm);
     color: var(--td-text-color-secondary);
     cursor: pointer;
     opacity: 0;
-    transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+    transition: opacity var(--app-motion-fast) ease, background var(--app-motion-fast) ease, color var(--app-motion-fast) ease;
 
     &:hover {
       background: var(--td-bg-color-secondarycontainer);
-      color: var(--td-warning-color, #e37318);
+      color: var(--td-warning-color);
     }
 
     &.is-favorited {
       opacity: 1;
-      color: var(--td-warning-color, #e37318);
+      color: var(--td-warning-color);
     }
   }
 
@@ -2408,183 +2063,9 @@ const handleUploadFinishedEvent = (event: Event) => {
     opacity: 1;
   }
 
-  // 确保内容在装饰之上
-  .card-header,
-  .card-content,
-  .card-bottom {
-    position: relative;
-    z-index: 1;
-  }
-
-  .card-header {
-    margin-bottom: 6px;
-  }
-
-  .card-title {
-    font-size: 15px;
-    line-height: 22px;
-  }
-
-  .card-content {
-    margin-bottom: 6px;
-  }
-
-  .card-description {
-    font-size: 12px;
-    line-height: 17px;
-  }
-
-  .card-bottom {
-    padding-top: 6px;
-  }
-
-  .more-wrap {
-    width: 28px;
-    height: 28px;
-
-    .more-icon {
-      width: 16px;
-      height: 16px;
-    }
-  }
-
-  .card-more-btn {
-    width: 28px;
-    height: 28px;
-  }
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 6px;
-
-  .card-title {
-    flex: 1;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--td-text-color-primary);
-    letter-spacing: 0.01em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .card-title-text {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .card-more-btn {
-    flex-shrink: 0;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    color: var(--td-text-color-placeholder);
-    cursor: pointer;
-    transition: all 0.2s;
-
-    &:hover {
-      background: var(--td-bg-color-container-hover);
-      color: var(--td-text-color-secondary);
-    }
-  }
-
-  .permission-tag {
-    flex-shrink: 0;
-  }
-}
-
-.card-title {
-  color: var(--td-text-color-primary);
-  font-family: var(--app-font-family);
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 22px;
-  letter-spacing: 0.01em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
-}
-
-.more-wrap {
-  display: flex;
-  width: 24px;
-  height: 24px;
-  justify-content: center;
-  align-items: center;
-  border-radius: 6px;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: all 0.2s ease;
-  opacity: 0;
-
-  .kb-card:hover & {
-    opacity: 0.6;
-  }
-
-  &:hover {
-    background: var(--td-bg-color-container-hover);
-    opacity: 1 !important;
-  }
-
-  &.active-more {
-    background: var(--td-bg-color-container-hover);
-    opacity: 1 !important;
-  }
-
-  .more-icon {
-    width: 14px;
-    height: 14px;
-  }
-}
-
-.card-content {
-  flex: 1;
-  min-height: 0;
-  margin-bottom: 8px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
 }
 
 /* 三个列表卡片统一：描述字体 */
-.card-description {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  color: var(--td-text-color-secondary);
-  font-family: var(--app-font-family);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 18px;
-}
-
-.card-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: auto;
-  padding-top: 8px;
-  border-top: .5px solid var(--td-component-stroke);
-}
-
 .bottom-left {
   display: flex;
   align-items: center;
@@ -2600,120 +2081,107 @@ const handleUploadFinishedEvent = (event: Event) => {
   flex-shrink: 0;
 
   .card-time {
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     color: var(--td-text-color-placeholder);
   }
 }
 
-.feature-badges {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .feature-badge {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  cursor: default;
-  transition: background 0.2s ease;
+  .resource-feature-badge();
 
   &.type-document {
-    background: rgba(7, 192, 95, 0.08);
+    background: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
     color: var(--td-brand-color-active);
     width: auto;
     padding: 0 6px;
     gap: 3px;
 
     &:hover {
-      background: rgba(7, 192, 95, 0.12);
+      background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
     }
 
     .badge-count {
-      font-size: 11px;
+      font-size: var(--app-text-xs);
       font-weight: 500;
     }
 
     .processing-icon {
-      animation: spin 1s linear infinite;
+      animation: wk-spin 1s linear infinite;
     }
   }
 
   &.type-faq {
-    background: rgba(0, 82, 217, 0.08);
+    background: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
     color: var(--td-brand-color);
     width: auto;
     padding: 0 6px;
     gap: 3px;
 
     &:hover {
-      background: rgba(0, 82, 217, 0.12);
+      background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
     }
 
     .badge-count {
-      font-size: 11px;
+      font-size: var(--app-text-xs);
       font-weight: 500;
     }
 
     .processing-icon {
-      animation: spin 1s linear infinite;
+      animation: wk-spin 1s linear infinite;
     }
   }
 
   &.kg {
-    background: rgba(124, 77, 255, 0.08);
+    background: color-mix(in srgb, var(--app-accent-purple) 8%, transparent);
     color: var(--td-brand-color);
 
     &:hover {
-      background: rgba(124, 77, 255, 0.12);
+      background: color-mix(in srgb, var(--app-accent-purple) 12%, transparent);
     }
   }
 
   &.multimodal {
-    background: rgba(255, 152, 0, 0.08);
+    background: color-mix(in srgb, var(--td-warning-color) 8%, transparent);
     color: var(--td-warning-color);
 
     &:hover {
-      background: rgba(255, 152, 0, 0.12);
+      background: color-mix(in srgb, var(--td-warning-color) 12%, transparent);
     }
   }
 
   &.question {
-    background: rgba(0, 150, 136, 0.08);
+    background: color-mix(in srgb, var(--td-success-color) 8%, transparent);
     color: var(--td-success-color);
 
     &:hover {
-      background: rgba(0, 150, 136, 0.12);
+      background: color-mix(in srgb, var(--td-success-color) 12%, transparent);
     }
   }
 
   &.shared {
-    background: rgba(0, 82, 217, 0.08);
+    background: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
     color: var(--td-brand-color);
 
     &:hover {
-      background: rgba(0, 82, 217, 0.12);
+      background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
     }
   }
 
   &.role-admin {
-    background: rgba(7, 192, 95, 0.1);
+    background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
     color: var(--td-brand-color-active);
 
     &:hover {
-      background: rgba(7, 192, 95, 0.15);
+      background: color-mix(in srgb, var(--td-brand-color) 15%, transparent);
     }
   }
 
   &.role-editor {
-    background: rgba(255, 152, 0, 0.1);
+    background: color-mix(in srgb, var(--td-warning-color) 10%, transparent);
     color: var(--td-warning-color);
 
     &:hover {
-      background: rgba(255, 152, 0, 0.15);
+      background: color-mix(in srgb, var(--td-warning-color) 15%, transparent);
     }
   }
 
@@ -2722,37 +2190,27 @@ const handleUploadFinishedEvent = (event: Event) => {
     color: var(--td-text-color-secondary);
 
     &:hover {
-      background: rgba(0, 0, 0, 0.08);
+      background: var(--td-bg-color-component);
     }
-  }
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
   }
 }
 
 @keyframes highlightFlash {
   0% {
     border-color: var(--td-brand-color);
-    box-shadow: 0 0 0 0 rgba(7, 192, 95, 0.4);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--td-brand-color) 40%, transparent);
     transform: scale(1);
   }
 
   50% {
     border-color: var(--td-brand-color);
-    box-shadow: 0 0 0 8px rgba(7, 192, 95, 0);
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--td-brand-color) 0%, transparent);
     transform: scale(1.02);
   }
 
   100% {
     border-color: var(--td-brand-color);
-    box-shadow: 0 0 0 0 rgba(7, 192, 95, 0);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--td-brand-color) 0%, transparent);
     transform: scale(1);
   }
 }
@@ -2760,52 +2218,7 @@ const handleUploadFinishedEvent = (event: Event) => {
 .kb-card.highlight-flash {
   animation: highlightFlash 0.6s ease-in-out 3;
   border-color: var(--td-brand-color) !important;
-  box-shadow: 0 0 12px rgba(7, 192, 95, 0.3) !important;
-}
-
-.card-time {
-  color: var(--td-text-color-placeholder);
-  font-family: var(--app-font-family);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-
-.empty-state {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  padding: 60px 20px;
-
-  .empty-img {
-    width: 162px;
-    height: 162px;
-    margin-bottom: 20px;
-  }
-
-  .empty-txt {
-    color: var(--td-text-color-placeholder);
-    font-family: var(--app-font-family);
-    font-size: 16px;
-    font-weight: 600;
-    line-height: 26px;
-    margin-bottom: 8px;
-  }
-
-  .empty-desc {
-    color: var(--td-text-color-disabled);
-    font-family: var(--app-font-family);
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 22px;
-    margin-bottom: 0;
-  }
-
-  .empty-state-btn {
-    margin-top: 20px;
-  }
+  box-shadow: 0 0 12px color-mix(in srgb, var(--td-brand-color) 30%, transparent) !important;
 }
 
 // 响应式布局
@@ -2840,88 +2253,10 @@ const handleUploadFinishedEvent = (event: Event) => {
 }
 
 // 删除确认对话框样式
-:deep(.del-knowledge-dialog) {
-  padding: 0px !important;
-  border-radius: 6px !important;
-
-  .t-dialog__header {
-    display: none;
-  }
-
-  .t-dialog__body {
-    padding: 16px;
-  }
-
-  .t-dialog__footer {
-    padding: 0;
-  }
-}
-
 :deep(.t-dialog__position.t-dialog--top) {
   padding-top: 40vh !important;
 }
 
-.circle-wrap {
-  .dialog-header {
-    display: flex;
-    align-items: center;
-    margin-bottom: 8px;
-  }
-
-  .circle-img {
-    width: 20px;
-    height: 20px;
-    margin-right: 8px;
-  }
-
-  .circle-title {
-    color: var(--td-text-color-primary);
-    font-family: var(--app-font-family);
-    font-size: 16px;
-    font-weight: 600;
-    line-height: 24px;
-  }
-
-  .del-circle-txt {
-    color: var(--td-text-color-placeholder);
-    font-family: var(--app-font-family);
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 22px;
-    display: inline-block;
-    margin-left: 29px;
-    margin-bottom: 21px;
-  }
-
-  .circle-btn {
-    height: 22px;
-    width: 100%;
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  .circle-btn-txt {
-    color: var(--td-text-color-primary);
-    font-family: var(--app-font-family);
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 22px;
-    cursor: pointer;
-
-    &:hover {
-      opacity: 0.8;
-    }
-  }
-
-  .confirm {
-    color: var(--td-error-color);
-    margin-left: 40px;
-
-    &:hover {
-      opacity: 0.8;
-    }
-  }
-}
 </style>
 
 <style lang="less">
@@ -2934,20 +2269,20 @@ const handleUploadFinishedEvent = (event: Event) => {
   gap: 4px;
   padding: 4px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
   background: transparent;
   color: var(--td-brand-color);
-  font-size: 13px;
+  font-size: var(--app-text-md);
   font-family: var(--app-font-family);
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition: background var(--app-motion-base) ease, color var(--app-motion-base) ease;
 
   .t-icon {
     flex-shrink: 0;
   }
 
   &:hover {
-    background: rgba(7, 192, 95, 0.08);
+    background: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
     color: var(--td-brand-color);
   }
 }
@@ -2987,7 +2322,7 @@ const handleUploadFinishedEvent = (event: Event) => {
 
 .shared-detail-drawer-title {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--app-text-2xl);
   font-weight: 600;
   color: var(--td-text-color-primary);
 }
@@ -2996,14 +2331,14 @@ const handleUploadFinishedEvent = (event: Event) => {
   width: 32px;
   height: 32px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
   background: var(--td-bg-color-secondarycontainer);
   color: var(--td-text-color-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition: background var(--app-motion-base) ease, color var(--app-motion-base) ease;
 
   &:hover {
     background: var(--td-bg-color-secondarycontainer);
@@ -3027,13 +2362,13 @@ const handleUploadFinishedEvent = (event: Event) => {
 }
 
 .shared-detail-drawer-body .shared-detail-label {
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   color: var(--td-text-color-secondary);
   line-height: 1.4;
 }
 
 .shared-detail-drawer-body .shared-detail-value {
-  font-size: 14px;
+  font-size: var(--app-text-base);
   color: var(--td-text-color-primary);
   line-height: 1.5;
   word-break: break-word;
@@ -3095,7 +2430,7 @@ const handleUploadFinishedEvent = (event: Event) => {
 .create-kb-dialog {
   .t-form-item__label {
     font-family: var(--app-font-family);
-    font-size: 14px;
+    font-size: var(--app-text-base);
     font-weight: 500;
     color: var(--td-text-color-primary);
   }

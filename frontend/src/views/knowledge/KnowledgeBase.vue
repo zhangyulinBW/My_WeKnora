@@ -28,7 +28,6 @@ import {
   batchQueryKnowledge,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
-  uploadKnowledgeFile,
   createKnowledgeFromURL,
   reparseKnowledge,
   cancelKnowledgeParse,
@@ -58,6 +57,7 @@ import BatchTagDialog from './components/BatchTagDialog.vue';
 import KbTagManageDrawer from './components/KbTagManageDrawer.vue';
 import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess';
 import { useUploadConfirmStore, type UploadConfirmResult } from '@/stores/uploadConfirm';
+import { useUploadTasksStore } from '@/stores/uploadTasks';
 import WikiBrowser from './wiki/WikiBrowser.vue';
 import { getWikiStats } from '@/api/wiki';
 import {
@@ -74,7 +74,6 @@ import {
   folderBreadcrumbs as buildFolderBreadcrumbs,
   folderPathExists as folderExistsInTree,
   isFilteringDocuments,
-  isFolderUpload,
   ROOT_FOLDER_PATH,
 } from './folderTree';
 import { useI18n } from 'vue-i18n';
@@ -85,7 +84,6 @@ const { t } = useI18n();
 const kbId = computed(() => (route.params as any).kbId as string || '');
 const kbInfo = ref<any>(null);
 const uploadSourceRef = ref<InstanceType<typeof KbUploadSourceDropdown> | null>(null);
-const uploading = ref(false);
 const kbLoading = ref(false);
 const docListLoading = ref(true);
 const isFAQ = computed(() => (kbInfo.value?.type || '') === 'faq');
@@ -1178,12 +1176,18 @@ const handleFileUploaded = (event: CustomEvent) => {
   const uploadedKbId = event.detail.kbId;
   console.log('接收到文件上传事件，上传的知识库ID:', uploadedKbId, '当前知识库ID:', kbId.value);
   if (uploadedKbId && uploadedKbId === kbId.value && !isFAQ.value) {
+    // Mid-batch refreshes (settled === false) only bring new rows and folders
+    // in, and are skipped once the user scrolled past the first page because
+    // reloading resets the list to it. The batch's final event refreshes fully.
+    const midBatch = event.detail.settled === false;
+    if (midBatch && page > 1) return;
     console.log('匹配当前知识库，开始刷新文件列表');
     // 如果上传的文件属于当前知识库，使用 loadKnowledgeFiles 刷新文件列表
     resetPage(); // Reset page counter when reloading files after upload
     loadKnowledgeFiles(uploadedKbId);
-    loadTags(uploadedKbId);
     void loadFolderTree(uploadedKbId);
+    if (midBatch) return;
+    loadTags(uploadedKbId);
     // 启动几次探测，尽快让面包屑的"索引中"亮起。
     scheduleWikiStatusProbes();
   }
@@ -1591,43 +1595,11 @@ const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'flac', 'ogg'];
 
 const uploadConfirmStore = useUploadConfirmStore();
 
-const getFolderUploadFileName = (file: File, targetFolder: string) =>
-  buildUploadFileName(file, targetFolder);
+const uploadTasksStore = useUploadTasksStore();
 
-const showUploadResultMessages = (
-  successCount: number,
-  failCount: number,
-  totalCount: number,
-  mode: 'document' | 'folder',
-) => {
-  if (mode === 'folder') {
-    if (failCount === 0) {
-      MessagePlugin.success(t('knowledgeBase.uploadAllSuccess', { count: successCount }));
-    } else if (successCount > 0) {
-      MessagePlugin.warning(t('knowledgeBase.uploadPartialSuccess', { success: successCount, fail: failCount }));
-    } else {
-      MessagePlugin.error(t('knowledgeBase.uploadAllFailed'));
-    }
-    return;
-  }
-
-  if (totalCount === 1) {
-    if (successCount === 1) {
-      MessagePlugin.success(t('knowledgeBase.uploadSuccess'));
-    }
-    return;
-  }
-
-  if (failCount === 0) {
-    MessagePlugin.success(t('knowledgeBase.allUploadSuccess', { count: successCount }));
-  } else if (successCount > 0) {
-    MessagePlugin.warning(t('knowledgeBase.partialUploadSuccess', { success: successCount, fail: failCount }));
-  } else {
-    MessagePlugin.error(t('knowledgeBase.allUploadFailed', { count: failCount }));
-  }
-};
-
-const executeUploadBatch = async (
+// Hands the batch to the global upload queue, which runs the transfers,
+// reports progress in its floating panel and refreshes this page as files land.
+const enqueueUploads = (
   files: File[],
   options: {
     processConfig?: KnowledgeProcessOverrides;
@@ -1637,72 +1609,16 @@ const executeUploadBatch = async (
   } = {},
 ) => {
   const targetKbId = kbId.value;
-  if (!targetKbId || files.length === 0) {
-    return { successCount: 0, failCount: files.length };
-  }
-
-  const tagIdsToUpload = options.tagIds && options.tagIds.length > 0
-    ? [...options.tagIds]
-    : undefined;
-  let successCount = 0;
-  let failCount = 0;
-  const totalCount = files.length;
-  const hasFolderPaths = files.some(isFolderUpload);
-
-  for (const file of files) {
-    try {
-      const uploadData: {
-        file: File
-        tag_ids?: string[]
-        fileName?: string
-        process_config?: KnowledgeProcessOverrides
-      } = { file, tag_ids: tagIdsToUpload };
-
-      const fileName = getFolderUploadFileName(file, options.targetFolder || ROOT_FOLDER_PATH);
-      if (fileName) uploadData.fileName = fileName;
-      if (options.processConfig) {
-        uploadData.process_config = options.processConfig;
-      }
-
-      const responseData: any = await uploadKnowledgeFile(targetKbId, uploadData);
-      const isSuccess = responseData?.success || responseData?.code === 200 || responseData?.status === 'success' || (!responseData?.error && responseData);
-      if (isSuccess) {
-        successCount++;
-      } else {
-        failCount++;
-        if (totalCount === 1) {
-          let errorMessage = t('knowledgeBase.uploadFailed');
-          if (responseData?.error?.message) {
-            errorMessage = responseData.error.message;
-          } else if (responseData?.message) {
-            errorMessage = responseData.message;
-          }
-          if (responseData?.code === 'duplicate_file' || responseData?.error?.code === 'duplicate_file') {
-            errorMessage = t('knowledgeBase.fileExists');
-          }
-          MessagePlugin.error(errorMessage);
-        }
-      }
-    } catch (error: any) {
-      failCount++;
-      if (totalCount === 1) {
-        let errorMessage = error?.error?.message || error?.message || t('knowledgeBase.uploadFailed');
-        if (error?.code === 'duplicate_file') {
-          errorMessage = t('knowledgeBase.fileExists');
-        }
-        MessagePlugin.error(errorMessage);
-      }
-    }
-  }
-
-  if (successCount > 0) {
-    window.dispatchEvent(new CustomEvent('knowledgeFileUploaded', {
-      detail: { kbId: targetKbId },
-    }));
-  }
-
-  showUploadResultMessages(successCount, failCount, totalCount, hasFolderPaths ? 'folder' : 'document');
-  return { successCount, failCount };
+  if (!targetKbId || files.length === 0) return;
+  const targetFolder = options.targetFolder || ROOT_FOLDER_PATH;
+  uploadTasksStore.enqueue({
+    kbId: targetKbId,
+    kbName: kbInfo.value?.name || '',
+    targetFolder,
+    tagIds: options.tagIds,
+    processConfig: options.processConfig,
+    uploads: files.map(file => ({ file, fileName: buildUploadFileName(file, targetFolder) })),
+  });
 };
 
 const executeUrlImport = async (
@@ -1761,11 +1677,7 @@ const handleUploadConfirmResult = async (result: UploadConfirmResult) => {
   const tagIds = result.tagIds || [];
 
   if (files.length > 0) {
-    const hasFolderPaths = files.some(isFolderUpload);
-    if (hasFolderPaths) {
-      MessagePlugin.info(t('knowledgeBase.uploadingFolder', { total: files.length }));
-    }
-    await executeUploadBatch(files, {
+    enqueueUploads(files, {
       processConfig,
       tagIds,
       targetFolder: result.targetFolder || ROOT_FOLDER_PATH,
@@ -2692,16 +2604,16 @@ async function createNewSession(value: string): Promise<void> {
   align-items: center;
   padding: 8px 16px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--app-motion-base) ease;
   color: var(--td-text-color-primary);
   font-family: var(--app-font-family);
-  font-size: 14px;
+  font-size: var(--app-text-base);
   font-weight: 400;
 }
 
 .tag-more-popup .tag-menu-item .menu-icon {
   margin-right: 8px;
-  font-size: 16px;
+  font-size: var(--app-text-xl);
 }
 
 .tag-more-popup .tag-menu-item:hover {
@@ -2728,7 +2640,7 @@ async function createNewSession(value: string): Promise<void> {
   cursor: pointer;
   color: var(--td-text-color-placeholder);
   font-weight: 400;
-  transition: color 0.15s;
+  transition: color var(--app-motion-fast);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -2751,7 +2663,7 @@ async function createNewSession(value: string): Promise<void> {
   display: inline-flex;
   align-items: center;
   color: var(--td-brand-color);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1;
 }
 
@@ -2821,11 +2733,11 @@ async function createNewSession(value: string): Promise<void> {
     margin-right: 4px;
     padding: 0;
     border: 1px solid var(--td-component-border);
-    border-radius: 6px;
+    border-radius: var(--app-radius-sm);
     background: var(--td-bg-color-container);
     color: var(--td-text-color-secondary);
     cursor: pointer;
-    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+    transition: border-color var(--app-motion-fast) ease, color var(--app-motion-fast) ease, background var(--app-motion-fast) ease;
 
     &:hover {
       border-color: var(--td-brand-color);
@@ -2838,17 +2750,17 @@ async function createNewSession(value: string): Promise<void> {
     max-width: 220px;
     padding: 2px 4px;
     border: 0;
-    border-radius: 4px;
+    border-radius: var(--app-radius-xs);
     background: transparent;
     color: var(--td-text-color-secondary);
     font-family: var(--app-font-family);
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     line-height: 18px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     cursor: pointer;
-    transition: color 0.15s ease, background 0.15s ease;
+    transition: color var(--app-motion-fast) ease, background var(--app-motion-fast) ease;
 
     &:hover {
       color: var(--td-brand-color);
@@ -2869,7 +2781,7 @@ async function createNewSession(value: string): Promise<void> {
 
   &__sep {
     flex-shrink: 0;
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     color: var(--td-text-color-placeholder);
   }
 }
@@ -2979,7 +2891,7 @@ async function createNewSession(value: string): Promise<void> {
     align-items: center;
     padding: 2px;
     background: var(--td-bg-color-secondarycontainer);
-    border-radius: 6px;
+    border-radius: var(--app-radius-sm);
     gap: 0;
 
     .doc-view-toggle-btn {
@@ -2990,18 +2902,18 @@ async function createNewSession(value: string): Promise<void> {
       justify-content: center;
       border: 0;
       background: transparent;
-      border-radius: 4px;
-      color: var(--td-text-color-secondary, #888);
+      border-radius: var(--app-radius-xs);
+      color: var(--td-text-color-secondary);
       cursor: pointer;
-      transition: background-color 0.12s ease, color 0.12s ease;
+      transition: background-color var(--app-motion-instant) ease, color var(--app-motion-instant) ease;
 
       &:hover {
-        color: var(--td-text-color-primary, #232323);
+        color: var(--td-text-color-primary);
       }
 
       &.active {
-        background: var(--td-bg-color-container, #fff);
-        color: var(--td-brand-color, #0052d9);
+        background: var(--td-bg-color-container);
+        color: var(--td-brand-color);
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
       }
     }
@@ -3023,10 +2935,10 @@ async function createNewSession(value: string): Promise<void> {
   }
 
   :deep(.t-input) {
-    font-size: 13px;
+    font-size: var(--app-text-md);
     background-color: var(--td-bg-color-secondarycontainer);
     border-color: transparent;
-    border-radius: 6px;
+    border-radius: var(--app-radius-sm);
     box-shadow: none !important;
 
     &:hover,
@@ -3040,10 +2952,10 @@ async function createNewSession(value: string): Promise<void> {
 
   :deep(.t-select) {
     .t-input {
-      font-size: 13px;
+      font-size: var(--app-text-md);
       background-color: var(--td-bg-color-secondarycontainer);
       border-color: transparent;
-      border-radius: 6px;
+      border-radius: var(--app-radius-sm);
       box-shadow: none !important;
 
       &:hover,
@@ -3147,7 +3059,7 @@ async function createNewSession(value: string): Promise<void> {
     align-items: center;
     gap: 6px;
     margin: 0;
-    font-size: 20px;
+    font-size: var(--app-text-3xl);
     font-weight: 600;
     color: var(--td-text-color-primary);
   }
@@ -3163,8 +3075,8 @@ async function createNewSession(value: string): Promise<void> {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    border-radius: 6px;
-    transition: all 0.12s ease;
+    border-radius: var(--app-radius-sm);
+    transition: all var(--app-motion-instant) ease;
 
     &:hover:not(:disabled) {
       color: var(--td-success-color);
@@ -3180,8 +3092,8 @@ async function createNewSession(value: string): Promise<void> {
       padding-right: 6px;
 
       :deep(.t-icon) {
-        font-size: 14px;
-        transition: transform 0.12s ease;
+        font-size: var(--app-text-base);
+        transition: transform var(--app-motion-instant) ease;
       }
 
       &:hover:not(:disabled) {
@@ -3193,7 +3105,7 @@ async function createNewSession(value: string): Promise<void> {
   }
 
   .breadcrumb-separator {
-    font-size: 14px;
+    font-size: var(--app-text-base);
     color: var(--td-text-color-placeholder);
   }
 
@@ -3206,7 +3118,7 @@ async function createNewSession(value: string): Promise<void> {
     margin: 0;
     color: var(--td-text-color-primary);
     font-family: var(--app-font-family);
-    font-size: 24px;
+    font-size: var(--app-text-4xl);
     font-weight: 600;
     line-height: 32px;
   }
@@ -3215,7 +3127,7 @@ async function createNewSession(value: string): Promise<void> {
     margin: 0;
     color: var(--td-text-color-placeholder);
     font-family: var(--app-font-family);
-    font-size: 14px;
+    font-size: var(--app-text-base);
     font-weight: 400;
     line-height: 20px;
   }
@@ -3226,10 +3138,10 @@ async function createNewSession(value: string): Promise<void> {
     gap: 4px;
     margin: 2px 0 0;
     color: var(--td-warning-color);
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     line-height: 1.4;
     cursor: pointer;
-    transition: color 0.15s ease;
+    transition: color var(--app-motion-fast) ease;
 
     &:hover {
       color: var(--td-warning-color-active);
@@ -3240,7 +3152,7 @@ async function createNewSession(value: string): Promise<void> {
     }
 
     .parser-hint-icon {
-      font-size: 12px;
+      font-size: var(--app-text-sm);
       flex-shrink: 0;
     }
 
@@ -3257,10 +3169,10 @@ async function createNewSession(value: string): Promise<void> {
     gap: 4px;
     margin: 2px 0 0;
     color: var(--td-warning-color);
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     line-height: 1.4;
     cursor: pointer;
-    transition: color 0.15s ease;
+    transition: color var(--app-motion-fast) ease;
 
     &:hover {
       color: var(--td-warning-color-active);
@@ -3271,7 +3183,7 @@ async function createNewSession(value: string): Promise<void> {
     }
 
     .warning-icon {
-      font-size: 12px;
+      font-size: var(--app-text-sm);
       flex-shrink: 0;
     }
 
@@ -3299,7 +3211,7 @@ async function createNewSession(value: string): Promise<void> {
   justify-content: center;
   color: var(--td-text-color-secondary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--app-motion-base) ease;
   padding: 0;
 
   &:hover:not(:disabled) {
@@ -3314,7 +3226,7 @@ async function createNewSession(value: string): Promise<void> {
   }
 
   :deep(.t-icon) {
-    font-size: 18px;
+    font-size: var(--app-text-2xl);
   }
 }
 
@@ -3437,14 +3349,14 @@ async function createNewSession(value: string): Promise<void> {
   flex-direction: column;
   border: 1px solid var(--td-component-border);
   height: 136px;
-  border-radius: 8px;
+  border-radius: var(--app-radius-md);
   overflow: hidden;
   box-sizing: border-box;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   background: var(--td-bg-color-container);
   position: relative;
   cursor: pointer;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  transition: border-color var(--app-motion-base) ease, box-shadow var(--app-motion-base) ease, background-color var(--app-motion-base) ease;
 
   .card-content {
     flex: 1;

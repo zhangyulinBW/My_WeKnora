@@ -41,6 +41,7 @@ type AgentEngine struct {
 	selectedDocs         []*SelectedDocumentInfo // User-selected documents (via @ mention)
 	pinnedMCPServices    []*PinnedMCPServiceInfo // User @mentioned MCP services for this turn
 	pinnedSkills         []*PinnedSkillInfo      // User @mentioned skills for this turn
+	questionOrigin       *QuestionOriginInfo     // Source of a picked suggested question, if any
 	sessionID            string                  // Session ID for logging and event emission
 	systemPromptTemplate string                  // System prompt template (optional, uses default if empty)
 	memoryPrompt         string                  // Long-term memory envelope appended to the system prompt
@@ -60,7 +61,10 @@ type AgentEngine struct {
 	// reported it could free nothing. Below that count the answer has not
 	// changed, so there is no reason to spend another summarization call.
 	compactionExhaustedAt int
-	modelContext          *modelcontext.Registry // single request-local boundary for every model handle
+	// checkpointSink, when set, persists compactions that end on a stored
+	// turn so later turns start from them. Nil keeps compaction turn-local.
+	checkpointSink types.ContextCheckpointSink
+	modelContext   *modelcontext.Registry // single request-local boundary for every model handle
 	// steerSink, when set, lets users append messages into the running turn.
 	// Drained at every round boundary; nil disables mid-run injection.
 	steerSink         types.SteerSink
@@ -117,6 +121,12 @@ func NewAgentEngine(
 	})
 
 	return engine
+}
+
+// SetQuestionOrigin records the knowledge source of a suggested question the
+// user picked for this turn; nil clears it.
+func (e *AgentEngine) SetQuestionOrigin(origin *QuestionOriginInfo) {
+	e.questionOrigin = origin
 }
 
 // SetPinnedMentions sets per-turn @mention scope for MCP services and skills.

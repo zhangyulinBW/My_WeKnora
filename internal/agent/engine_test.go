@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -240,9 +241,9 @@ func TestRunToolCallRejectsUnresolvedHandlesBeforeExecution(t *testing.T) {
 			ID: "call-1",
 			Function: types.FunctionCall{
 				Name:      tool.Name(),
-				Arguments: `{"knowledge_id":"d99"}`,
+				Arguments: `{"id":"d99"}`,
 			},
-			ModelArguments:     `{"knowledge_id":"d99"}`,
+			ModelArguments:     `{"id":"d99"}`,
 			ArgumentResolution: modelcontext.ArgumentResolutionUnresolved,
 			UnresolvedHandles:  []string{"d99"},
 		},
@@ -258,7 +259,7 @@ func TestRunToolCallDecodesHandlesAfterJSONRepair(t *testing.T) {
 	newEngine := func() (*AgentEngine, *countingTool) {
 		engine := newTestEngine(t, &mockChat{})
 		engine.toolRegistry = agenttools.NewToolRegistry()
-		tool := newCountingTool(agenttools.ToolListKnowledgeChunks)
+		tool := newCountingTool(agenttools.ToolReadDocument)
 		engine.toolRegistry.RegisterTool(tool)
 		return engine, tool
 	}
@@ -268,8 +269,8 @@ func TestRunToolCallDecodesHandlesAfterJSONRepair(t *testing.T) {
 		context.Background(),
 		types.LLMToolCall{
 			ID:             "call-unknown",
-			Function:       types.FunctionCall{Name: unknownTool.Name(), Arguments: `{"knowledge_id":"d99",}`},
-			ModelArguments: `{"knowledge_id":"d99",}`,
+			Function:       types.FunctionCall{Name: unknownTool.Name(), Arguments: `{"id":"d99",}`},
+			ModelArguments: `{"id":"d99",}`,
 		},
 		0, 0, 1, "session", "message",
 	)
@@ -283,14 +284,14 @@ func TestRunToolCallDecodesHandlesAfterJSONRepair(t *testing.T) {
 		context.Background(),
 		types.LLMToolCall{
 			ID:             "call-known",
-			Function:       types.FunctionCall{Name: knownTool.Name(), Arguments: `{"knowledge_id":"d1",}`},
-			ModelArguments: `{"knowledge_id":"d1",}`,
+			Function:       types.FunctionCall{Name: knownTool.Name(), Arguments: `{"id":"d1",}`},
+			ModelArguments: `{"id":"d1",}`,
 		},
 		0, 0, 1, "session", "message",
 	)
 	require.Equal(t, 1, knownTool.calls)
 	require.True(t, known.Result.Success)
-	require.Equal(t, "doc-real", known.Args["knowledge_id"])
+	require.Equal(t, "doc-real", known.Args["id"])
 }
 
 func (m *mockChat) Chat(_ context.Context, _ []chat.Message, _ *chat.ChatOptions) (*types.ChatResponse, error) {
@@ -498,6 +499,92 @@ func TestContextCompactionDoesNotRunEveryRound(t *testing.T) {
 	require.False(t, changedAgain)
 	require.Equal(t, callsAfterFirst, llm.calls,
 		"a context that cannot shrink must not spend another summarization call")
+}
+
+// recordingCheckpointSink captures what the engine persists.
+type recordingCheckpointSink struct {
+	turnIDs []string
+	saved   []*types.ContextCheckpoint
+	err     error
+}
+
+func (s *recordingCheckpointSink) SaveContextCheckpoint(
+	_ context.Context, turnMessageID string, checkpoint *types.ContextCheckpoint,
+) error {
+	s.turnIDs = append(s.turnIDs, turnMessageID)
+	s.saved = append(s.saved, checkpoint)
+	return s.err
+}
+
+// storedHistoryOverflow is a request whose stored history ends on turn-b and
+// whose live turn has outgrown the keep-recent budget on its own.
+func storedHistoryOverflow() []chat.Message {
+	messages := []chat.Message{
+		{Role: "system", Content: "you are an agent"},
+		{Role: "user", Content: "first question", TurnID: "turn-a"},
+		{Role: "assistant", Content: "first answer", TurnID: "turn-a"},
+		{Role: "user", Content: "second question", TurnID: "turn-b"},
+		{Role: "assistant", Content: "second answer", TurnID: "turn-b"},
+		{Role: "user", Content: "build me a deck"},
+	}
+	body := strings.Repeat("tool output content ", 400)
+	for i := 0; i < 20; i++ {
+		id := fmt.Sprintf("call-%d", i)
+		messages = append(messages,
+			chat.Message{Role: "assistant", ToolCalls: []chat.ToolCall{{
+				ID:       id,
+				Type:     "function",
+				Function: chat.FunctionCall{Name: "write_sandbox_file", Arguments: `{"path":"/w/a.html"}`},
+			}}},
+			chat.Message{Role: "tool", Name: "write_sandbox_file", ToolCallID: id, Content: body},
+		)
+	}
+	return messages
+}
+
+// Without persistence every later turn re-summarizes the same stored history.
+// A compaction that ends on a stored turn is written back onto that turn.
+func TestContextCompactionPersistsACheckpointOnTheLastStoredTurn(t *testing.T) {
+	engine := newTestEngine(t, &summarizerChat{},
+		withMaxContextTokens(40000), withMaxCompletionTokens(4000))
+	sink := &recordingCheckpointSink{}
+	engine.SetContextCheckpointSink(sink)
+
+	messages := storedHistoryOverflow()
+	_, changed := engine.manageContextWindow(
+		context.Background(), messages, 1, engine.tokenEstimator.EstimateMessages(messages),
+	)
+	require.True(t, changed)
+
+	require.Equal(t, []string{"turn-b"}, sink.turnIDs)
+	require.Contains(t, sink.saved[0].Summary, "do the thing")
+	require.False(t, sink.saved[0].CreatedAt.IsZero())
+}
+
+// The checkpoint is an optimization for later turns. Failing to store it must
+// not undo the compaction this turn needed.
+func TestContextCheckpointFailureKeepsTheCompaction(t *testing.T) {
+	engine := newTestEngine(t, &summarizerChat{},
+		withMaxContextTokens(40000), withMaxCompletionTokens(4000))
+	engine.SetContextCheckpointSink(&recordingCheckpointSink{err: errors.New("db down")})
+
+	messages := storedHistoryOverflow()
+	before := engine.tokenEstimator.EstimateMessages(messages)
+	compacted, changed := engine.manageContextWindow(context.Background(), messages, 1, before)
+	require.True(t, changed)
+	require.Less(t, engine.tokenEstimator.EstimateMessages(compacted), before/2)
+}
+
+// Redacting a stored KB result must not detach it from its turn, or a summary
+// ending on that turn could no longer be recognized as ending there.
+func TestRedactHistoryKBResultsKeepsTurnID(t *testing.T) {
+	redacted := redactHistoryKBResults([]chat.Message{{
+		Role: "tool", Name: agenttools.ToolSearchKnowledge, ToolCallID: "c1",
+		Content: "stale chunk", TurnID: "turn-a",
+	}})
+	require.Len(t, redacted, 1)
+	require.NotEqual(t, "stale chunk", redacted[0].Content)
+	require.Equal(t, "turn-a", redacted[0].TurnID)
 }
 
 // Asking for more output than the window can still hold is rejected outright

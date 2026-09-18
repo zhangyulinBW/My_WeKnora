@@ -61,7 +61,10 @@ type CreateKnowledgeQARequest struct {
 	AttachmentIDs         []string                     `json:"attachment_ids,omitempty"`              // Pre-uploaded session-scoped document IDs
 	Channel               string                       `json:"channel"`                               // Source channel: "web", "api", "im", etc.
 	SuggestionAttribution *types.SuggestionAttribution `json:"suggestion_attribution,omitempty"`
-	Metadata              types.JSON                   `json:"metadata,omitempty"` // Custom structured context injected into the agent prompt
+	// Metadata is custom structured context injected into the agent prompt.
+	Metadata types.JSON `json:"metadata,omitempty"`
+	// QuestionOrigin is the knowledge source of a picked suggested question.
+	QuestionOrigin *types.QuestionOrigin `json:"question_origin,omitempty"`
 }
 
 // AttachmentUpload represents a file attachment upload from the client
