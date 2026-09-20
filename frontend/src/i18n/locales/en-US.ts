@@ -140,6 +140,12 @@ export default {
     total: '{count} files',
     versions: '{count} versions',
     preview: 'Preview',
+    delete: 'Delete',
+    deleteTitle: 'Delete this file?',
+    deleteConfirm: '“{name}” and its stored contents will be permanently deleted. This cannot be undone.',
+    deleteConfirmVersions: 'All {count} versions of “{name}” and their stored contents will be permanently deleted. This cannot be undone.',
+    deleted: 'File deleted',
+    deleteFailed: 'Delete failed, please retry.',
     download: 'Download',
     downloadFailed: 'Download failed. Please try again later.',
     openSession: 'Open conversation',
@@ -486,6 +492,11 @@ export default {
     sharedTooltip: 'Accessed from an external workspace via a shared space'
   },
   knowledgeBase: {
+    tagAddAction: 'Add tags',
+    documentCount: '{count} documents',
+    filters: 'Filters',
+    clearFilters: 'Clear filters',
+
     title: 'Knowledge Base',
     fileContent: 'File Content',
     accessInfo: {
@@ -526,11 +537,10 @@ export default {
     settings: 'Settings',
     tagUpdateSuccess: 'Tag updated successfully',
     tagEditDialogHeading: 'Edit tags',
-    tagEditSearch: 'Search tags...',
-    tagEditSelectedSection: 'Selected',
-    tagEditAvailableSection: 'Available',
-    tagEditNoSelected: 'None selected',
     folderTree: {
+      totalDocuments: '{count} documents total',
+      countHint: '{direct} documents in this folder; {total} including subfolders',
+      filteredCount: '{count} matching documents',
       title: 'Folders',
       rootRow: 'Root',
       rootRowTip: 'Knowledge base root; documents not in a subfolder live here',
@@ -571,10 +581,13 @@ export default {
     tagManageListSection: 'Tags',
     tagManageDocCount: '{count} documents',
     tagManageFaqCount: '{count} FAQ entries',
+    tagPickerSelected: 'Selected',
+    tagPickerUnselected: 'Not selected',
     tagSelectedCount: '{count} selected',
-    tagNewPlaceholder: 'New tag name, press Enter to add',
+    tagPickerSearch: "Search or create a tag",
+    tagPickerInUse: "This tag is in use. Remove its document associations before deleting it.",
+    tagPickerDeleteConfirm: "Delete tag “{name}”?",
     untagged: 'Untagged',
-    tagClearAction: 'Clear selection',
     tagCreateAction: 'Create tag',
     tagSearchPlaceholder: 'Type to filter tags',
     tagNamePlaceholder: 'Enter tag name',
@@ -765,9 +778,6 @@ export default {
     batchTag: 'Batch Tag',
     batchTagDialogHeading: 'Batch Tag',
     batchTagSubtitle: 'Set tags for {count} selected documents (will replace existing tags)',
-    batchTagSelectedSection: 'Selected',
-    batchTagAvailableSection: 'Available',
-    batchTagNoSelected: 'None selected',
     batchTagSuccess: 'Tags applied to {count} documents',
     batchTagFailed: 'Batch tag failed',
     confirmBatchReparseDocument: 'Rebuild {count} selected documents? Existing content will be cleared and each document will be re-parsed.',
@@ -888,6 +898,15 @@ export default {
     },
     attempt: 'Attempt {n}',
     retry: 'Retry parsing',
+    notRun: 'Not run',
+    stageFailed: '{stage} failed',
+    copyError: 'Copy error details',
+    stat: {
+      duration: 'Duration',
+      attempt: 'Attempt',
+      tasks: 'Background tasks',
+      tasksValue: '{running} running · {failed} failed · {completed} done'
+    },
     refresh: 'Refresh now',
     copy: 'Copy',
     copyDetails: 'Copy details',
@@ -907,12 +926,9 @@ export default {
     minutesAgo: '{n}m ago',
     noActivity: 'No parsing activity yet',
     totalDuration: 'Total: {d}',
-    total: 'Total {d}',
     head: {
       stagesDone: 'Main stages',
       stagesProgress: 'Current stage',
-      postprocessTasks: 'Postprocess: {running} running / {failed} failed / {completed} completed',
-      completedWithActiveTrace: 'Processing completed, but {n} trace task(s) remain active',
       attempt: 'Attempt',
       updated: 'Updated'
     },
@@ -980,10 +996,16 @@ export default {
       preview: 'Preview',
       previewBack: 'Back to list',
       collecting: 'Saving generated files…',
+      delete: 'Delete',
+      deleteTitle: 'Delete this file?',
+      deleteConfirm: '“{name}” and its stored contents will be permanently deleted. This cannot be undone.',
+      deleted: 'File deleted',
+      deleteFailed: 'Delete failed, please retry.',
       download: 'Download',
       downloadFailed: 'Download failed, please retry.',
       inlinePreviewHint: 'Click to preview',
       inlineMissing: 'File unavailable',
+      inlineDeleted: 'File deleted',
     },
     updatePlan: 'Update Plan',
     webSearchFound: 'Found <strong>{count}</strong> web search result(s)',
@@ -1058,6 +1080,7 @@ export default {
     shareScope: {
       title: 'Share Scope',
       desc: 'Space members have read-only access to this agent and will use it according to your current configuration; your changes to the agent will sync to shared spaces. To allow space members to edit knowledge base content, share the knowledge base to the space.',
+      skillSecretsWarning: 'This agent uses skills. When space members use it, the skills run in this workspace\'s sandbox with the environment variables admins configured for them (such as API keys), and members can have the agent reveal those values. Share it only if that is acceptable.',
       knowledgeBase: 'Knowledge bases',
       chatModel: 'Chat model',
       rerankModel: 'Rerank model',
@@ -2460,6 +2483,8 @@ export default {
       discard: 'Discard changes',
       keepEditing: 'Keep editing',
     },
+    fullscreen: 'Full screen',
+    exitFullscreen: 'Exit full screen',
     save: 'Save',
     delete: 'Delete',
     edit: 'Edit',
@@ -2562,11 +2587,21 @@ export default {
       link: 'Insert link',
       image: 'Insert image',
       table: 'Insert table',
-      horizontalRule: 'Horizontal rule'
+      horizontalRule: 'Horizontal rule',
+      headingGroup: 'Heading',
+      insertGroup: 'Insert'
+    },
+    shortcuts: {
+      title: 'Shortcuts',
+      continueList: 'Continue the list',
+      indent: 'Indent / Shift+Tab to outdent'
     },
     view: {
-      editLabel: 'Back to edit',
-      previewLabel: 'Preview content'
+      edit: 'Edit',
+      split: 'Split',
+      preview: 'Preview',
+      splitUnavailable: 'Widen the drawer or go full screen to split the view',
+      groupLabel: 'Editor view'
     },
     preview: {
       empty: 'No content yet'
@@ -2575,9 +2610,7 @@ export default {
       edit: 'Edit Markdown Knowledge',
       create: 'Create Markdown Knowledge'
     },
-    description: 'Write knowledge in Markdown with live preview',
     section: {
-      basic: 'Basic Info',
       content: 'Content'
     },
     labels: {
@@ -2599,9 +2632,9 @@ export default {
       published: 'Knowledge published and indexing started'
     },
     form: {
-      knowledgeBaseLabel: 'Target knowledge base',
       knowledgeBasePlaceholder: 'Select knowledge base',
       titleLabel: 'Knowledge title',
+      knowledgeBaseLabel: 'Target knowledge base',
       titlePlaceholder: 'Enter title',
       contentPlaceholder: 'Supports Markdown. Use # headings, lists, code blocks, etc.'
     },
@@ -2609,7 +2642,8 @@ export default {
     status: {
       draftTag: 'Status: Draft',
       publishedTag: 'Status: Published',
-      lastUpdated: 'Last updated: {time}'
+      lastUpdated: 'Last updated: {time}',
+      counter: '{chars} characters · {lines} lines'
     },
     loading: {
       content: 'Loading content...',
@@ -2623,11 +2657,7 @@ export default {
   },
   input: {
     addModel: 'Add Model',
-    placeholder: 'Ask questions directly to the model',
-    placeholderWithContext: 'Enter your question, will answer based on selected knowledge bases/files above',
-    placeholderWebOnly: 'Enter your question, will answer with web search',
-    placeholderKbAndWeb: 'Enter your question, will answer based on knowledge base and web search',
-    placeholderAgent: 'Ask {name}',
+    placeholder: 'Ask a question or describe a task…',
     agentMode: 'Smart Reasoning',
     normalMode: 'Quick Answer',
     normalModeDesc: 'Knowledge base RAG Q&A',
@@ -3683,10 +3713,12 @@ export default {
         authRevoked: 'Your session is no longer valid, so the terminal was disconnected. Sign in again, then reconnect.',
     },
     questionMinimapTitle: 'Q&A',
+    questionMinimapPosition: 'Turn {current} of {total}',
     questionMinimapAriaLabel: 'Question outline',
     questionMinimapAttachmentPlaceholder: '(Attachment)',
     referenceChunkCount: '{count} chunk(s)',
     fallbackHint: 'No relevant content found in knowledge base. Above is a direct response from the model.',
+    truncatedHint: 'This answer was cut off at the per-response output limit. Above is what the model produced before the cut.',
     requestInfoTitle: 'Request info',
     requestInfoRequestId: 'Request ID',
     requestInfoMessageId: 'Message ID',
@@ -3782,6 +3814,7 @@ export default {
     processError: 'Processing error',
     sessionExcerpt: 'Session Excerpt',
     noAnswerContent: '(No answer content)',
+    manualSourcesHeading: 'Sources',
     noMatchFound: 'No matching content found',
     deleteSessionFailed: 'Delete failed, please try again later!',
     imageTooMany: 'Maximum 5 images allowed',
@@ -6156,7 +6189,7 @@ export default {
       maxTokensAgent: 'Maximum tokens generated in each reasoning round, including tool-call JSON. Default is 4096 without a sandbox, or 24576 when a sandbox can write or edit files. A custom value is saved as entered and is not changed later.',
       thinking: 'Enable extended thinking capability (requires model support)',
       conversationSection: 'Configure multi-turn conversation and query rewriting parameters',
-      conversationSectionAgent: 'How much earlier conversation each turn carries. Smart reasoning is always multi-turn',
+      conversationSectionAgent: 'Smart reasoning is always multi-turn. Earlier conversation is kept up to the model context window, and older turns are summarized automatically once it fills',
       multiTurn: 'When enabled, historical conversation context will be preserved',
       historyRounds: 'Number of recent conversation rounds to keep as context',
       retainRetrievalHistory: 'Keep knowledge base results from earlier turns. When off, each turn searches again',

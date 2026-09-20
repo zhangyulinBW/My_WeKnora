@@ -1378,7 +1378,7 @@ export default {
       maxTokensAgent: '각 추론 라운드에서 생성할 최대 토큰 수(도구 호출 JSON 포함). 「기본값」은 샌드박스 없으면 4096, 파일 쓰기/편집이 가능하면 24576입니다. 「사용자 지정」은 입력한 값을 그대로 저장합니다.',
       thinking: '모델의 확장 사고 기능 활성화 (모델 지원 필요)',
       conversationSection: '다중 턴 대화 및 질문 재작성 관련 매개변수 설정',
-      conversationSectionAgent: '매 턴에 실어 보낼 이전 대화 분량 설정 (스마트 추론은 항상 다중 턴)',
+      conversationSectionAgent: '스마트 추론은 항상 다중 턴입니다. 이전 대화는 모델의 컨텍스트 창 범위까지 유지되며, 초과하면 오래된 내용이 자동으로 요약됩니다',
       multiTurn: '활성화하면 대화 기록 컨텍스트가 유지됩니다',
       historyRounds: '컨텍스트로 유지할 최근 대화 라운드 수',
       retainRetrievalHistory: '이전 턴의 지식베이스 검색 결과를 유지합니다. 끄면 매 턴 새로 검색합니다',
@@ -3823,10 +3823,12 @@ export default {
         authRevoked: '로그인 상태가 더 이상 유효하지 않아 터미널 연결이 끊어졌습니다. 다시 로그인한 뒤 재연결하세요.',
     },
     questionMinimapTitle: '질문',
+    questionMinimapPosition: '전체 {total}턴 중 {current}턴',
     questionMinimapAriaLabel: '질문 목차',
     questionMinimapAttachmentPlaceholder: '(첨부)',
     referenceChunkCount: '{count}개 청크',
     fallbackHint: '지식 베이스에서 관련 내용을 찾지 못했습니다. 위는 모델의 직접 응답입니다.',
+    truncatedHint: '모델의 응답당 출력 한도에서 답변이 잘렸습니다. 위 내용은 잘리기 전까지 생성된 부분입니다.',
     requestInfoTitle: 'Request info',
     requestInfoRequestId: 'Request ID',
     requestInfoMessageId: 'Message ID',
@@ -3922,6 +3924,7 @@ export default {
     processError: '처리 오류',
     sessionExcerpt: '대화 발췌',
     noAnswerContent: '(답변 내용 없음)',
+    manualSourcesHeading: '참고 출처',
     noMatchFound: '일치하는 내용을 찾을 수 없습니다',
     deleteSessionFailed: '삭제 실패, 나중에 다시 시도해주세요!',
     imageTooMany: '최대 5장까지 업로드 가능합니다',
@@ -4862,11 +4865,7 @@ export default {
   },
   input: {
     addModel: '모델 추가',
-    placeholder: '모델에 직접 질문',
-    placeholderWithContext: '질문을 입력하면 위에서 선택한 지식베이스/파일을 기반으로 답변합니다',
-    placeholderWebOnly: '질문을 입력하면 웹 검색을 결합하여 답변합니다',
-    placeholderKbAndWeb: '질문을 입력하면 지식베이스와 웹 검색을 기반으로 답변합니다',
-    placeholderAgent: '{name} 질문하기',
+    placeholder: '질문이나 작업 내용을 입력하세요…',
     agentMode: 'Agent 모드',
     normalMode: '일반 모드',
     normalModeDesc: '지식베이스 기반 RAG Q&A',
@@ -4928,7 +4927,6 @@ export default {
     }
   },
   manualEditor: {
-    description: 'Markdown으로 지식을 작성하고 실시간 미리보기 지원',
     defaultTitlePrefix: '새 문서',
     noDocumentKnowledgeBases: '사용 가능한 문서형 지식베이스가 없습니다. 먼저 문서형 지식베이스를 생성해주세요',
     actions: {
@@ -4943,12 +4941,13 @@ export default {
     status: {
       draftTag: '현재 상태: 임시 저장',
       publishedTag: '현재 상태: 게시됨',
-      lastUpdated: '최근 업데이트: {time}'
+      lastUpdated: '최근 업데이트: {time}',
+      counter: '{chars}자 · {lines}줄'
     },
     form: {
-      knowledgeBaseLabel: '대상 지식베이스',
       knowledgeBasePlaceholder: '지식베이스를 선택해주세요',
       titleLabel: '지식 제목',
+      knowledgeBaseLabel: '대상 지식베이스',
       titlePlaceholder: '제목을 입력해주세요',
       contentPlaceholder: 'Markdown 구문을 지원합니다. # 제목, 목록, 코드 블록 등을 사용할 수 있습니다'
     },
@@ -4970,7 +4969,6 @@ export default {
       currentKnowledgeBase: '현재 지식베이스'
     },
     section: {
-      basic: '기본 정보',
       content: '지식 내용'
     },
     title: {
@@ -4980,9 +4978,17 @@ export default {
     preview: {
       empty: '내용 없음'
     },
+    shortcuts: {
+      title: '단축키',
+      continueList: '목록 이어쓰기',
+      indent: '들여쓰기 / Shift+Tab 내어쓰기'
+    },
     view: {
-      editLabel: '편집으로 돌아가기',
-      previewLabel: '내용 미리보기'
+      edit: '편집',
+      split: '분할',
+      preview: '미리보기',
+      splitUnavailable: '너비가 부족합니다. 서랍을 넓히거나 전체 화면으로 전환하세요',
+      groupLabel: '편집기 보기'
     },
     toolbar: {
       bold: '굵게',
@@ -5000,7 +5006,9 @@ export default {
       link: '링크 삽입',
       image: '이미지 삽입',
       table: '표 삽입',
-      horizontalRule: '구분선'
+      horizontalRule: '구분선',
+      headingGroup: '제목',
+      insertGroup: '삽입'
     },
     table: {
       column1: '열1',
@@ -5046,6 +5054,8 @@ export default {
       discard: '변경 사항 버리기',
       keepEditing: '계속 편집',
     },
+    fullscreen: '전체 화면',
+    exitFullscreen: '전체 화면 종료',
     save: '저장',
     delete: '삭제',
     edit: '편집',
@@ -6320,10 +6330,16 @@ export default {
       preview: '미리보기',
       previewBack: '목록으로',
       collecting: '생성된 파일을 저장하는 중…',
+      delete: '삭제',
+      deleteTitle: '이 파일을 삭제할까요?',
+      deleteConfirm: '「{name}」과(와) 저장된 내용이 영구적으로 삭제되며 복구할 수 없습니다.',
+      deleted: '파일을 삭제했습니다',
+      deleteFailed: '삭제에 실패했습니다. 다시 시도해 주세요.',
       download: '다운로드',
       downloadFailed: '다운로드에 실패했습니다. 다시 시도해 주세요.',
       inlinePreviewHint: '클릭하여 미리보기',
       inlineMissing: '파일을 사용할 수 없습니다',
+      inlineDeleted: '삭제된 파일',
     },
     updatePlan: '계획 업데이트',
     webSearchFound: '<strong>{count}</strong>개의 웹 검색 결과 발견',
@@ -6517,6 +6533,7 @@ export default {
     shareScope: {
       title: '공유 범위 설명',
       desc: '스페이스 구성원은 읽기 전용 모드로 에이전트를 사용하며 현재 구성된 기능과 리소스를 따릅니다. 에이전트에 대한 수정 사항은 공유 공간에 동기화됩니다. 스페이스 구성원이 지식베이스 콘텐츠를 편집할 수 있도록 허용하려면 지식베이스를 스페이스에 공유하세요.',
+      skillSecretsWarning: '이 에이전트는 스킬을 사용합니다. 스페이스 구성원이 사용하면 스킬이 이 워크스페이스의 샌드박스에서 관리자가 설정한 환경 변수(API 키 등)와 함께 실행되며, 구성원은 에이전트가 그 값을 출력하게 할 수 있습니다. 이를 허용할 수 있는 경우에만 공유하세요.',
       knowledgeBase: '지식베이스',
       chatModel: '대화 모델',
       rerankModel: '모델을 재배열하다',
@@ -6585,6 +6602,15 @@ export default {
     root: '지식 처리',
     attempt: '{n}번째 시도',
     retry: '다시 파싱',
+    notRun: '실행 안 됨',
+    stageFailed: '{stage} 단계 실패',
+    copyError: '오류 정보 복사',
+    stat: {
+      duration: '소요 시간',
+      attempt: '시도',
+      tasks: '백그라운드 작업',
+      tasksValue: '실행 중 {running} · 실패 {failed} · 완료 {completed}'
+    },
     refresh: '지금 새로고침',
     copy: '복사',
     copyDetails: '세부정보 복사',
@@ -6604,7 +6630,6 @@ export default {
     minutesAgo: '{n}분 전',
     noActivity: '파싱 활동 없음',
     totalDuration: '총 소요시간: {d}',
-    total: '총 {d}',
     errorCode: {
       UNKNOWN_SUGGESTION: '자세한 내용은 애플리케이션 로그를 확인하세요.'
     },
@@ -6659,8 +6684,6 @@ export default {
     head: {
       stagesDone: '주요 단계',
       stagesProgress: '현재 단계',
-      postprocessTasks: '후처리: 실행 중 {running} / 실패 {failed} / 완료 {completed}',
-      completedWithActiveTrace: '처리는 완료되었지만 {n}개의 Trace 작업이 아직 활성 상태입니다',
       attempt: '시도',
       updated: '갱신'
     },
@@ -6731,6 +6754,11 @@ export default {
     }
   },
   knowledgeBase: {
+    tagAddAction: '태그 추가',
+    documentCount: '문서 {count}개',
+    filters: '필터',
+    clearFilters: '필터 지우기',
+
     title: '지식베이스',
     fileContent: '파일 내용',
     name: '이름',
@@ -6738,11 +6766,10 @@ export default {
     settings: '설정',
     tagUpdateSuccess: '태그 업데이트 성공',
     tagEditDialogHeading: '태그 편집',
-    tagEditSearch: '태그 검색...',
-    tagEditSelectedSection: '선택된 태그',
-    tagEditAvailableSection: '선택 가능',
-    tagEditNoSelected: '선택 없음',
     folderTree: {
+      totalDocuments: '전체 문서 {count}개',
+      countHint: '현재 폴더 문서 {direct}개, 하위 폴더 포함 {total}개',
+      filteredCount: '일치하는 문서 {count}개',
       title: '폴더',
       rootRow: '루트',
       rootRowTip: '지식 베이스 루트 디렉터리, 하위 폴더에 없는 문서가 여기에 있습니다',
@@ -6783,10 +6810,13 @@ export default {
     tagManageListSection: '태그 목록',
     tagManageDocCount: '문서 {count}개',
     tagManageFaqCount: 'FAQ {count}개',
+    tagPickerSelected: '선택됨',
+    tagPickerUnselected: '선택 안 됨',
     tagSelectedCount: '{count}개 선택됨',
-    tagNewPlaceholder: '새 태그 이름 입력, Enter로 추가',
+    tagPickerSearch: "태그 검색 또는 만들기",
+    tagPickerInUse: "사용 중인 태그입니다. 먼저 문서 연결을 해제하세요.",
+    tagPickerDeleteConfirm: "“{name}” 태그를 삭제할까요?",
     untagged: '태그 없음',
-    tagClearAction: '선택 해제',
     tagCreateAction: '태그 생성',
     tagSearchPlaceholder: '태그 이름 키워드 입력',
     tagNamePlaceholder: '태그 이름을 입력하세요',
@@ -6977,9 +7007,6 @@ export default {
     batchTag: '일괄 태그',
     batchTagDialogHeading: '일괄 태그 지정',
     batchTagSubtitle: '선택한 {count}개 문서에 태그를 일괄 설정합니다 (기존 태그는 대체됩니다)',
-    batchTagSelectedSection: '선택된 태그',
-    batchTagAvailableSection: '선택 가능',
-    batchTagNoSelected: '선택 없음',
     batchTagSuccess: '{count}개 문서에 태그가 적용되었습니다',
     batchTagFailed: '일괄 태그 실패',
     confirmBatchReparseDocument: '선택한 {count}개 문서를 재구축하시겠습니까? 기존 내용이 삭제되고 각 문서가 다시 파싱됩니다.',
@@ -7386,6 +7413,12 @@ export default {
     total: '파일 {count}개',
     versions: '버전 {count}개',
     preview: '미리보기',
+    delete: '삭제',
+    deleteTitle: '이 파일을 삭제할까요?',
+    deleteConfirm: '「{name}」과(와) 저장된 내용이 영구적으로 삭제되며 복구할 수 없습니다.',
+    deleteConfirmVersions: '「{name}」의 {count}개 버전과 저장된 내용이 모두 영구적으로 삭제되며 복구할 수 없습니다.',
+    deleted: '파일을 삭제했습니다',
+    deleteFailed: '삭제에 실패했습니다. 다시 시도해 주세요.',
     download: '다운로드',
     downloadFailed: '다운로드에 실패했습니다. 잠시 후 다시 시도해 주세요',
     openSession: '대화 열기',

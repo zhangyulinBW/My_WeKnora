@@ -1380,7 +1380,7 @@ export default {
       maxTokensAgent: '每一轮推理的最大生成 Token（含工具调用 JSON）。选「默认」时，未绑沙箱为 4096，绑了沙箱（可写/改文件）为 24576。选「自定义」后按你填的数保存，不再自动改。',
       thinking: '启用模型的扩展思考能力（需要模型支持）',
       conversationSection: '配置多轮对话开关与问题改写开关（改写提示词见「提示词」）',
-      conversationSectionAgent: '配置每轮携带多少历史对话。智能推理始终为多轮模式。',
+      conversationSectionAgent: '智能推理始终为多轮模式：按模型上下文窗口保留历史对话，超出时自动把较早的内容压缩成摘要。',
       multiTurn: '开启后将保留历史对话上下文',
       historyRounds: '保留最近几轮对话作为上下文',
       retainRetrievalHistory: '保留此前轮次的知识库检索结果。关闭时每轮重新检索',
@@ -3825,10 +3825,12 @@ export default {
         authRevoked: '登录状态已失效，终端已断开。请重新登录后再连接。',
     },
     questionMinimapTitle: '问答',
+    questionMinimapPosition: '第 {current} 轮 · 共 {total} 轮',
     questionMinimapAriaLabel: '提问目录',
     questionMinimapAttachmentPlaceholder: '（附件）',
     referenceChunkCount: '{count}个片段',
     fallbackHint: '未从知识库中检索到相关内容，以上为模型直接回答',
+    truncatedHint: '回答在模型单次输出上限处被截断，以上为截断前已生成的内容',
     requestInfoTitle: '请求信息',
     requestInfoRequestId: 'Request ID',
     requestInfoMessageId: '消息 ID',
@@ -3924,6 +3926,7 @@ export default {
     processError: '处理出错',
     sessionExcerpt: '会话摘录',
     noAnswerContent: '（无回答内容）',
+    manualSourcesHeading: '参考来源',
     noMatchFound: '未找到匹配的内容',
     deleteSessionFailed: '删除失败，请稍后再试！',
     imageTooMany: '最多上传5张图片',
@@ -4864,11 +4867,7 @@ export default {
   },
   input: {
     addModel: '添加模型',
-    placeholder: '直接向模型提问',
-    placeholderWithContext: '输入问题，将基于上方选中的知识库/文件回答',
-    placeholderWebOnly: '输入问题，将结合网络搜索回答',
-    placeholderKbAndWeb: '输入问题，将基于知识库和网络搜索回答',
-    placeholderAgent: '向 {name} 提问',
+    placeholder: '输入问题或描述任务…',
     agentMode: '智能推理',
     normalMode: '快速问答',
     normalModeDesc: '基于知识库的 RAG 问答',
@@ -4930,7 +4929,6 @@ export default {
     }
   },
   manualEditor: {
-    description: '使用 Markdown 编写知识内容，支持实时预览',
     defaultTitlePrefix: '新建文档',
     noDocumentKnowledgeBases: '暂无可用的文档型知识库，请先创建一个文档型知识库',
     actions: {
@@ -4945,12 +4943,13 @@ export default {
     status: {
       draftTag: '当前状态：草稿',
       publishedTag: '当前状态：已发布',
-      lastUpdated: '最近更新：{time}'
+      lastUpdated: '最近更新：{time}',
+      counter: '{chars} 字 · {lines} 行'
     },
     form: {
-      knowledgeBaseLabel: '目标知识库',
       knowledgeBasePlaceholder: '请选择知识库',
       titleLabel: '知识标题',
+      knowledgeBaseLabel: '目标知识库',
       titlePlaceholder: '请输入标题',
       contentPlaceholder: '支持 Markdown 语法，可使用 # 标题、列表、代码块等'
     },
@@ -4972,7 +4971,6 @@ export default {
       currentKnowledgeBase: '当前知识库'
     },
     section: {
-      basic: '基本信息',
       content: '知识内容'
     },
     title: {
@@ -4982,9 +4980,17 @@ export default {
     preview: {
       empty: '暂无内容'
     },
+    shortcuts: {
+      title: '快捷键',
+      continueList: '列表内自动续行',
+      indent: '缩进 / Shift+Tab 反缩进'
+    },
     view: {
-      editLabel: '返回编辑',
-      previewLabel: '预览内容'
+      edit: '编辑',
+      split: '分屏',
+      preview: '预览',
+      splitUnavailable: '宽度不足，拖宽抽屉或全屏后可用分屏',
+      groupLabel: '编辑区视图'
     },
     toolbar: {
       bold: '加粗',
@@ -5002,7 +5008,9 @@ export default {
       link: '插入链接',
       image: '插入图片',
       table: '插入表格',
-      horizontalRule: '分割线'
+      horizontalRule: '分割线',
+      headingGroup: '标题',
+      insertGroup: '插入'
     },
     table: {
       column1: '列1',
@@ -5048,6 +5056,8 @@ export default {
       discard: '放弃更改',
       keepEditing: '继续编辑',
     },
+    fullscreen: '全屏',
+    exitFullscreen: '退出全屏',
     save: '保存',
     delete: '删除',
     edit: '编辑',
@@ -6322,10 +6332,16 @@ export default {
       preview: '预览',
       previewBack: '返回列表',
       collecting: '正在保存生成的文件…',
+      delete: '删除',
+      deleteTitle: '删除这个文件？',
+      deleteConfirm: '将永久删除「{name}」，包括已保存的文件内容，且无法恢复。',
+      deleted: '文件已删除',
+      deleteFailed: '删除失败，请稍后重试',
       download: '下载',
       downloadFailed: '下载失败，请稍后重试',
       inlinePreviewHint: '点击预览',
       inlineMissing: '文件不可用',
+      inlineDeleted: '文件已删除',
     },
     updatePlan: '更新计划',
     webSearchFound: '找到 <strong>{count}</strong> 个网络搜索结果',
@@ -6519,6 +6535,7 @@ export default {
     shareScope: {
       title: '共享范围说明',
       desc: '空间成员以只读方式使用该智能体，将遵循您当前配置的能力与资源；您对智能体的修改会同步给已共享的空间。如需允许空间成员编辑知识库内容，请将知识库共享到空间。',
+      skillSecretsWarning: '该智能体启用了技能：空间成员使用时，技能会在本空间的沙箱中运行，并带上管理员为技能配置的环境变量（如 API Key），成员可以让智能体读出这些值。请在可以接受这一点时再共享。',
       knowledgeBase: '知识库',
       chatModel: '对话模型',
       rerankModel: '重排模型',
@@ -6587,6 +6604,15 @@ export default {
     root: '知识处理',
     attempt: '第 {n} 次尝试',
     retry: '重新解析',
+    notRun: '未执行',
+    stageFailed: '{stage}阶段失败',
+    copyError: '复制错误信息',
+    stat: {
+      duration: '耗时',
+      attempt: '尝试',
+      tasks: '后台任务',
+      tasksValue: '运行中 {running} · 失败 {failed} · 已完成 {completed}'
+    },
     refresh: '立即刷新',
     copy: '复制',
     copyDetails: '复制详情',
@@ -6606,7 +6632,6 @@ export default {
     minutesAgo: '{n} 分钟前',
     noActivity: '暂无解析记录',
     totalDuration: '总耗时：{d}',
-    total: '总耗时 {d}',
     errorCode: {
       UNKNOWN_SUGGESTION: '请查看应用日志获取详细信息。'
     },
@@ -6661,8 +6686,6 @@ export default {
     head: {
       stagesDone: '主流程阶段',
       stagesProgress: '当前阶段',
-      postprocessTasks: '后台任务：运行中 {running} / 失败 {failed} / 已完成 {completed}',
-      completedWithActiveTrace: '处理已完成，但仍有 {n} 个 Trace 任务处于活动状态',
       attempt: '尝试',
       updated: '更新于'
     },
@@ -6733,6 +6756,11 @@ export default {
     }
   },
   knowledgeBase: {
+    tagAddAction: '添加标签',
+    documentCount: '{count} 个文档',
+    filters: '筛选',
+    clearFilters: '清除筛选',
+
     title: '知识库',
     fileContent: '文件内容',
     name: '名称',
@@ -6740,11 +6768,10 @@ export default {
     settings: '设置',
     tagUpdateSuccess: '标签已更新',
     tagEditDialogHeading: '编辑标签',
-    tagEditSearch: '搜索标签...',
-    tagEditSelectedSection: '已选标签',
-    tagEditAvailableSection: '可选标签',
-    tagEditNoSelected: '暂未选择',
     folderTree: {
+      totalDocuments: '共 {count} 个文档',
+      countHint: '当前目录 {direct} 个文档，含子目录共 {total} 个',
+      filteredCount: '匹配 {count} 个文档',
       title: '目录',
       rootRow: '根目录',
       rootRowTip: '知识库根目录，未归入子文件夹的文档在此',
@@ -6785,10 +6812,13 @@ export default {
     tagManageListSection: '标签列表',
     tagManageDocCount: '{count} 个文档',
     tagManageFaqCount: '{count} 个 FAQ',
+    tagPickerSelected: '已选择',
+    tagPickerUnselected: '未选择',
     tagSelectedCount: '已选 {count} 个标签',
-    tagNewPlaceholder: '输入新标签名称，回车添加',
+    tagPickerSearch: "搜索或新建标签",
+    tagPickerInUse: "此标签仍被使用，请先移除文档上的关联再删除",
+    tagPickerDeleteConfirm: "确定删除标签“{name}”？",
     untagged: '无标签',
-    tagClearAction: '清空已选',
     tagCreateAction: '新建标签',
     tagSearchPlaceholder: '输入标签名称关键字',
     tagNamePlaceholder: '请输入标签名称',
@@ -6979,9 +7009,6 @@ export default {
     batchTag: '批量打标签',
     batchTagDialogHeading: '批量打标签',
     batchTagSubtitle: '为选中的 {count} 个文档统一设置标签（将替换文档原有标签）',
-    batchTagSelectedSection: '已选标签',
-    batchTagAvailableSection: '可选标签',
-    batchTagNoSelected: '暂未选择',
     batchTagSuccess: '已为 {count} 个文档成功设置标签',
     batchTagFailed: '批量打标签失败',
     confirmBatchReparseDocument: '确认重建选中的 {count} 个文档？现有内容将被清除并重新解析。',
@@ -7388,6 +7415,12 @@ export default {
     total: '共 {count} 个文件',
     versions: '{count} 个版本',
     preview: '预览',
+    delete: '删除',
+    deleteTitle: '删除这个文件？',
+    deleteConfirm: '将永久删除「{name}」，包括已保存的文件内容，且无法恢复。',
+    deleteConfirmVersions: '将永久删除「{name}」的全部 {count} 个版本，包括已保存的文件内容，且无法恢复。',
+    deleted: '文件已删除',
+    deleteFailed: '删除失败，请稍后重试',
     download: '下载',
     downloadFailed: '下载失败，请稍后重试',
     openSession: '打开所在会话',

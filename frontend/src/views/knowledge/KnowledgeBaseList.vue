@@ -1,24 +1,32 @@
 <template>
   <div class="kb-list-container">
-    <ListSpaceSidebar v-if="!authStore.isLiteMode" v-model="spaceSelection" :count-all="allKnowledgeBases"
-      :count-mine="kbs.length" :count-by-org="effectiveSharedCountByOrg" :count-favorites="kbFavoritesCount"
-      :count-recents="kbRecentsCount" />
     <div class="kb-list-content">
       <div class="header" style="--wails-draggable: drag">
         <div class="header-title" style="--wails-draggable: drag">
           <div class="title-row" style="--wails-draggable: drag">
-            <h2 style="--wails-draggable: drag">{{ $t('knowledgeBase.title') }}</h2>
+            <h2 style="--wails-draggable: drag">
+              <ResourceIcon type="knowledge" :size="24" />
+              {{ $t('knowledgeBase.title') }}
+            </h2>
             <t-tooltip v-if="authStore.hasRole('contributor')" :content="$t('knowledgeList.create')" placement="bottom">
               <t-button variant="text" theme="default" size="small" class="header-action-btn"
                 data-guide="kb-list-create" style="--wails-draggable: no-drag" @click="handleCreateKnowledgeBase">
                 <template #icon><t-icon name="folder-add" size="16px" /></template>
+              {{ $t('knowledgeList.create') }}
               </t-button>
             </t-tooltip>
           </div>
           <p class="header-subtitle" style="--wails-draggable: drag">{{ $t('knowledgeList.subtitle') }}</p>
         </div>
       </div>
+      <ResourceListToolbar :hide-scopes="authStore.isLiteMode" v-model="spaceSelection" v-model:query="keyword" :count-all="allKnowledgeBases"
+      :count-mine="kbs.length" :count-by-org="effectiveSharedCountByOrg" :count-favorites="kbFavoritesCount"
+      :count-recents="kbRecentsCount" />
       <div class="kb-list-main">
+        <EmptyState v-if="keyword.trim() && !(loading || spaceKbsLoading) && visibleResultCount === 0" icon="search"
+          :title="$t('common.noResult')">
+          <t-button variant="outline" @click="keyword = ''">{{ $t('common.clear') }}</t-button>
+        </EmptyState>
         <!-- creator filter intentionally removed from chrome: every card
              already shows its creator via ResourceOriginBadge / avatar, so
              a dedicated horizontal switch added more noise than signal.
@@ -58,7 +66,7 @@
           <div
             v-if="filteredKnowledgeBases[0] && filteredKnowledgeBases[0].isMine && filteredKnowledgeBases[0].is_pinned"
             class="kb-section-header kb-section-header-pinned" role="button" tabindex="0"
-            @click="toggleKbSection('pinned')"
+            :aria-expanded="!isKbSectionCollapsed('pinned')" @click="toggleKbSection('pinned')"
             @keydown.enter.prevent="toggleKbSection('pinned')"
             @keydown.space.prevent="toggleKbSection('pinned')">
             <t-icon name="pin-filled" size="14px" />
@@ -72,17 +80,14 @@
                仅查看 / 共享给我）各自打自己的标题；原本的「其他」过渡标题
                在 per-user 置顶模型下已无意义，删除以免和具体子段标题叠加。 -->
           <template v-for="(kb, index) in filteredKnowledgeBases" :key="kb.id">
-            <!-- 我创建的：第一张「我创建」非置顶卡片前打标题，统一展示
-                 不管上方是否存在「已置顶」段。与「本空间 · 仅查看」同样
-                 仅在 contributor 视图下出现——admin/owner 视图原本就没有
-                 任何分段标题，单独冒一个反而失衡。 -->
-            <div v-if="showShareGroupHeaders
-              && kb.isMine
+            <!-- 我创建的：第一张「我创建」非置顶卡片前打标题，
+                 对所有角色显示，不受上方是否存在「已置顶」分组影响。 -->
+            <div v-if="kb.isMine
               && isMyKb(kb as KB)
               && !kb.is_pinned
               && (index === 0
                 || (filteredKnowledgeBases[index - 1] as any).is_pinned)" class="kb-section-header" role="button"
-              tabindex="0" @click="toggleKbSection('mine')"
+              tabindex="0" :aria-expanded="!isKbSectionCollapsed('mine')" @click="toggleKbSection('mine')"
               @keydown.enter.prevent="toggleKbSection('mine')"
               @keydown.space.prevent="toggleKbSection('mine')">
               <t-icon name="user" size="14px" />
@@ -95,15 +100,14 @@
                  当前卡片必须是非置顶（否则归在「已置顶」），且前一张要么
                  不存在、要么是「共享给我」、要么是我创建、要么是置顶卡片
                  （置顶→非置顶的过渡同样要打这个标题）。 -->
-            <div v-if="showShareGroupHeaders
-              && kb.isMine
+            <div v-if="kb.isMine
               && !isMyKb(kb as KB)
               && !kb.is_pinned
               && (index === 0
                 || !filteredKnowledgeBases[index - 1].isMine
                 || isMyKb(filteredKnowledgeBases[index - 1] as KB)
                 || (filteredKnowledgeBases[index - 1] as any).is_pinned)" class="kb-section-header" role="button"
-              tabindex="0" @click="toggleKbSection('tenantOthers')"
+              tabindex="0" :aria-expanded="!isKbSectionCollapsed('tenantOthers')" @click="toggleKbSection('tenantOthers')"
               @keydown.enter.prevent="toggleKbSection('tenantOthers')"
               @keydown.space.prevent="toggleKbSection('tenantOthers')">
               <t-icon :name="tenantSectionIconName" size="14px" />
@@ -113,11 +117,10 @@
                 :name="isKbSectionCollapsed('tenantOthers') ? 'chevron-right' : 'chevron-down'" size="14px" />
             </div>
             <!-- 共享给我 · 可编辑：从「我的（含同事）」首次过渡到共享 + 可编辑 -->
-            <div v-if="showShareGroupHeaders
-              && !kb.isMine
+            <div v-if="!kb.isMine
               && isSharedKbEditable((kb as any).permission)
               && (index === 0 || filteredKnowledgeBases[index - 1].isMine)" class="kb-section-header" role="button"
-              tabindex="0" @click="toggleKbSection('sharedEditable')"
+              tabindex="0" :aria-expanded="!isKbSectionCollapsed('sharedEditable')" @click="toggleKbSection('sharedEditable')"
               @keydown.enter.prevent="toggleKbSection('sharedEditable')"
               @keydown.space.prevent="toggleKbSection('sharedEditable')">
               <t-icon name="usergroup-add" size="14px" />
@@ -128,13 +131,12 @@
                 :name="isKbSectionCollapsed('sharedEditable') ? 'chevron-right' : 'chevron-down'" size="14px" />
             </div>
             <!-- 共享给我 · 仅查看：从「可编辑共享 / 我的」过渡到 viewer 共享 -->
-            <div v-if="showShareGroupHeaders
-              && !kb.isMine
+            <div v-if="!kb.isMine
               && !isSharedKbEditable((kb as any).permission)
               && (index === 0
                 || filteredKnowledgeBases[index - 1].isMine
                 || isSharedKbEditable((filteredKnowledgeBases[index - 1] as any).permission))"
-              class="kb-section-header" role="button" tabindex="0" @click="toggleKbSection('sharedReadonly')"
+              class="kb-section-header" role="button" tabindex="0" :aria-expanded="!isKbSectionCollapsed('sharedReadonly')" @click="toggleKbSection('sharedReadonly')"
               @keydown.enter.prevent="toggleKbSection('sharedReadonly')"
               @keydown.space.prevent="toggleKbSection('sharedReadonly')">
               <t-icon name="usergroup-add" size="14px" />
@@ -152,11 +154,10 @@
               'highlight-flash': highlightedKbId !== null && highlightedKbId === kb.id
             }"
               :ref="el => { if (highlightedKbId !== null && highlightedKbId === kb.id && el) highlightedCardRef = el as HTMLElement }"
-              @click="handleCardClick(kb)">
-              <!-- 收藏按钮：右上角浮动；通过 .card-header 的 padding-right
-                   给「更多」按钮腾出空间，避免两个按钮叠在一起。 -->
+              role="link" tabindex="0" @keydown.enter.self.prevent="handleCardClick(kb)" @keydown.space.self.prevent="handleCardClick(kb)" @click="handleCardClick(kb)">
+              <!-- 行尾收藏操作，与更多菜单分开。 -->
               <button type="button" class="kb-favorite-star" :class="{ 'is-favorited': isKbFavorited(kb.id) }"
-                @click.stop="toggleFavoriteKb(kb.id, $event)">
+                :aria-label="$t('listSpaceSidebar.favorites')" :aria-pressed="isKbFavorited(kb.id)" @click.stop="toggleFavoriteKb(kb.id, $event)">
                 <t-icon :name="isKbFavorited(kb.id) ? 'star-filled' : 'star'" size="14px" />
               </button>
               <!-- 卡片头部 -->
@@ -171,9 +172,9 @@
                      Delete are mutations, so they stay behind canManageKBCard. -->
                 <t-popup overlayClassName="card-more-popup" trigger="click" destroy-on-close
                   placement="bottom-right">
-                  <div class="more-wrap" @click.stop>
+                  <button type="button" :aria-label="$t('common.expand')" class="more-wrap" @click.stop>
                     <img class="more-icon" src="@/assets/img/more.png" alt="" />
-                  </div>
+                  </button>
                   <template #content>
                     <div class="popup-menu" @click.stop>
                       <div class="popup-menu-item" @click.stop="handleTogglePinById(kb.id)">
@@ -202,7 +203,7 @@
 
               <!-- 卡片内容 -->
               <div class="card-content">
-                <div class="card-description">
+                <div class="card-description" :title="kb.description || $t('knowledgeBase.noDescription')">
                   {{ kb.description || $t('knowledgeBase.noDescription') }}
                 </div>
               </div>
@@ -258,9 +259,9 @@
             <div v-else v-show="!isKbSectionCollapsed(kbSectionOf(kb))" class="kb-card shared-kb-card" :class="{
               'kb-type-document': (kb.type || 'document') === 'document',
               'kb-type-faq': kb.type === 'faq'
-            }" @click="handleSharedKbClickFromAll(kb)">
+            }" role="link" tabindex="0" @keydown.enter.self.prevent="handleSharedKbClickFromAll(kb)" @keydown.space.self.prevent="handleSharedKbClickFromAll(kb)" @click="handleSharedKbClickFromAll(kb)">
               <button type="button" class="kb-favorite-star" :class="{ 'is-favorited': isKbFavorited(kb.id) }"
-                @click.stop="toggleFavoriteKb(kb.id, $event)">
+                :aria-label="$t('listSpaceSidebar.favorites')" :aria-pressed="isKbFavorited(kb.id)" @click.stop="toggleFavoriteKb(kb.id, $event)">
                 <t-icon :name="isKbFavorited(kb.id) ? 'star-filled' : 'star'" size="14px" />
               </button>
               <!-- 卡片头部 -->
@@ -279,7 +280,7 @@
 
               <!-- 卡片内容 -->
               <div class="card-content">
-                <div class="card-description">
+                <div class="card-description" :title="kb.description || $t('knowledgeBase.noDescription')">
                   {{ kb.description || $t('knowledgeBase.noDescription') }}
                 </div>
               </div>
@@ -337,7 +338,7 @@
         <div v-if="spaceSelection === 'mine' && sortedMineKbs.length > 0" class="kb-card-wrap">
           <!-- 置顶分组标题 -->
           <div v-if="sortedMineKbs[0] && sortedMineKbs[0].is_pinned" class="kb-section-header kb-section-header-pinned"
-            role="button" tabindex="0" @click="toggleKbSection('pinned')"
+            role="button" tabindex="0" :aria-expanded="!isKbSectionCollapsed('pinned')" @click="toggleKbSection('pinned')"
             @keydown.enter.prevent="toggleKbSection('pinned')"
             @keydown.space.prevent="toggleKbSection('pinned')">
             <t-icon name="pin-filled" size="14px" />
@@ -352,11 +353,10 @@
             <!-- 我创建的：第一张非置顶的我创建卡片前打标题，无论上方是否
                  有「已置顶」段都要显示，和「本空间 · 仅查看」对齐——见
                  「全部」tab 同处注释。 -->
-            <div v-if="showShareGroupHeaders
-              && isMyKb(kb)
+            <div v-if="isMyKb(kb)
               && !kb.is_pinned
               && (index === 0 || sortedMineKbs[index - 1].is_pinned)" class="kb-section-header" role="button"
-              tabindex="0" @click="toggleKbSection('mine')"
+              tabindex="0" :aria-expanded="!isKbSectionCollapsed('mine')" @click="toggleKbSection('mine')"
               @keydown.enter.prevent="toggleKbSection('mine')"
               @keydown.space.prevent="toggleKbSection('mine')">
               <t-icon name="user" size="14px" />
@@ -367,13 +367,12 @@
             </div>
             <!-- 本空间 · 仅查看：当前非置顶的同事 KB，且前一张要么不存在、
                  要么是我创建、要么是置顶卡片（置顶→非置顶过渡）。 -->
-            <div v-if="showShareGroupHeaders
-              && !isMyKb(kb)
+            <div v-if="!isMyKb(kb)
               && !kb.is_pinned
               && (index === 0
                 || isMyKb(sortedMineKbs[index - 1])
                 || sortedMineKbs[index - 1].is_pinned)" class="kb-section-header" role="button" tabindex="0"
-              @click="toggleKbSection('tenantOthers')"
+              :aria-expanded="!isKbSectionCollapsed('tenantOthers')" @click="toggleKbSection('tenantOthers')"
               @keydown.enter.prevent="toggleKbSection('tenantOthers')"
               @keydown.space.prevent="toggleKbSection('tenantOthers')">
               <t-icon :name="tenantSectionIconName" size="14px" />
@@ -389,9 +388,9 @@
               'highlight-flash': highlightedKbId !== null && highlightedKbId === kb.id
             }"
               :ref="el => { if (highlightedKbId !== null && highlightedKbId === kb.id && el) highlightedCardRef = el as HTMLElement }"
-              @click="handleCardClick(kb)">
+              role="link" tabindex="0" @keydown.enter.self.prevent="handleCardClick(kb)" @keydown.space.self.prevent="handleCardClick(kb)" @click="handleCardClick(kb)">
               <button type="button" class="kb-favorite-star" :class="{ 'is-favorited': isKbFavorited(kb.id) }"
-                @click.stop="toggleFavoriteKb(kb.id, $event)">
+                :aria-label="$t('listSpaceSidebar.favorites')" :aria-pressed="isKbFavorited(kb.id)" @click.stop="toggleFavoriteKb(kb.id, $event)">
                 <t-icon :name="isKbFavorited(kb.id) ? 'star-filled' : 'star'" size="14px" />
               </button>
               <!-- 卡片头部 -->
@@ -404,10 +403,10 @@
                      this is no longer gated by canManageKBCard. -->
                 <t-popup v-model="kb.showMore" overlayClassName="card-more-popup"
                   :on-visible-change="onVisibleChange" trigger="click" destroy-on-close placement="bottom-right">
-                  <div variant="outline" class="more-wrap" @click.stop="openMore(index)"
+                  <button type="button" :aria-label="$t('common.expand')" class="more-wrap" @click.stop="openMore(index)"
                     :class="{ 'active-more': currentMoreIndex === index }">
                     <img class="more-icon" src="@/assets/img/more.png" alt="" />
-                  </div>
+                  </button>
                   <template #content>
                     <div class="popup-menu" @click.stop>
                       <div class="popup-menu-item" @click.stop="handleTogglePin(kb)">
@@ -435,7 +434,7 @@
 
               <!-- 卡片内容 -->
               <div class="card-content">
-                <div class="card-description">
+                <div class="card-description" :title="kb.description || $t('knowledgeBase.noDescription')">
                   {{ kb.description || $t('knowledgeBase.noDescription') }}
                 </div>
               </div>
@@ -501,8 +500,8 @@
           <template v-for="(shared, index) in sortedSpaceKbsList"
             :key="'shared-' + (shared.share_id || `agent-${shared.knowledge_base?.id}-${shared.source_from_agent?.agent_id || ''}`)">
             <!-- 我共享的：本空间下我自己创建并共享进来的条目，只在第一条 is_mine 上挂标题 -->
-            <div v-if="showShareGroupHeaders && shared.is_mine && index === 0" class="kb-section-header"
-              role="button" tabindex="0" @click="toggleKbSection('sharedByMe')"
+            <div v-if="shared.is_mine && index === 0" class="kb-section-header"
+              role="button" tabindex="0" :aria-expanded="!isKbSectionCollapsed('sharedByMe')" @click="toggleKbSection('sharedByMe')"
               @keydown.enter.prevent="toggleKbSection('sharedByMe')"
               @keydown.space.prevent="toggleKbSection('sharedByMe')">
               <t-icon name="share" size="14px" />
@@ -512,11 +511,10 @@
                 :name="isKbSectionCollapsed('sharedByMe') ? 'chevron-right' : 'chevron-down'" size="14px" />
             </div>
             <!-- 共享给我 · 可编辑：从「我的」首次进入「共享 + 可编辑」 -->
-            <div v-if="showShareGroupHeaders
-              && !shared.is_mine
+            <div v-if="!shared.is_mine
               && isSharedKbEditable(shared.permission)
               && (index === 0 || sortedSpaceKbsList[index - 1].is_mine)" class="kb-section-header"
-              role="button" tabindex="0" @click="toggleKbSection('sharedEditable')"
+              role="button" tabindex="0" :aria-expanded="!isKbSectionCollapsed('sharedEditable')" @click="toggleKbSection('sharedEditable')"
               @keydown.enter.prevent="toggleKbSection('sharedEditable')"
               @keydown.space.prevent="toggleKbSection('sharedEditable')">
               <t-icon name="usergroup-add" size="14px" />
@@ -527,13 +525,12 @@
                 :name="isKbSectionCollapsed('sharedEditable') ? 'chevron-right' : 'chevron-down'" size="14px" />
             </div>
             <!-- 共享给我 · 仅查看：从「可编辑共享 / 我的」首次进入「viewer」 -->
-            <div v-if="showShareGroupHeaders
-              && !shared.is_mine
+            <div v-if="!shared.is_mine
               && !isSharedKbEditable(shared.permission)
               && (index === 0
                 || sortedSpaceKbsList[index - 1].is_mine
                 || isSharedKbEditable(sortedSpaceKbsList[index - 1].permission))" class="kb-section-header"
-              role="button" tabindex="0" @click="toggleKbSection('sharedReadonly')"
+              role="button" tabindex="0" :aria-expanded="!isKbSectionCollapsed('sharedReadonly')" @click="toggleKbSection('sharedReadonly')"
               @keydown.enter.prevent="toggleKbSection('sharedReadonly')"
               @keydown.space.prevent="toggleKbSection('sharedReadonly')">
               <t-icon name="usergroup-add" size="14px" />
@@ -546,7 +543,7 @@
             <div v-show="!isSpaceKbCollapsed(shared)" class="kb-card shared-kb-card" :class="{
               'kb-type-document': (shared.knowledge_base.type || 'document') === 'document',
               'kb-type-faq': shared.knowledge_base.type === 'faq'
-            }" @click="handleSharedKbClick(shared)">
+            }" role="link" tabindex="0" @keydown.enter.self.prevent="handleSharedKbClick(shared)" @keydown.space.self.prevent="handleSharedKbClick(shared)" @click="handleSharedKbClick(shared)">
               <!-- 卡片头部 -->
               <div class="card-header">
                 <span class="card-title" :title="shared.knowledge_base.name">
@@ -563,7 +560,7 @@
 
               <!-- 卡片内容 -->
               <div class="card-content">
-                <div class="card-description">
+                <div class="card-description" :title="shared.knowledge_base.description || $t('knowledgeBase.noDescription')">
                   {{ shared.knowledge_base.description || $t('knowledgeBase.noDescription') }}
                 </div>
               </div>
@@ -592,8 +589,9 @@
         </div>
 
         <!-- 全部空状态：保留「新建知识库」CTA，因为是空间没有任何 KB 的真空场景 -->
-        <EmptyState v-if="spaceSelection === 'all' && filteredKnowledgeBases.length === 0 && !loading" icon="folder-open" :title="$t('knowledgeList.empty.title')"
+        <EmptyState v-if="!keyword.trim() && spaceSelection === 'all' && filteredKnowledgeBases.length === 0 && !loading" :title="$t('knowledgeList.empty.title')"
           :description="$t('knowledgeList.empty.description')">
+          <template #icon><ResourceIcon type="knowledge" :size="32" /></template>
           <t-button v-if="authStore.hasRole('contributor')" theme="primary" class="kb-create-btn"
             data-guide="kb-list-create" @click="handleCreateKnowledgeBase">
             <template #icon><t-icon name="folder-add" /></template>
@@ -603,16 +601,17 @@
 
         <!-- 收藏空状态：不放创建按钮——「没有收藏」 ≠ 「没有知识库」，
              正确引导是「去星标一下」，不是「再建一个」。 -->
-        <EmptyState v-if="spaceSelection === 'favorites' && filteredKnowledgeBases.length === 0 && !loading" icon="star" :title="$t('knowledgeList.empty.favoritesTitle')"
+        <EmptyState v-if="!keyword.trim() && spaceSelection === 'favorites' && filteredKnowledgeBases.length === 0 && !loading" icon="star" :title="$t('knowledgeList.empty.favoritesTitle')"
           :description="$t('knowledgeList.empty.favoritesDescription')" />
 
         <!-- 最近空状态：同理，引导是「去打开一个」。 -->
-        <EmptyState v-if="spaceSelection === 'recents' && filteredKnowledgeBases.length === 0 && !loading" icon="history" :title="$t('knowledgeList.empty.recentsTitle')"
+        <EmptyState v-if="!keyword.trim() && spaceSelection === 'recents' && filteredKnowledgeBases.length === 0 && !loading" icon="history" :title="$t('knowledgeList.empty.recentsTitle')"
           :description="$t('knowledgeList.empty.recentsDescription')" />
 
         <!-- 我的知识库空状态 -->
-        <EmptyState v-if="spaceSelection === 'mine' && kbs.length === 0 && !loading" icon="folder-open" :title="$t('knowledgeList.empty.title')"
+        <EmptyState v-if="!keyword.trim() && spaceSelection === 'mine' && kbs.length === 0 && !loading" :title="$t('knowledgeList.empty.title')"
           :description="$t('knowledgeList.empty.description')">
+          <template #icon><ResourceIcon type="knowledge" :size="32" /></template>
           <t-button v-if="authStore.hasRole('contributor')" theme="primary" class="kb-create-btn"
             data-guide="kb-list-create" @click="handleCreateKnowledgeBase">
             <template #icon><t-icon name="folder-add" /></template>
@@ -621,8 +620,10 @@
         </EmptyState>
 
         <!-- 空间下知识库空状态 -->
-        <EmptyState v-if="spaceSelectionOrgId && !spaceKbsLoading && spaceKbsList.length === 0" icon="folder-open" :title="$t('knowledgeList.empty.sharedTitle')"
-          :description="$t('knowledgeList.empty.sharedDescription')" />
+        <EmptyState v-if="!keyword.trim() && spaceSelectionOrgId && !spaceKbsLoading && spaceKbsList.length === 0" :title="$t('knowledgeList.empty.sharedTitle')"
+          :description="$t('knowledgeList.empty.sharedDescription')">
+          <template #icon><ResourceIcon type="knowledge" :size="32" /></template>
+        </EmptyState>
       </div>
     </div>
 
@@ -630,10 +631,6 @@
     <KnowledgeBaseEditorModal :visible="uiStore.showKBEditorModal" :mode="uiStore.kbEditorMode"
       :kb-id="uiStore.currentKBId || undefined" :initial-type="uiStore.kbEditorType"
       @update:visible="(val) => val ? null : uiStore.closeKBEditor()" @success="handleKBEditorSuccess" />
-
-    <!-- 共享知识库对话框 -->
-    <ShareKnowledgeBaseDialog v-model:visible="shareDialogVisible" :knowledge-base-id="sharingKbId"
-      :knowledge-base-name="sharingKbName" @shared="handleShareSuccess" />
 
     <!-- 右侧：共享知识库详情面板 -->
     <Teleport to="body">
@@ -712,6 +709,7 @@ import { onMounted, onUnmounted, ref, computed, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { MessagePlugin, Icon as TIcon } from 'tdesign-vue-next'
 import EmptyState from '@/components/EmptyState.vue'
+import ResourceIcon from '@/components/icons/ResourceIcon.vue'
 import { useConfirmDelete } from '@/components/settings/useConfirmDelete'
 import { deleteKnowledgeBase, duplicateKnowledgeBase, togglePinKnowledgeBase } from '@/api/knowledge-base'
 import { useChatResourcesStore } from '@/stores/chatResources'
@@ -723,8 +721,8 @@ import { listOrganizationSharedKnowledgeBases, type SharedKnowledgeBase, type Or
 import { mergeAllScopeKnowledgeBases, type OwnedKnowledgeBase, type SharedKnowledgeBaseLike } from './kbListMerge'
 import KnowledgeBaseEditorModal from './KnowledgeBaseEditorModal.vue'
 import KbWikiBadge from './components/KbWikiBadge.vue'
-import ShareKnowledgeBaseDialog from '@/components/ShareKnowledgeBaseDialog.vue'
-import ListSpaceSidebar from '@/components/ListSpaceSidebar.vue'
+import ResourceListToolbar from '@/components/ResourceListToolbar.vue'
+import { matchesResourceQuery } from '@/utils/resourceListSearch'
 import ResourceOriginBadge from '@/components/ResourceOriginBadge.vue'
 import { shouldShowResourceOriginBadge } from '@/utils/card-list-badge'
 import ContextualGuide from '@/components/ContextualGuide.vue'
@@ -751,10 +749,9 @@ const { t } = useI18n()
 // State lives in `?scope=` so links are shareable/bookmarkable; the
 // composable handles two-way sync with the URL. We keep "mine" as the
 // stored value (not "workspace") for back-compat with any external link
-// that might point at the old query — its display label is rebranded
-// via ListSpaceSidebar's workspaceLabel computed.
+// that might point at the old query; ResourceListToolbar labels it as the current workspace.
 const defaultScope: 'all' | 'mine' = authStore.hasRole('contributor') ? 'mine' : 'all'
-const { scope: spaceSelection, creator: creatorFilter } = useListUrlState({
+const { scope: spaceSelection, creator: creatorFilter, query: keyword } = useListUrlState({
   defaultScope,
   defaultCreator: 'all',
 })
@@ -807,11 +804,6 @@ const highlightedKbId = ref<string | null>(null)
 const highlightedCardRef = ref<HTMLElement | null>(null)
 let uploadRefreshTimer: ReturnType<typeof setTimeout> | null = null
 
-// Share dialog state
-const shareDialogVisible = ref(false)
-const sharingKbId = ref('')
-const sharingKbName = ref('')
-
 // Shared knowledge bases (everything cross-tenant shared to me, including
 // viewer-only). Used by the per-space views and the "all" aggregate so
 // readers still see read-only shares — those are valid resources, just
@@ -821,7 +813,7 @@ const sharedKbs = computed<SharedKnowledgeBase[]>(() => orgStore.sharedKnowledge
 const allKnowledgeBases = computed(() => kbs.value.length + sharedKbs.value.length)
 
 // 当前选中的是空间 ID（非全部、非我的、非收藏/最近这类伪 scope）
-// NB: keep the reserved-scope list in sync with ListSpaceSidebar's
+// NB: keep the reserved-scope list in sync with ResourceListToolbar's
 // non-org buckets — otherwise a new pseudo-scope (e.g. "favorites")
 // falls through here and triggers the per-space code paths, which
 // renders an extra "no shared KB" empty state on top of the real view.
@@ -829,13 +821,6 @@ const RESERVED_SCOPES = new Set(['all', 'mine', 'favorites', 'recents'])
 const spaceSelectionOrgId = computed(() => {
   const s = spaceSelection.value
   return !!s && !RESERVED_SCOPES.has(s)
-})
-
-// 当前空间下共享给我的知识库（旧：仅他人共享；保留用于兼容）
-const sharedKbsByOrg = computed(() => {
-  const orgId = spaceSelection.value
-  if (orgId === 'all' || orgId === 'mine') return []
-  return sharedKbs.value.filter(s => s.organization_id === orgId)
 })
 
 // 空间视角：该空间内全部知识库（含我共享的），选中空间时请求新接口
@@ -855,7 +840,7 @@ const spaceKbsLoading = ref(false)
 // even though it would otherwise live in the teammate sub-group. The
 // previous version only bucketed by isMyKb and silently demoted these
 // pinned-but-teammate KBs.
-const sortedMineKbs = computed<KB[]>(() => {
+const unsearchedSortedMineKbs = computed<KB[]>(() => {
   return [...kbs.value].sort((a, b) => {
     const ap = a.is_pinned ? 0 : 1
     const bp = b.is_pinned ? 0 : 1
@@ -873,10 +858,11 @@ const sortedMineKbs = computed<KB[]>(() => {
     return bc - ac
   })
 })
+const sortedMineKbs = computed(() => unsearchedSortedMineKbs.value.filter(item => matchesResourceQuery(item, keyword.value)))
 
 // 空间视角下的稳定排序：我创建的（is_mine）放在前面，剩下的共享部分再按
 // 可编辑 / 仅查看 排序——这样空间列表跟「全部」视图的视觉顺序一致。
-const sortedSpaceKbsList = computed(() => {
+const unsearchedSortedSpaceKbsList = computed(() => {
   return [...spaceKbsList.value].sort((a, b) => {
     const aMine = a.is_mine ? 0 : 1
     const bMine = b.is_mine ? 0 : 1
@@ -886,6 +872,7 @@ const sortedSpaceKbsList = computed(() => {
     return aE - bE
   })
 })
+const sortedSpaceKbsList = computed(() => unsearchedSortedSpaceKbsList.value.filter(item => matchesResourceQuery(item.knowledge_base, keyword.value)))
 const spaceCountByOrg = ref<Record<string, number>>({})
 
 // 各空间下的共享知识库数量（用于侧栏展示）：优先用接口返回的该空间总数，否则用「共享给我」数量
@@ -988,17 +975,6 @@ function isSharedKbEditable(perm: string | undefined): boolean {
   return !!perm && EDITABLE_PERMS.has(perm)
 }
 
-// 是否在共享区展示「可编辑 / 仅查看」二级分组：仅对中间档（contributor / editor）
-// 有意义。viewer 反正都是只读，admin / owner 视角统一管理，分组反而碎。
-// 这里只是 UI 呈现，权限由后端兜底，不要把它当成安全边界。
-// 分组标题对所有角色生效——置顶 / 我创建的 / 本空间 · 仅查看 / 共享给我
-// 都是基于"创建者 + 来源"的客观信息，不依赖当前用户的可写权限。
-// 原本只对 contributor 显示是为了在 admin/owner 那里隐藏"仅查看"这个权限
-// 暗示——但实际上 admin/owner 也会想区分自己创建 vs 同事创建的卡片，所以
-// 现在统一打开。如果哪天需要把权限色彩从标题里拿掉，就改 i18n 文案即可，
-// 不需要再回头碰这个 computed。
-const showShareGroupHeaders = computed(() => true)
-
 // 同空间、非当前用户创建的 KB 分组标题。
 // contributor / viewer 在本空间里对这些 KB 没有写权限，所以打"仅查看"；
 // admin / owner 反而对整个空间都有编辑权限，"仅查看"会反复误导他们以为
@@ -1083,7 +1059,7 @@ const spaceKbSectionCounts = computed<Record<KbSectionKey, number>>(() => {
 // pre-filtered, pre-ordered slices, so the existing kb-card / shared
 // kb-card templates render them with zero extra markup. Order is
 // preserved via the upstream array (pins order is ts-desc).
-const filteredKnowledgeBases = computed(() => {
+const unsearchedFilteredKnowledgeBases = computed(() => {
   if (spaceSelection.value === 'favorites') {
     return favoritesList.value
   }
@@ -1109,9 +1085,10 @@ const filteredKnowledgeBases = computed(() => {
     authStore.user?.id,
   ) as unknown as Array<(KB & { isMine: true }) | (SharedKnowledgeBase['knowledge_base'] & { isMine: false; permission: string; shared_at: string; share_id: string } & any)>
 })
+const filteredKnowledgeBases = computed(() => unsearchedFilteredKnowledgeBases.value.filter(item => matchesResourceQuery(item, keyword.value)))
 
 const showKbListEmpty = computed(() => {
-  if (loading.value) return false
+  if (loading.value || keyword.value.trim()) return false
   if (!authStore.hasRole('contributor')) return false
   if (spaceSelection.value === 'all' && filteredKnowledgeBases.value.length === 0) return true
   if (spaceSelection.value === 'mine' && kbs.value.length === 0) return true
@@ -1286,7 +1263,7 @@ function showKbOriginBadge(kb: { creator_id?: string; creator_name?: string }): 
     section: kbSectionOf(kb),
     variant: kbOriginVariant(kb),
     creatorName: kb.creator_name,
-    showSectionHeaders: showShareGroupHeaders.value,
+    showSectionHeaders: true,
   })
 }
 
@@ -1355,19 +1332,6 @@ const duplicateKB = async (id: string) => {
   } catch (e: any) {
     MessagePlugin.error(e?.message || t('knowledgeList.messages.duplicateFailed'))
   }
-}
-
-const handleShare = (kb: KB) => {
-  // 手动关闭弹窗
-  kb.showMore = false
-  sharingKbId.value = kb.id
-  sharingKbName.value = kb.name
-  shareDialogVisible.value = true
-}
-
-const handleShareSuccess = () => {
-  // 共享成功后可刷新列表
-  fetchList(true)
 }
 
 const handleSharedKbClick = (sharedKb: SharedKnowledgeBase) => {
@@ -1555,28 +1519,23 @@ const handleUploadFinishedEvent = (event: Event) => {
     uploadRefreshTimer = null
   }, 800)
 }
+const visibleResultCount = computed(() => spaceSelection.value === 'mine' ? sortedMineKbs.value.length : spaceSelectionOrgId.value ? sortedSpaceKbsList.value.length : filteredKnowledgeBases.value.length)
+// A new search reveals matching rows even if their group was previously collapsed.
+watch(keyword, () => { collapsedKbSections.value = new Set() })
 </script>
 
 <style scoped lang="less">
 @import (reference) '@/components/css/resource-card.less';
 
 .kb-list-container {
-  margin: 0;
-  height: 100%;
-  box-sizing: border-box;
   flex: 1;
-  display: flex;
-  position: relative;
+  min-width: 0;
   min-height: 0;
+  height: 100%;
+  display: flex;
 }
 
-.kb-list-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  padding: 20px 0 0 28px;
-}
+.kb-list-content { .resource-list-content(); }
 
 .header {
   display: flex;
@@ -1598,6 +1557,9 @@ const handleUploadFinishedEvent = (event: Event) => {
   }
 
   h2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin: 0;
     color: var(--td-text-color-primary);
     font-family: var(--app-font-family);
@@ -1608,17 +1570,7 @@ const handleUploadFinishedEvent = (event: Event) => {
 
 }
 
-.kb-list-main {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  // 顶部不留 padding，sticky 的分组标题 (top: 0) 才能贴到容器最顶；
-  // 底部 padding 保留，避免最后一行卡片紧贴边。
-  padding: 0 28px 8px 0;
-  scrollbar-width: auto;
-  scrollbar-color: auto;
-}
+.kb-list-main { .resource-list-main(); }
 
 .kb-list-main-loading {
   display: flex;
@@ -1627,17 +1579,6 @@ const handleUploadFinishedEvent = (event: Event) => {
   min-height: 200px;
   padding: 12px;
   background: var(--td-bg-color-container);
-}
-
-.shared-by-me-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 6px;
-  background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
-  border-radius: var(--app-radius-xs);
-  font-size: var(--app-text-sm);
-  color: var(--td-brand-color);
-  margin-left: 6px;
 }
 
 .header-subtitle {
@@ -1677,68 +1618,6 @@ const handleUploadFinishedEvent = (event: Event) => {
   }
 }
 
-// Tab 切换样式（已由左侧菜单替代，保留以备兼容）
-.kb-tabs {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  border-bottom: 1px solid var(--td-component-stroke);
-  margin-bottom: 20px;
-
-  .tab-item {
-    padding: 12px 0;
-    cursor: pointer;
-    color: var(--td-text-color-secondary);
-    font-family: var(--app-font-family);
-    font-size: var(--app-text-base);
-    font-weight: 400;
-    user-select: none;
-    position: relative;
-    transition: color var(--app-motion-base) ease;
-
-    &:hover {
-      color: var(--td-text-color-primary);
-    }
-
-    &.active {
-      color: var(--td-brand-color);
-      font-weight: 500;
-
-      &::after {
-        content: '';
-        position: absolute;
-        bottom: -1px;
-        left: 0;
-        right: 0;
-        height: 2px;
-        background: var(--td-brand-color);
-        border-radius: 1px;
-      }
-    }
-  }
-}
-
-// 共享知识库卡片样式
-// 共享标识（文档类型默认绿色，位置贴右上角）
-.shared-badge {
-  position: absolute;
-  top: 8px;
-  right: 14px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
-  border-radius: var(--app-radius-xs);
-  font-size: var(--app-text-sm);
-  color: var(--td-brand-color);
-  font-weight: 500;
-
-  .t-icon {
-    color: var(--td-brand-color);
-  }
-}
-
 // 来源组织（空间图标 + 空间名）
 .org-source {
   display: inline-flex;
@@ -1773,71 +1652,8 @@ const handleUploadFinishedEvent = (event: Event) => {
   }
 }
 
-// 「我的」知识库标签（与 .org-source 同套样式：灰字 + 绿标 + 浅绿底）
-.personal-source {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  background: color-mix(in srgb, var(--td-brand-color) 6%, transparent);
-  border-radius: var(--app-radius-sm);
-  font-size: var(--app-text-xs);
-  line-height: 1.4;
-  color: var(--td-text-color-secondary);
-  font-weight: 500;
-  transition: background-color var(--app-motion-fast) ease;
-
-  span {
-    font-weight: 500;
-  }
-
-  .t-icon {
-    color: var(--td-brand-color);
-    flex-shrink: 0;
-  }
-}
-
 .shared-kb-card {
   position: relative;
-
-  // 共享知识库根据类型显示不同样式
-  &.kb-type-document {
-    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 4%, transparent) 100%) !important;
-
-    &:hover {
-      border-color: var(--td-brand-color) !important;
-      box-shadow: 0 4px 12px color-mix(in srgb, var(--td-brand-color) 12%, transparent) !important;
-      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 100%) !important;
-    }
-
-    &::after {
-      background: linear-gradient(135deg, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 0%, transparent 100%) !important;
-    }
-  }
-
-  &.kb-type-faq {
-    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 4%, transparent) 100%) !important;
-
-    &:hover {
-      border-color: var(--td-brand-color) !important;
-      box-shadow: 0 4px 12px color-mix(in srgb, var(--td-brand-color) 12%, transparent) !important;
-      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 100%) !important;
-    }
-
-    &::after {
-      background: linear-gradient(135deg, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 0%, transparent 100%) !important;
-    }
-
-    // FAQ 类型共享标识使用蓝色
-    .shared-badge {
-      background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
-      color: var(--td-brand-color);
-
-      .t-icon {
-        color: var(--td-brand-color);
-      }
-    }
-  }
 
   .org-tag {
     display: inline-flex;
@@ -1873,102 +1689,12 @@ const handleUploadFinishedEvent = (event: Event) => {
   }
 }
 
-@keyframes contentFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 .kb-card-wrap {
   .resource-card-grid();
 }
 
 .kb-section-header {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  // 整行只用来铺背景实现 sticky；点击事件靠子元素冒泡触发，避免点到
-  // 标题右侧大片空白时误折叠。键盘 tab/enter 不受 pointer-events 影响。
-  pointer-events: none;
-
-  & > * {
-    pointer-events: auto;
-  }
-  // 下滑时吸顶到滚动容器（.kb-list-main）顶部。z-index 要高于卡片自身的
-  // hover 阴影 / 装饰层；背景必须不透明，否则卡片会从下方透出来。
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: var(--td-bg-color-container);
-  // 用 box-shadow 把背景再往上"延伸"8px，封掉 sticky 与容器顶之间任何
-  // subpixel 残缝（border-radius 的圆角三角、滚动时浏览器子像素渲染等
-  // 都会让卡片从这里漏出 1-2px）。第二条 shadow 在下方也再补一点，避免
-  // grid-gap 区域里卡片穿插过来。
-  box-shadow: 0 -8px 0 0 var(--td-bg-color-container),
-    0 4px 0 0 var(--td-bg-color-container);
-  padding: 6px 4px 6px 0;
-  color: var(--td-text-color-secondary);
-  font-family: var(--app-font-family);
-  font-size: var(--app-text-md);
-  font-weight: 600;
-  line-height: 20px;
-  cursor: pointer;
-  user-select: none;
-  outline: none;
-
-  &:hover {
-    color: var(--td-text-color-primary);
-  }
-
-  &:focus-visible {
-    box-shadow: 0 0 0 2px var(--td-brand-color-focus);
-  }
-
-  // Icons inherit the section header's text color so the whole row
-  // (icon + label) reads as one muted secondary tone. The pinned
-  // modifier no longer overrides this either — uniform appearance
-  // is intentional; the icon shape alone is enough to flag which
-  // section the user is looking at.
-  .t-icon {
-    color: inherit;
-  }
-
-  .kb-section-toggle {
-    margin-left: 4px;
-    opacity: 0.7;
-    transition: opacity var(--app-motion-fast) ease;
-  }
-
-  // 共享给我的两个子分组共用一个主图标 usergroup-add，再用子图标
-  // (edit / browse) 区分权限。子图标向左挤靠主图标，整体读起来还是一个"组"。
-  .kb-section-subicon {
-    margin-left: -4px;
-    opacity: 0.75;
-  }
-
-  // 组里实际有多少张卡片。用 13px 主字号同色降透明度，避免抢标题视觉，
-  // 同时给个轻底色保证在浅色容器上仍可读。
-  .kb-section-count {
-    margin-left: 2px;
-    padding: 0 6px;
-    border-radius: var(--app-radius-md);
-    background: var(--td-bg-color-secondarycontainer);
-    color: var(--td-text-color-secondary);
-    font-size: var(--app-text-xs);
-    line-height: 16px;
-    font-weight: 500;
-  }
-
-  &:hover .kb-section-toggle {
-    opacity: 1;
-  }
+  .resource-section-header();
 }
 
 .kb-card {
@@ -1978,90 +1704,7 @@ const handleUploadFinishedEvent = (event: Event) => {
     opacity: 0.9;
   }
 
-  // 文档类型样式
-  &.kb-type-document {
-    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 4%, transparent) 100%);
-
-    &:hover {
-      border-color: var(--td-brand-color);
-      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 100%);
-    }
-
-    // 右上角装饰
-    &::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      right: 0;
-      width: 60px;
-      height: 60px;
-      background: linear-gradient(135deg, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 0%, transparent 100%);
-      border-radius: 0 12px 0 100%;
-      pointer-events: none;
-      z-index: 0;
-    }
-  }
-
-  // 问答类型样式
-  &.kb-type-faq {
-    background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 4%, transparent) 100%);
-
-    &:hover {
-      border-color: var(--td-brand-color);
-      box-shadow: 0 4px 12px color-mix(in srgb, var(--td-brand-color) 12%, transparent);
-      background: linear-gradient(135deg, var(--td-bg-color-container) 0%, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 100%);
-    }
-
-    // 右上角装饰
-    &::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      right: 0;
-      width: 60px;
-      height: 60px;
-      background: linear-gradient(135deg, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 0%, transparent 100%);
-      border-radius: 0 12px 0 100%;
-      pointer-events: none;
-      z-index: 0;
-    }
-  }
-
-  .kb-favorite-star {
-    // 浮在卡片右上角顶角。卡片自身有 padding，"更多"按钮在 header flex 末端
-    // 自然落在 padding 内部，与零位的 star 错开一段距离。
-    position: absolute;
-    top: 0;
-    right: 0;
-    z-index: 3;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    border-radius: var(--app-radius-sm);
-    color: var(--td-text-color-secondary);
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity var(--app-motion-fast) ease, background var(--app-motion-fast) ease, color var(--app-motion-fast) ease;
-
-    &:hover {
-      background: var(--td-bg-color-secondarycontainer);
-      color: var(--td-warning-color);
-    }
-
-    &.is-favorited {
-      opacity: 1;
-      color: var(--td-warning-color);
-    }
-  }
-
-  // Reveal the star on card hover; favorited state forces it visible.
-  &:hover .kb-favorite-star {
-    opacity: 1;
-  }
+  .kb-favorite-star { .resource-favorite-button(); }
 
 }
 
@@ -2090,14 +1733,14 @@ const handleUploadFinishedEvent = (event: Event) => {
   .resource-feature-badge();
 
   &.type-document {
-    background: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
-    color: var(--td-brand-color-active);
+    background: var(--td-bg-color-secondarycontainer);
+    color: var(--td-text-color-secondary);
     width: auto;
     padding: 0 6px;
     gap: 3px;
 
     &:hover {
-      background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
+      background: var(--td-bg-color-container-hover);
     }
 
     .badge-count {
@@ -2111,14 +1754,14 @@ const handleUploadFinishedEvent = (event: Event) => {
   }
 
   &.type-faq {
-    background: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
-    color: var(--td-brand-color);
+    background: var(--td-bg-color-secondarycontainer);
+    color: var(--td-text-color-secondary);
     width: auto;
     padding: 0 6px;
     gap: 3px;
 
     &:hover {
-      background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
+      background: var(--td-bg-color-container-hover);
     }
 
     .badge-count {
@@ -2221,41 +1864,12 @@ const handleUploadFinishedEvent = (event: Event) => {
   box-shadow: 0 0 12px color-mix(in srgb, var(--td-brand-color) 30%, transparent) !important;
 }
 
-// 响应式布局
-@media (min-width: 900px) {
-  .kb-card-wrap {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (min-width: 1250px) {
-  .kb-card-wrap {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-@media (min-width: 1600px) {
-  .kb-card-wrap {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}
-
-@media (min-width: 1900px) {
-  .kb-card-wrap {
-    grid-template-columns: repeat(5, 1fr);
-  }
-}
-
-@media (min-width: 2200px) {
-  .kb-card-wrap {
-    grid-template-columns: repeat(6, 1fr);
-  }
-}
-
 // 删除确认对话框样式
 :deep(.t-dialog__position.t-dialog--top) {
   padding-top: 40vh !important;
 }
+
+.resource-list-header();
 
 </style>
 
@@ -2426,19 +2040,4 @@ const handleUploadFinishedEvent = (event: Event) => {
   }
 }
 
-// 创建对话框样式优化
-.create-kb-dialog {
-  .t-form-item__label {
-    font-family: var(--app-font-family);
-    font-size: var(--app-text-base);
-    font-weight: 500;
-    color: var(--td-text-color-primary);
-  }
-
-  .t-input,
-  .t-textarea {
-    font-family: var(--app-font-family);
-  }
-
-}
 </style>

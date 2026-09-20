@@ -1378,7 +1378,7 @@ export default {
       maxTokensAgent: 'Максимум токенов за один раунд рассуждения, включая JSON вызовов инструментов. «По умолчанию»: 4096 без песочницы, 24576 с записью/правкой файлов. «Своё» сохраняет введённое число и больше не меняется.',
       thinking: 'Включить расширенное мышление модели (требуется поддержка модели)',
       conversationSection: 'Настройка параметров многооборотного диалога и перефразирования вопросов',
-      conversationSectionAgent: 'Объём предыдущего диалога в каждом ходе. Умные рассуждения всегда многооборотные',
+      conversationSectionAgent: 'Умные рассуждения всегда многооборотные. Предыдущий диалог хранится в пределах контекстного окна модели, а при его заполнении ранние ходы автоматически сжимаются в сводку',
       multiTurn: 'При включении сохраняется контекст истории диалога',
       historyRounds: 'Количество последних раундов диалога для сохранения в контексте',
       retainRetrievalHistory: 'Сохранять результаты поиска из прошлых ходов. При отключении каждый ход ищет заново',
@@ -3823,10 +3823,12 @@ export default {
         authRevoked: 'Сессия больше не действительна, терминал отключён. Войдите снова и переподключитесь.',
     },
     questionMinimapTitle: 'Вопросы',
+    questionMinimapPosition: 'Реплика {current} из {total}',
     questionMinimapAriaLabel: 'Содержание вопросов',
     questionMinimapAttachmentPlaceholder: '(Вложение)',
     referenceChunkCount: '{count} фрагмент(ов)',
     fallbackHint: 'В базе знаний не найдено релевантного содержимого. Выше представлен прямой ответ модели.',
+    truncatedHint: 'Ответ обрезан на лимите вывода модели за один ответ. Выше — то, что было создано до обрыва.',
     requestInfoTitle: 'Request info',
     requestInfoRequestId: 'Request ID',
     requestInfoMessageId: 'Message ID',
@@ -3922,6 +3924,7 @@ export default {
     processError: 'Ошибка обработки',
     sessionExcerpt: 'Выдержка из сессии',
     noAnswerContent: '(Нет содержимого ответа)',
+    manualSourcesHeading: 'Источники',
     noMatchFound: 'Совпадений не найдено',
     deleteSessionFailed: 'Ошибка удаления, попробуйте позже!',
     imageTooMany: 'Максимум 5 изображений',
@@ -4862,11 +4865,7 @@ export default {
   },
   input: {
     addModel: 'Добавить модель',
-    placeholder: 'Задайте вопрос напрямую модели',
-    placeholderWithContext: 'Введите вопрос, ответ будет основан на выбранных выше базах знаний/файлах',
-    placeholderWebOnly: 'Введите вопрос, ответ будет основан на веб-поиске',
-    placeholderKbAndWeb: 'Введите вопрос, ответ будет основан на базе знаний и веб-поиске',
-    placeholderAgent: 'Спросить {name}',
+    placeholder: 'Задайте вопрос или опишите задачу…',
     agentMode: 'Умный анализ',
     normalMode: 'Быстрый ответ',
     normalModeDesc: 'RAG-вопросы и ответы по базе знаний',
@@ -4928,7 +4927,6 @@ export default {
     }
   },
   manualEditor: {
-    description: 'Пишите знания в Markdown с предпросмотром в реальном времени',
     defaultTitlePrefix: 'Новый документ',
     noDocumentKnowledgeBases: 'Нет доступных баз знаний типа "документ". Пожалуйста, создайте одну сначала',
     actions: {
@@ -4943,12 +4941,13 @@ export default {
     status: {
       draftTag: 'Статус: Черновик',
       publishedTag: 'Статус: Опубликовано',
-      lastUpdated: 'Последнее обновление: {time}'
+      lastUpdated: 'Последнее обновление: {time}',
+      counter: 'Символов: {chars} · Строк: {lines}'
     },
     form: {
-      knowledgeBaseLabel: 'Целевая база знаний',
       knowledgeBasePlaceholder: 'Выберите базу знаний',
       titleLabel: 'Заголовок знания',
+      knowledgeBaseLabel: 'Целевая база знаний',
       titlePlaceholder: 'Введите заголовок',
       contentPlaceholder: 'Поддерживается Markdown. Используйте # заголовки, списки, блоки кода и т.д.'
     },
@@ -4970,7 +4969,6 @@ export default {
       currentKnowledgeBase: 'Текущая база знаний'
     },
     section: {
-      basic: 'Основная информация',
       content: 'Содержимое'
     },
     title: {
@@ -4980,9 +4978,17 @@ export default {
     preview: {
       empty: 'Пока нет содержимого'
     },
+    shortcuts: {
+      title: 'Горячие клавиши',
+      continueList: 'Продолжить список',
+      indent: 'Отступ / Shift+Tab — назад'
+    },
     view: {
-      editLabel: 'Вернуться к редактированию',
-      previewLabel: 'Предпросмотр'
+      edit: 'Редактор',
+      split: 'Разделить',
+      preview: 'Предпросмотр',
+      splitUnavailable: 'Расширьте панель или включите полный экран, чтобы разделить вид',
+      groupLabel: 'Вид редактора'
     },
     toolbar: {
       bold: 'Жирный',
@@ -5000,7 +5006,9 @@ export default {
       link: 'Вставить ссылку',
       image: 'Вставить изображение',
       table: 'Вставить таблицу',
-      horizontalRule: 'Горизонтальная линия'
+      horizontalRule: 'Горизонтальная линия',
+      headingGroup: 'Заголовок',
+      insertGroup: 'Вставить'
     },
     table: {
       column1: 'Колонка 1',
@@ -5046,6 +5054,8 @@ export default {
       discard: 'Отменить изменения',
       keepEditing: 'Продолжить редактирование',
     },
+    fullscreen: 'Полный экран',
+    exitFullscreen: 'Выйти из полного экрана',
     save: 'Сохранить',
     delete: 'Удалить',
     edit: 'Редактировать',
@@ -6320,10 +6330,16 @@ export default {
       preview: 'Предпросмотр',
       previewBack: 'Назад к списку',
       collecting: 'Сохранение сгенерированных файлов…',
+      delete: 'Удалить',
+      deleteTitle: 'Удалить этот файл?',
+      deleteConfirm: '«{name}» и сохранённое содержимое будут удалены безвозвратно. Отменить нельзя.',
+      deleted: 'Файл удалён',
+      deleteFailed: 'Не удалось удалить, повторите попытку.',
       download: 'Скачать',
       downloadFailed: 'Не удалось скачать, повторите попытку.',
       inlinePreviewHint: 'Нажмите для просмотра',
       inlineMissing: 'Файл недоступен',
+      inlineDeleted: 'Файл удалён',
     },
     updatePlan: 'Обновить план',
     webSearchFound: 'Найдено <strong>{count}</strong> результатов веб‑поиска',
@@ -6517,6 +6533,7 @@ export default {
     shareScope: {
       title: 'Share Scope',
       desc: 'Space members have read-only access to this agent and will use it according to your current configuration; your changes to the agent will sync to shared spaces. To allow space members to edit knowledge base content, share the knowledge base to the space.',
+      skillSecretsWarning: 'This agent uses skills. When space members use it, the skills run in this workspace\'s sandbox with the environment variables admins configured for them (such as API keys), and members can have the agent reveal those values. Share it only if that is acceptable.',
       knowledgeBase: 'Knowledge bases',
       chatModel: 'Chat model',
       rerankModel: 'Rerank model',
@@ -6585,6 +6602,15 @@ export default {
     root: 'Обработка знаний',
     attempt: 'Попытка {n}',
     retry: 'Повторить парсинг',
+    notRun: 'Не выполнялся',
+    stageFailed: 'Этап «{stage}» завершился с ошибкой',
+    copyError: 'Скопировать детали ошибки',
+    stat: {
+      duration: 'Длительность',
+      attempt: 'Попытка',
+      tasks: 'Фоновые задачи',
+      tasksValue: 'выполняется {running} · с ошибкой {failed} · готово {completed}'
+    },
     refresh: 'Refresh now',
     copy: 'Copy',
     copyDetails: 'Скопировать детали',
@@ -6604,7 +6630,6 @@ export default {
     minutesAgo: '{n}m ago',
     noActivity: 'Нет активности парсинга',
     totalDuration: 'Всего: {d}',
-    total: 'Всего {d}',
     errorCode: {
       UNKNOWN_SUGGESTION: 'Проверьте логи приложения для подробностей.'
     },
@@ -6659,8 +6684,6 @@ export default {
     head: {
       stagesDone: 'Main stages',
       stagesProgress: 'Current stage',
-      postprocessTasks: 'Postprocess: {running} running / {failed} failed / {completed} completed',
-      completedWithActiveTrace: 'Processing completed, but {n} trace task(s) remain active',
       attempt: 'Attempt',
       updated: 'Updated'
     },
@@ -6731,6 +6754,11 @@ export default {
     }
   },
   knowledgeBase: {
+    tagAddAction: 'Добавить теги',
+    documentCount: 'Документов: {count}',
+    filters: 'Фильтры',
+    clearFilters: 'Сбросить фильтры',
+
     title: 'База знаний',
     fileContent: 'Содержимое файла',
     name: 'Название',
@@ -6738,11 +6766,10 @@ export default {
     settings: 'Настройки',
     tagUpdateSuccess: 'Тег успешно обновлен',
     tagEditDialogHeading: 'Редактировать теги',
-    tagEditSearch: 'Поиск тегов...',
-    tagEditSelectedSection: 'Выбранные',
-    tagEditAvailableSection: 'Доступные',
-    tagEditNoSelected: 'Ничего не выбрано',
     folderTree: {
+      totalDocuments: 'Всего документов: {count}',
+      countHint: 'В этой папке: {direct}, с подпапками: {total}',
+      filteredCount: 'Найдено документов: {count}',
       title: 'Папки',
       rootRow: 'Корень',
       rootRowTip: 'Корневая папка базы знаний; документы без подпапки находятся здесь',
@@ -6783,10 +6810,13 @@ export default {
     tagManageListSection: 'Список тегов',
     tagManageDocCount: '{count} документов',
     tagManageFaqCount: '{count} записей FAQ',
+    tagPickerSelected: 'Выбранные',
+    tagPickerUnselected: 'Не выбранные',
     tagSelectedCount: 'Выбрано: {count}',
-    tagNewPlaceholder: 'Название нового тега, Enter для добавления',
+    tagPickerSearch: "Найти или создать тег",
+    tagPickerInUse: "Тег используется. Сначала удалите его связи с документами.",
+    tagPickerDeleteConfirm: "Удалить тег «{name}»?",
     untagged: 'Без тега',
-    tagClearAction: 'Очистить выбор',
     tagCreateAction: 'Создать тег',
     tagSearchPlaceholder: 'Введите название тега',
     tagNamePlaceholder: 'Введите название тега',
@@ -6977,9 +7007,6 @@ export default {
     batchTag: 'Пакетная метка',
     batchTagDialogHeading: 'Пакетное назначение меток',
     batchTagSubtitle: 'Установить метки для {count} выбранных документов (заменит существующие метки)',
-    batchTagSelectedSection: 'Выбранные',
-    batchTagAvailableSection: 'Доступные',
-    batchTagNoSelected: 'Ничего не выбрано',
     batchTagSuccess: 'Метки применены к {count} документам',
     batchTagFailed: 'Ошибка пакетного назначения меток',
     confirmBatchReparseDocument: 'Пересобрать {count} выбранных документов? Существующее содержимое будет удалено, и каждый документ будет обработан заново.',
@@ -7386,6 +7413,12 @@ export default {
     total: 'Файлов: {count}',
     versions: 'Версий: {count}',
     preview: 'Предпросмотр',
+    delete: 'Удалить',
+    deleteTitle: 'Удалить этот файл?',
+    deleteConfirm: '«{name}» и сохранённое содержимое будут удалены безвозвратно. Отменить нельзя.',
+    deleteConfirmVersions: 'Все версии файла «{name}» ({count}) и их содержимое будут удалены безвозвратно. Отменить нельзя.',
+    deleted: 'Файл удалён',
+    deleteFailed: 'Не удалось удалить, повторите попытку.',
     download: 'Скачать',
     downloadFailed: 'Не удалось скачать файл. Повторите попытку позже',
     openSession: 'Открыть диалог',

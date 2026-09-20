@@ -140,6 +140,12 @@ export default {
     total: '{count} 件のファイル',
     versions: '{count} バージョン',
     preview: 'プレビュー',
+    delete: '削除',
+    deleteTitle: 'このファイルを削除しますか？',
+    deleteConfirm: '「{name}」と保存されている内容を完全に削除します。元に戻せません。',
+    deleteConfirmVersions: '「{name}」の全 {count} バージョンと保存されている内容を完全に削除します。元に戻せません。',
+    deleted: 'ファイルを削除しました',
+    deleteFailed: '削除に失敗しました。再試行してください。',
     download: 'ダウンロード',
     downloadFailed: 'ダウンロードに失敗しました。しばらくしてから再試行してください',
     openSession: '会話を開く',
@@ -486,6 +492,11 @@ export default {
     sharedTooltip: '共有スペース経由で外部ワークスペースからアクセス'
   },
   knowledgeBase: {
+    tagAddAction: 'タグを追加',
+    documentCount: '{count} 件のドキュメント',
+    filters: '絞り込み',
+    clearFilters: '絞り込みをクリア',
+
     title: 'ナレッジベース',
     fileContent: 'ファイル内容',
     accessInfo: {
@@ -526,11 +537,10 @@ export default {
     settings: '設定',
     tagUpdateSuccess: 'タグを更新しました',
     tagEditDialogHeading: 'タグを編集',
-    tagEditSearch: 'タグを検索...',
-    tagEditSelectedSection: '選択中',
-    tagEditAvailableSection: '選択可能',
-    tagEditNoSelected: '未選択',
     folderTree: {
+      totalDocuments: '全 {count} 件',
+      countHint: 'このフォルダ内 {direct} 件、サブフォルダを含めて {total} 件',
+      filteredCount: '{count} 件一致',
       title: 'フォルダ',
       rootRow: 'ルート',
       rootRowTip: 'ナレッジベースのルート。サブフォルダに属さないドキュメントはここに置かれます',
@@ -571,10 +581,13 @@ export default {
     tagManageListSection: 'タグ',
     tagManageDocCount: '{count}件のドキュメント',
     tagManageFaqCount: '{count}件のFAQ',
+    tagPickerSelected: '選択済み',
+    tagPickerUnselected: '未選択',
     tagSelectedCount: '{count}件選択中',
-    tagNewPlaceholder: '新しいタグ名を入力し、Enterキーで追加',
+    tagPickerSearch: "タグを検索または作成",
+    tagPickerInUse: "使用中のタグです。先にドキュメントとの関連付けを解除してください。",
+    tagPickerDeleteConfirm: "タグ「{name}」を削除しますか？",
     untagged: 'タグなし',
-    tagClearAction: '選択を解除',
     tagCreateAction: 'タグを作成',
     tagSearchPlaceholder: 'タグ名で絞り込み',
     tagNamePlaceholder: 'タグ名を入力してください',
@@ -765,9 +778,6 @@ export default {
     batchTag: '一括タグ付け',
     batchTagDialogHeading: '一括タグ付け',
     batchTagSubtitle: '選択した{count}件のドキュメントにタグを設定します（既存のタグは置き換えられます）',
-    batchTagSelectedSection: '選択中',
-    batchTagAvailableSection: '選択可能',
-    batchTagNoSelected: '未選択',
     batchTagSuccess: '{count}件のドキュメントにタグを設定しました',
     batchTagFailed: '一括タグ付けに失敗しました',
     confirmBatchReparseDocument: '選択した{count}件のドキュメントを再構築しますか？既存の内容は削除され、各ドキュメントが再解析されます。',
@@ -888,6 +898,15 @@ export default {
     },
     attempt: '{n}回目の試行',
     retry: '再解析',
+    notRun: '未実行',
+    stageFailed: '{stage}が失敗しました',
+    copyError: 'エラー情報をコピー',
+    stat: {
+      duration: '所要時間',
+      attempt: '試行',
+      tasks: 'バックグラウンドタスク',
+      tasksValue: '実行中 {running} · 失敗 {failed} · 完了 {completed}'
+    },
     refresh: '今すぐ更新',
     copy: 'コピー',
     copyDetails: '詳細をコピー',
@@ -907,12 +926,9 @@ export default {
     minutesAgo: '{n}分前',
     noActivity: '解析の記録はまだありません',
     totalDuration: '合計: {d}',
-    total: '合計{d}',
     head: {
       stagesDone: '主要ステージ',
       stagesProgress: '現在のステージ',
-      postprocessTasks: '後処理: 実行中{running}件／失敗{failed}件／完了{completed}件',
-      completedWithActiveTrace: '処理は完了しましたが、{n}件のトレースタスクがまだ実行中です',
       attempt: '試行',
       updated: '更新'
     },
@@ -980,10 +996,16 @@ export default {
       preview: 'プレビュー',
       previewBack: '一覧に戻る',
       collecting: '生成されたファイルを保存中…',
+      delete: '削除',
+      deleteTitle: 'このファイルを削除しますか？',
+      deleteConfirm: '「{name}」と保存されている内容を完全に削除します。元に戻せません。',
+      deleted: 'ファイルを削除しました',
+      deleteFailed: '削除に失敗しました。再試行してください。',
       download: 'ダウンロード',
       downloadFailed: 'ダウンロードに失敗しました。再試行してください。',
       inlinePreviewHint: 'クリックしてプレビュー',
       inlineMissing: 'ファイルを利用できません',
+      inlineDeleted: 'ファイルは削除されました',
     },
     updatePlan: 'プランを更新',
     webSearchFound: 'Web検索結果を<strong>{count}</strong>件見つけました',
@@ -1058,6 +1080,7 @@ export default {
     shareScope: {
       title: '共有範囲',
       desc: 'スペースのメンバーはこのエージェントを読み取り専用で利用し、現在の設定がそのまま適用されます。エージェントへの変更は共有先のスペースにも反映されます。スペースのメンバーがナレッジベースの内容を編集できるようにするには、ナレッジベースをスペースに共有してください。',
+      skillSecretsWarning: 'このエージェントはスキルを使用します。スペースのメンバーが利用すると、スキルはこのワークスペースのサンドボックスで、管理者が設定した環境変数（API キーなど）とともに実行され、メンバーはエージェントにその値を出力させることができます。これを許容できる場合にのみ共有してください。',
       knowledgeBase: 'ナレッジベース',
       chatModel: 'チャットモデル',
       rerankModel: 'リランクモデル',
@@ -2460,6 +2483,8 @@ export default {
       discard: '変更を破棄',
       keepEditing: '編集を続ける',
     },
+    fullscreen: '全画面',
+    exitFullscreen: '全画面を終了',
     save: '保存',
     delete: '削除',
     edit: '編集',
@@ -2562,11 +2587,21 @@ export default {
       link: 'リンクを挿入',
       image: '画像を挿入',
       table: '表を挿入',
-      horizontalRule: '水平線'
+      horizontalRule: '水平線',
+      headingGroup: '見出し',
+      insertGroup: '挿入'
+    },
+    shortcuts: {
+      title: 'ショートカット',
+      continueList: 'リストを続ける',
+      indent: 'インデント / Shift+Tab で解除'
     },
     view: {
-      editLabel: '編集に戻る',
-      previewLabel: '内容をプレビュー'
+      edit: '編集',
+      split: '分割',
+      preview: 'プレビュー',
+      splitUnavailable: '幅が足りません。ドロワーを広げるか全画面にすると分割できます',
+      groupLabel: 'エディタ表示'
     },
     preview: {
       empty: 'まだ内容がありません'
@@ -2575,9 +2610,7 @@ export default {
       edit: 'Markdownナレッジを編集',
       create: 'Markdownナレッジを作成'
     },
-    description: 'Markdownでナレッジを記述し、リアルタイムでプレビューできます',
     section: {
-      basic: '基本情報',
       content: '内容'
     },
     labels: {
@@ -2599,9 +2632,9 @@ export default {
       published: 'ナレッジを公開し、インデックス作成を開始しました'
     },
     form: {
-      knowledgeBaseLabel: '対象のナレッジベース',
       knowledgeBasePlaceholder: 'ナレッジベースを選択',
       titleLabel: 'ナレッジのタイトル',
+      knowledgeBaseLabel: '対象のナレッジベース',
       titlePlaceholder: 'タイトルを入力',
       contentPlaceholder: 'Markdownに対応しています。#見出し、リスト、コードブロックなどが使えます。'
     },
@@ -2609,7 +2642,8 @@ export default {
     status: {
       draftTag: 'ステータス: 下書き',
       publishedTag: 'ステータス: 公開済み',
-      lastUpdated: '最終更新: {time}'
+      lastUpdated: '最終更新: {time}',
+      counter: '{chars} 文字 · {lines} 行'
     },
     loading: {
       content: '内容を読み込み中...',
@@ -2623,11 +2657,7 @@ export default {
   },
   input: {
     addModel: 'モデルを追加',
-    placeholder: 'モデルに直接質問できます',
-    placeholderWithContext: '質問を入力してください。上で選択したナレッジベース／ファイルに基づいて回答します',
-    placeholderWebOnly: '質問を入力してください。Web検索に基づいて回答します',
-    placeholderKbAndWeb: '質問を入力してください。ナレッジベースとWeb検索に基づいて回答します',
-    placeholderAgent: '{name}に質問',
+    placeholder: '質問や依頼内容を入力…',
     agentMode: 'スマート推論',
     normalMode: 'クイック回答',
     normalModeDesc: 'ナレッジベースに基づくRAG Q&A',
@@ -3683,10 +3713,12 @@ export default {
         authRevoked: 'ログイン状態が無効になったため、ターミナルが切断されました。再度サインインしてから接続してください。',
     },
     questionMinimapTitle: 'Q&A',
+    questionMinimapPosition: '全 {total} ターン中 {current} ターン目',
     questionMinimapAriaLabel: '質問一覧',
     questionMinimapAttachmentPlaceholder: '（添付ファイル）',
     referenceChunkCount: '{count}件のチャンク',
     fallbackHint: 'ナレッジベースから関連する内容が見つかりませんでした。上記はモデルの直接回答です。',
+    truncatedHint: 'モデルの1回あたりの出力上限で回答が途中で打ち切られました。上記は打ち切り前に生成された内容です。',
     requestInfoTitle: 'リクエスト情報',
     requestInfoRequestId: 'Request ID',
     requestInfoMessageId: 'メッセージID',
@@ -3782,6 +3814,7 @@ export default {
     processError: '処理エラー',
     sessionExcerpt: 'セッション抜粋',
     noAnswerContent: '（回答内容なし）',
+    manualSourcesHeading: '参照元',
     noMatchFound: '一致する内容が見つかりません',
     deleteSessionFailed: '削除に失敗しました。しばらくしてから再試行してください！',
     imageTooMany: '画像は最大5枚までです',
@@ -6156,7 +6189,7 @@ export default {
       maxTokensAgent: '推論の各ラウンドで生成される最大トークン数（ツール呼び出しのJSONを含む）。デフォルトは、サンドボックスなしの場合4096、サンドボックスがファイルの書き込みや編集を行える場合は24576です。カスタム値は入力したとおりに保存され、以降変更されません。',
       thinking: '拡張思考機能を有効にします（モデルの対応が必要）',
       conversationSection: 'マルチターン会話とクエリのリライトに関するパラメータを設定します',
-      conversationSectionAgent: '各ターンで引き継ぐ過去の会話の量。スマート推論は常にマルチターンです',
+      conversationSectionAgent: 'スマート推論は常にマルチターンです。過去の会話はモデルのコンテキストウィンドウに収まる範囲で保持され、超えると古い部分が自動的に要約されます',
       multiTurn: '有効にすると、過去の会話のコンテキストが保持されます',
       historyRounds: 'コンテキストとして保持する直近の会話ラウンド数',
       retainRetrievalHistory: '過去のターンのナレッジベース検索結果を保持します。無効にすると、ターンごとに再検索します',
