@@ -144,6 +144,7 @@ type AISuggestionItem struct {
 const (
 	AIEventAnswerChunk       = "answer_chunk"
 	AIEventAnswerDone        = "answer_done"
+	AIEventArtifacts         = "artifacts"   // skill-generated files attached after the turn
 	AIEventThinking          = "thinking"    // agent reasoning step
 	AIEventToolCall          = "tool_call"   // agent tool invocation
 	AIEventToolResult        = "tool_result" // agent tool result

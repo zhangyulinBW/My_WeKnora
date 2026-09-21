@@ -22,6 +22,7 @@ WeKnora Agent 引擎（`sessionService.AgentQA`）或结构化搜索草稿生成
 | `search.go` | 搜索意图两阶段流程：`handleSearchMessage` / `handleSearchContext`、条件生成与硬校验、搜索提示词、JSON 解析、语言检测 |
 | `validation.go` | 搜索条件的机器规则硬校验（字段/操作符/枚举值） |
 | `agent_turn.go` | 普通问答意图：`handleAgentTurn` + `aiStreamTranslator`（事件总线 → SSE 翻译）、元数据/上下文组装 |
+| `artifact_reference.go` | 沙箱产物引用处理（session 包同名文件的私有镜像，需保持同步）：`sandbox:` 引用重写、引用解析、合并/去重、公开视图 |
 | `start.go` | `start` 阶段：建立会话、持久化基础数据、生成推荐问题 |
 | `types.go` | 协议类型与常量（请求体、SSE 事件、`AIRequestType*`、`AIEvent*`、`AIProtocolVersion`） |
 
@@ -89,6 +90,14 @@ handleMessage
 ## 关键行为说明
 
 - **SSE 输出**：所有响应通过 `writeEvent` 以 `data: {json}\n\n` 输出（`handler.go`）。
+- **沙箱产物（artifacts）**：normal 意图回合结束后，`aiStreamTranslator` 与官方
+  `/agent-chat` 完成路径同源地回收沙箱输出目录（`ArtifactCollector`），把答案里的
+  `sandbox:<文件名>` 占位重写为稳定 `resource://` 句柄，产物列表随助手消息落库，
+  并在 `answer_done` 之后、`suggestions` 之前推送一个 `artifacts` 事件。事件
+  `data` 携带 `artifacts`（含 `file_name`/`file_type`/`file_size`/`handle`/
+  `download_path`，下载走 `/api/v1/sessions/{session_id}/messages/{message_id}/artifacts/{index}/download`，
+  鉴权与本接口一致）、`final_content`（重写后的完整答案，可替换已流式的占位文本）、
+  `session_id` 与 `assistant_message_id`。本轮无产物时不推送该事件。
 - **上下文流转**：`start` 阶段把 `page` / `searchFields` / `searchBody` / `itemdata` 持久化为
   `role="start"` 消息；`message` / `search_context` 阶段通过 `loadStartContext` 回填。
 - **搜索两阶段**：`message` 识别为搜索意图、但 `start` 未提供 `searchFields` 时，返回

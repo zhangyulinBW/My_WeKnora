@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -39,6 +40,11 @@ type AIChatHandler struct {
 	suggestionService  interfaces.MessageSuggestionService
 	config             *config.Config
 
+	// artifactCollector 在智能体回合结束后把沙箱产物（图表/文件）落盘并
+	// 附到助手消息上，与官方 /agent-chat 流的完成处理保持同一套逻辑。
+	// 可能为 nil（沙箱后端不支持会话文件系统），此时按“无产物”降级。
+	artifactCollector *service.ArtifactCollector
+
 	// intents 是意图注册表：意图分类结果 -> 对应处理逻辑（见 intent.go）。
 	intents *intentRegistry
 
@@ -54,6 +60,7 @@ func NewAIChatHandler(
 	modelService interfaces.ModelService,
 	customAgentService interfaces.CustomAgentService,
 	suggestionService interfaces.MessageSuggestionService,
+	artifactCollector *service.ArtifactCollector,
 	cfg *config.Config,
 ) *AIChatHandler {
 	h := &AIChatHandler{
@@ -62,6 +69,7 @@ func NewAIChatHandler(
 		modelService:       modelService,
 		customAgentService: customAgentService,
 		suggestionService:  suggestionService,
+		artifactCollector:  artifactCollector,
 		config:             cfg,
 		intents:            newIntentRegistry(),
 		actions:            make(map[string]*pendingAction),

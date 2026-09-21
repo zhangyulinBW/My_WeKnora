@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Tencent/WeKnora/internal/agent/skills"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -161,6 +162,80 @@ func newAIStreamTranslator(
 
 func (t *aiStreamTranslator) close() {
 	t.closeOnce.Do(func() { close(t.done) })
+}
+
+// finalizeArtifacts 复刻官方 /agent-chat 完成路径中的产物处理：排空会话沙箱
+// 输出目录、解析答案引用的文件名、把 sandbox: 引用重写为稳定句柄、把产物
+// 列表附到助手消息，并向客户端推送 artifacts 事件。返回（可能重写过的）
+// 最终回答文本。
+//
+// 全程 best-effort：collector 未接入、会话未绑定沙箱或本轮没有产物时，
+// 原文返回且不推送事件，不打断完成路径。
+func (t *aiStreamTranslator) finalizeArtifacts(ctx context.Context, final string) string {
+	collector := t.h.artifactCollector
+	if collector == nil || t.asstMsg.SessionID == "" {
+		return final
+	}
+	// 客户端可能在回答结束后立即断开；回收需脱离请求生命周期继续执行，
+	// 与 Web 端的 WithoutCancel 一致。租户显式注入，避免事件总线上下文
+	// 缺失时收集器读不到沙箱绑定。
+	collectCtx := context.WithValue(context.WithoutCancel(ctx), types.TenantIDContextKey, t.tenantID)
+	artifacts, err := collector.CollectWithNotify(
+		collectCtx,
+		t.asstMsg.SessionID,
+		t.asstMsg.ID,
+		t.tenantID,
+		skills.ArtifactOutputDir(),
+		nil,
+	)
+	if err != nil {
+		logger.Warnf(ctx, "artifact collect failed session=%s message=%s: %v",
+			t.asstMsg.SessionID, t.asstMsg.ID, err)
+	}
+
+	// 答案可能引用本轮未重新生成的文件（如多轮对话复用早前产物），因此
+	// 除本轮收集结果外，还需合并会话内已知产物来解析引用——与 Web 端的
+	// 候选顺序一致：本轮优先，同名文件由最新版本兜底。
+	known := collector.SessionArtifacts(collectCtx, t.asstMsg.SessionID)
+	referenced := referencedArtifacts(
+		final,
+		mergeArtifactLists(artifacts, artifactsNewestFirst(known)),
+	)
+	previous := historyOnlyArtifacts(referenced, artifacts)
+
+	if attached := mergeArtifactLists(artifacts, referenced); len(attached) > 0 {
+		t.asstMsg.Artifacts = attached
+		final = rewriteArtifactReferences(final, attached)
+		// 复用的历史产物同样归属本条消息：删除原消息不会让这里的引用失效。
+		collector.BindArtifactsToMessage(collectCtx, t.asstMsg.ID, previous)
+		final = types.ClarifyArtifactVersions(final, attached, previous,
+			types.LanguageFromContextOrDefault(ctx))
+
+		t.writeArtifacts(attached, final)
+	}
+	return final
+}
+
+// writeArtifacts 发出 artifacts 事件：每个产物携带公开元数据与下载路径，
+// final_content 为引用重写后的完整答案，客户端可用其替换已流式输出的
+// sandbox: 占位文本。下载路径走官方会话产物端点，鉴权与本接口一致。
+func (t *aiStreamTranslator) writeArtifacts(artifacts types.MessageArtifacts, finalContent string) {
+	if t.c.Request.Context().Err() != nil {
+		return
+	}
+	views := publicArtifactViews(artifacts)
+	for _, view := range views {
+		index, _ := view["index"].(int)
+		view["download_path"] = fmt.Sprintf(
+			"/api/v1/sessions/%s/messages/%s/artifacts/%d/download",
+			t.asstMsg.SessionID, t.asstMsg.ID, index)
+	}
+	t.write(AIEventArtifacts, "", false, map[string]interface{}{
+		"session_id":           t.asstMsg.SessionID,
+		"assistant_message_id": t.asstMsg.ID,
+		"artifacts":            views,
+		"final_content":        finalContent,
+	})
 }
 
 func (t *aiStreamTranslator) write(typ, content string, done bool, data map[string]interface{}) {
@@ -326,6 +401,12 @@ func (t *aiStreamTranslator) subscribe(bus *event.EventBus) {
 		if len(knowledgeRefs) > 0 {
 			t.write(AIEventReferences, "", false, map[string]interface{}{"references": types.References(knowledgeRefs)})
 		}
+
+		// 回收本轮沙箱产物（图表/文件）：与官方 /agent-chat 完成路径同源——
+		// 落盘新文件、把答案中的 sandbox: 引用重写为稳定句柄、把 artifacts
+		// 附到助手消息，并推送 artifacts 事件。必须在 UpdateMessage 之前执行，
+		// 落库的即重写后的最终文本，保证 Web UI 回看该会话时也能渲染产物。
+		final = t.finalizeArtifacts(ctx, final)
 
 		updateCtx := context.WithValue(context.WithoutCancel(ctx), types.TenantIDContextKey, t.tenantID)
 		t.asstMsg.Content = final
