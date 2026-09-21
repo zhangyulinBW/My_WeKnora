@@ -70,3 +70,12 @@ env_*.txt
 
 # 本地 stage 的技能目录（运行时数据，见 docs/agent-skills.md）
 skills/
+
+# DuckDB 扩展本地镜像（构建期离线安装用，见 docker/Dockerfile.app 与
+# cmd/download/duckdb/duckdb.go；文件由构建者自行放置，不入库）
+# 逐级否定：第 2 行的 .* 会忽略点开头目录，须先重新包含各级目录本身。
+!.build-cache/
+.build-cache/*
+!.build-cache/duckdb/
+.build-cache/duckdb/*
+!.build-cache/duckdb/.gitkeep

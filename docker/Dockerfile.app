@@ -57,6 +57,12 @@ COPY go.mod go.sum ./
 COPY third_party/anydoc-go/go.mod third_party/anydoc-go/go.mod
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd/download cmd/download
+# 国内网络访问 extensions.duckdb.org 不稳定：预置本地扩展镜像时离线安装
+# （.build-cache/duckdb/<version>/<platform>/<ext>.duckdb_extension，解压版）。
+# 目录常驻 .gitkeep，扩展文件不入库；缺失对应文件时 duckdb.go 回退在线安装，
+# 未预置缓存的构建行为不变。
+COPY .build-cache/duckdb .build-cache/duckdb
+ENV DUCKDB_EXTENSION_DIR=/app/.build-cache/duckdb
 RUN go run cmd/download/duckdb/duckdb.go
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod bash ./scripts/copy-licenses.sh /license-bundle
