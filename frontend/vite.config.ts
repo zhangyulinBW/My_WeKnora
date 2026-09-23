@@ -141,6 +141,14 @@ export default defineConfig({
     ],
     // 代理配置，用于开发环境
     proxy: {
+      '/mcp/': {
+        target: DEV_PROXY_TARGET,
+        changeOrigin: true,
+        secure: false,
+        // Streamable HTTP may keep an SSE response open for long-running tools.
+        timeout: 3_600_000,
+        proxyTimeout: 3_600_000,
+      },
       '/api': {
         target: DEV_PROXY_TARGET,
         changeOrigin: true,
@@ -167,6 +175,13 @@ export default defineConfig({
     port: 4173,
     host: true,
     proxy: {
+      '/mcp/': {
+        target: DEV_PROXY_TARGET,
+        changeOrigin: true,
+        secure: false,
+        timeout: 3_600_000,
+        proxyTimeout: 3_600_000,
+      },
       '/api': {
         target: DEV_PROXY_TARGET,
         changeOrigin: true,
