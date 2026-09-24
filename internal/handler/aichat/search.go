@@ -152,6 +152,21 @@ func (h *AIChatHandler) generateAndEmitSearchDraft(
 		return
 	}
 
+	// 契约校验：message 是输出格式的必填字段，措辞完全由 search agent 的
+	// 提示词决定，代码不内置任何兜底文案；缺失时回传违约输出做一次纠正
+	// 重试，仍缺失则按契约违约报错。
+	if strings.TrimSpace(result.Message) == "" {
+		result, err = h.repairSearchResult(ctx, chatModel, agent, userContent, resp.Content)
+		if err != nil {
+			h.writeEvent(c, h.errorEvent(req, "model retry failed: "+err.Error()))
+			return
+		}
+		if strings.TrimSpace(result.Message) == "" {
+			h.writeEvent(c, h.errorEvent(req, "model output missing required message field"))
+			return
+		}
+	}
+
 	// 硬校验：字段/操作符/枚举值不合法则要求澄清，而不是直接返回不可用的草稿。
 	unmatched := validateSearchResult(result, searchFields, rules)
 	if len(unmatched) > 0 {
@@ -182,12 +197,32 @@ func (h *AIChatHandler) generateAndEmitSearchDraft(
 		ConversationID: req.ConversationID,
 		RequestID:      req.RequestID,
 		ActionID:       req.ActionID,
-		Message:        fmt.Sprintf("已整理出 %d 条搜索条件，请确认。", len(result.Conditions)),
+		Message:        result.Message,
 		Conditions:     result.Conditions,
 		SearchBody:     result.SearchBody,
 		NeedConfirm:    &needConfirm,
 		Suggestions:    suggestions,
 	})
+}
+
+// repairSearchResult 在模型输出缺少必需的 message 字段时，把原提示词与
+// 违约输出一并回传给模型做一次纠正重试；文案措辞仍完全由提示词决定。
+func (h *AIChatHandler) repairSearchResult(
+	ctx context.Context,
+	chatModel chat.Chat,
+	agent *types.CustomAgent,
+	userContent, badOutput string,
+) (*AISearchResult, error) {
+	resp, err := chatModel.Chat(ctx, []chat.Message{
+		{Role: "system", Content: agent.Config.SystemPrompt},
+		{Role: "user", Content: userContent},
+		{Role: "assistant", Content: badOutput},
+		{Role: "user", Content: "你上一次的输出缺少必需的 message 字段。请严格按输出格式重新输出完整 JSON（必须包含 message），只输出一个纯 JSON 对象，禁止解释文字。"},
+	}, &chat.ChatOptions{Temperature: 0.1})
+	if err != nil {
+		return nil, err
+	}
+	return parseSearchResult(resp.Content)
 }
 
 // loadStartContext 返回会话中最近一条 "start" 消息存储的 page/searchFields/searchBody/itemData，
@@ -249,7 +284,8 @@ func buildSearchPrompt(
 	sb.WriteString("用户请求：" + message)
 	sb.WriteString("\n\n[回复语言：" + lang + "]")
 	sb.WriteString("\n\n这是一次搜索任务。请把用户请求转换成搜索条件，只输出一个纯 JSON 对象（以 { 开头、以 } 结尾），禁止使用 markdown 代码块、禁止任何解释文字。")
-	sb.WriteString("\n输出格式：{\"conditions\":[{\"field\":\"字段name\",\"label\":\"字段label\",\"type\":\"字段type\",\"operator\":\"操作符\",\"value\":值}]}。")
+	sb.WriteString("\n输出格式：{\"message\":\"面向用户的简短结果说明\",\"conditions\":[{\"field\":\"字段name\",\"label\":\"字段label\",\"type\":\"字段type\",\"operator\":\"操作符\",\"value\":值}]}。")
+	sb.WriteString("message 为必填字段，用一句话向用户说明本次结果（如整理出的条件数量，或用户要求刷新/清空时说明已按请求刷新），具体措辞遵循系统提示词，必须使用[回复语言]。")
 	sb.WriteString("其中 field/label/type 必须来自上面 searchFields；operator 按字段类型与系统提示词规则取值；select 字段的 value 必须是其 options 中的某个 value。")
 	return sb.String()
 }

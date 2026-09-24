@@ -1,8 +1,8 @@
 services:
   frontend:
-    # 已替换为华为云国内镜像，原镜像: wechatopenai/weknora-ui:${WEKNORA_VERSION:-latest}
-    # （镜像源尚无 v0.8.0，暂固定 v0.7.0；与 app/docreader 的版本保持一致）
-    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/wechatopenai/weknora-ui:v0.7.0
+    # 华为云镜像源尚无 v0.8.0，本地 make docker-build-* 构建并打 latest 标签；
+    # 需回退镜像源版本时改回 swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/wechatopenai/weknora-ui:v0.7.0
+    image: wechatopenai/weknora-ui:${WEKNORA_VERSION:-latest}
     # Multi-stage Dockerfile builds dist inside the image (no host npm required).
     # Optional: NPM_REGISTRY=https://registry.npmmirror.com docker compose build frontend
     # VITE_FRONTEND_COMMIT: start_all.sh / make docker-build-frontend inject git;
@@ -36,8 +36,9 @@ services:
     restart: unless-stopped
 
   app:
-    # 已替换为华为云国内镜像，原镜像: wechatopenai/weknora-app:${WEKNORA_VERSION:-latest}
-    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/wechatopenai/weknora-app:v0.7.0
+    # 华为云镜像源尚无 v0.8.0，本地 make docker-build-* 构建并打 latest 标签；
+    # 需回退镜像源版本时改回 swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/wechatopenai/weknora-app:v0.7.0
+    image: wechatopenai/weknora-app:${WEKNORA_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.app
@@ -411,13 +412,16 @@ services:
     restart: "no"
 
   docreader:
-    # 已替换为华为云国内镜像，原镜像: wechatopenai/weknora-docreader:${WEKNORA_VERSION:-latest}
-    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/wechatopenai/weknora-docreader:v0.7.0
+    # 华为云镜像源尚无 v0.8.0，本地 make docker-build-* 构建并打 latest 标签；
+    # 需回退镜像源版本时改回 swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/wechatopenai/weknora-docreader:v0.7.0
+    image: wechatopenai/weknora-docreader:${WEKNORA_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.docreader
       args:
         - APT_MIRROR=${APT_MIRROR:-}
+        - PIP_INDEX_URL=${PIP_INDEX_URL:-}
+        - UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-}
     container_name: WeKnora-docreader
     # docreader gRPC ships without auth/TLS and is only consumed by the app
     # container over the WeKnora-network (DOCREADER_ADDR defaults to

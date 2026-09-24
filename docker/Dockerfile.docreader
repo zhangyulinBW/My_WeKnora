@@ -66,8 +66,16 @@ RUN if [ -z "$TARGETARCH" ]; then \
 
 # 复制依赖文件
 COPY docreader/pyproject.toml docreader/uv.lock ./
+# 可选 pip/uv 镜像（国内网络），例如：
+#   --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+#   --build-arg UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/
+ARG PIP_INDEX_URL=
+ARG UV_DEFAULT_INDEX=
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX}
+# --frozen：完全按 uv.lock 安装、不做 lock 新鲜度比对（镜像源 URL 与 lock
+# 记录不同会让 --locked 的比对失败）；版本仍由 lock 精确锁定。
 RUN pip install uv --break-system-packages && \
-    python -m uv sync --locked --no-dev
+    python -m uv sync --frozen --no-dev
 
 # 复制源代码和生成脚本
 COPY docreader docreader

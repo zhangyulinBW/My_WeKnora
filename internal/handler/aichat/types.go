@@ -96,7 +96,12 @@ type AICondition struct {
 }
 
 // AISearchResult is the parsed model output for a search task.
+// Message is the user-facing summary composed by the model (e.g. "已整理出 N 条
+// 搜索条件" / "已刷新"); it is a required field of the output contract whose
+// wording rules live in the search agent's system prompt — the handler never
+// substitutes its own copy, it retries the model when the field is missing.
 type AISearchResult struct {
+	Message    string          `json:"message,omitempty"`
 	Conditions []AICondition   `json:"conditions"`
 	SearchBody json.RawMessage `json:"searchBody"`
 }

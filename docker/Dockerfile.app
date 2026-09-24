@@ -125,8 +125,13 @@ COPY --from=browserskill /opt/weknora/browserskill /opt/weknora/browserskill
 # Create a non-root user first
 RUN useradd -m -s /bin/bash appuser
 
-# First, install ca-certificates without mirror to ensure HTTPS works
-RUN apt-get update && \
+# First, install ca-certificates (via the mirror when specified — apt verifies
+# package signatures with the baked-in archive keys, so the plain-HTTP mirror
+# is safe even before CA certs exist)
+RUN if [ -n "$APK_MIRROR_ARG" ]; then \
+        sed -i "s@deb.debian.org@${APK_MIRROR_ARG}@g" /etc/apt/sources.list.d/debian.sources; \
+    fi && \
+    apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
