@@ -1406,6 +1406,13 @@ export default {
       fallbackPromptPlaceholder: 'Leave empty to use default prompt',
       skillsConfig: 'Skills',
       skillsConfigDesc: 'Select a running sandbox, then pick skills below. Skills not on that sandbox show Install and can only be checked after they are installed.',
+      hostSkillsConfigDesc: 'Pick skills that are already installed on this computer. Others show Install and can be checked only after that.',
+      hostSkillsSelectionDesc: 'Workspace skills are listed here. Ones installed on this computer can be used now; install the others first.',
+      hostSelectSkillsDesc: 'Check the skills this agent should use. Skills that are not on this computer cannot be checked — click Install first.',
+      hostSkillsAllListHint: 'All includes only skills already installed on this computer. Others are left out until you install them.',
+      hostInstallToThisComputer: 'Install on this computer',
+      hostUpgradeOnThisComputer: 'Upgrade the skill on this computer to the catalog version',
+      hostSkillDisabled: 'Disabled on this computer',
       skillsSelection: 'Skill list',
       skillsSelectionDesc: 'All workspace skills are listed here. Installed ones can be used now; others need Install first.',
       skillsAll: 'All',
@@ -1875,6 +1882,30 @@ export default {
       title: 'Skill Management',
       description: 'Skills live in the workspace catalog. Register them first, then install onto one or more sandboxes. An agent can only enable skills that are ready on its sandbox.',
       helpTooltip: 'A catalog skill does not have to be installed anywhere. Scripts only run after the skill is installed into the sandbox image the agent uses. Docker, Cube, and E2B images are not interchangeable — install once per sandbox.',
+      hostTarget: 'This computer',
+      host: {
+        description: 'Skills live in the workspace catalog. An agent can enable one after it is installed on this computer.',
+        helpTooltip: 'A catalog skill can stay uninstalled. Scripts run only after it is installed on this computer.',
+        emptyDesc: 'No skills yet. Add one and it can be installed on this computer.',
+        addStepInstallDesc: 'Confirm the parsed skill, then choose the install model. It will be installed on this computer.',
+        installToSandbox: 'Install on this computer',
+        installToSandboxDesc: 'Installation prepares dependencies on this computer. The agent can use the skill once it is ready.',
+        installDrawerDesc: 'Install “{name}” on this computer.',
+        noInstalls: 'Not installed on this computer',
+        installedOnName: 'Installed on this computer',
+        manageDrawerDesc: 'Enable, edit variables, or uninstall on this computer.',
+        manageUninstall: 'Uninstall from this computer',
+        manageUninstallConfirm: 'Uninstall “{name}” from this computer?',
+        deleteCatalogConfirm: 'Remove “{name}” from the catalog? Uninstall it from this computer first.',
+        deleteCatalogBlocked: 'Uninstall this skill from this computer first.',
+        upgradeDrawerDesc: 'Upgrade “{name}” to the catalog version. This computer keeps the current version until the upgrade finishes, and a failed upgrade leaves it in place.',
+        disableHint: 'While disabled, agents cannot see this skill. Its files stay on this computer. The change applies the next time a session runs.',
+        removeDone: 'Uninstalled “{name}” from this computer. It remains in the catalog and can be installed again.',
+        removeWaiting: 'Uninstall started. Waiting for progress…',
+        removeSandboxReady: 'Preparing the local directory',
+        removeRemoved: 'Files deleted',
+        envWorkspaceHint: 'Members who have not set their own value use this one. They can set a personal value under Settings → Environment variables.',
+      },
       goSandboxSettings: 'Configure sandboxes',
       noConfigsDesc: 'No sandbox yet. Skills need an image to install into.',
       addSkill: 'Add skill',
@@ -2402,6 +2433,17 @@ export default {
   },
   envVarSettings: {
     title: 'Sandbox secrets',
+    host: {
+      title: 'Environment variables',
+      description: 'Personal keys for skills on this computer, not WeKnora system or deployment settings.',
+      helpAria: 'About environment variables',
+      introRuntimeBody: 'Injected when a skill runs on this computer. You can also provide a value in chat. Saved values are not shown again.',
+      loadFailed: 'Could not load environment variables.',
+      sandboxTitle: 'Always included on this computer',
+      sandboxHint: 'Sent only with commands that run on this computer. Leave this empty unless you need it. You can also provide a value in chat.',
+      nameInvalid: 'This name cannot be used. Reserved names (for example PATH, or names starting with WEKNORA_) are rejected.',
+      deleteConfirm: 'Delete {name}? Later runs on this computer will no longer include it.',
+    },
     description: 'Personal keys for skills and sandboxes, not WeKnora system or deployment settings.',
     helpAria: 'About sandbox secrets',
     introPersonalTitle: 'Yours only',
@@ -2957,8 +2999,8 @@ export default {
       duplicate: 'Duplicate'
     },
     pin: {
-      pin: 'Pin to Top',
-      unpin: 'Unpin',
+              pin: 'Pin to Top',
+              unpin: 'Unpin',
       pinSuccess: 'Pinned',
       unpinSuccess: 'Unpinned',
       failed: 'Operation failed'
@@ -3420,6 +3462,77 @@ export default {
       editingBadge: 'Editing',
       pageActions: 'Page actions',
       tabDocuments: 'Documents',
+      tabGallery: 'Gallery',
+      tabDocumentsTip: 'Upload and manage the source documents',
+      tabWikiTip: 'Wiki pages compiled automatically from the documents',
+      tabGalleryTip: 'Browse every image extracted from the documents',
+      viewTabs: 'Knowledge base views',
+      gallery: {
+        title: 'Gallery',
+        allImages: 'All images',
+        count: '{count} images',
+        countFiltered: '{count} matching',
+        searchPlaceholder: 'Search captions or image text',
+        filters: 'Filters',
+        clearFilters: 'Clear filters',
+        searchIn: 'Search in',
+        searchInHint: 'Keywords only match the ticked content',
+        attrSection: 'Image attributes',
+        attrHint: '"Hide" removes images with that value; "Always show" keeps them even when another rule hides them',
+        verdictDefault: 'Any',
+        verdictOff: 'Hide',
+        verdictOn: 'Always show',
+        keywordsPlaceholder: 'Separate keywords with commas',
+        noAttrs: 'No attributes to filter by',
+        sort: 'Sort',
+        sortField: 'Sort by',
+        sortOrder: 'Order',
+        orderAsc: 'Ascending',
+        orderDesc: 'Descending',
+        empty: 'No images to browse yet',
+        emptyHint: 'Images in your documents appear here once parsing finishes',
+        emptyFiltered: 'No images match these filters',
+        imageLoadError: 'Image failed to load',
+        noCaption: 'No caption',
+        noOcr: 'No text recognized',
+        caption: 'Caption',
+        ocr: 'Text in image (OCR)',
+        attributes: 'Attributes',
+        source: 'Source document',
+        details: 'Details',
+        dimensions: 'Size',
+        status: 'Status',
+        openSource: 'Open source document',
+        copy: 'Copy',
+        zoomIn: 'Zoom in (+)',
+        zoomOut: 'Zoom out (-)',
+        zoomReset: 'Fit to window (0)',
+        actualSize: 'Actual size',
+        rotate: 'Rotate (R)',
+        download: 'Download',
+        openOriginal: 'Open in new tab',
+        toggleInfo: 'Image info (I)',
+        viewerClose: 'Close (Esc)',
+        prev: 'Previous (←)',
+        next: 'Next (→)',
+        // Display names for the builtin attributes the gallery itself
+        // declares. Attributes contributed by other sources fall back to the
+        // pipeline's own wording (see the imageAttr namespace).
+        attr: {
+          builtin_caption: 'Caption',
+          builtin_caption_description: 'The model-generated description of the image.',
+          builtin_ocr_text: 'OCR text',
+          builtin_ocr_text_description: 'Text extracted from the image by OCR.',
+          builtin_created_at: 'Created time',
+          builtin_created_at_description: 'When the owning document chunk was created.',
+          builtin_updated_at: 'Updated time',
+          builtin_updated_at_description: 'When the owning document chunk was last updated.',
+          builtin_is_enabled: 'Enabled',
+          builtin_is_enabled_description: 'Whether the owning document chunk takes part in retrieval.',
+          builtin_is_enabled_value_true: 'Enabled',
+          builtin_is_enabled_value_false: 'Disabled',
+        },
+      },
       tabGraph: 'Graph',
       tabGraphTip: 'A graph of links between Wiki pages (page-link graph). This is NOT the same as the LLM-extracted entity-relationship Knowledge Graph configured under "KB Settings → Knowledge Graph".',
       searchPlaceholder: 'Search wiki pages...',
@@ -3843,7 +3956,16 @@ export default {
         descriptionLanguageAuto: 'Follow document language',
         customInstructionsLabel: 'Image Processing Instructions',
         customInstructionsDescription: 'Add visual priorities while OCR and Markdown output contracts remain fixed',
-        customInstructionsPlaceholder: 'For example: prioritize nameplates, model numbers, alarm codes, and table units…'
+        customInstructionsPlaceholder: 'For example: prioritize nameplates, model numbers, alarm codes, and table units…',
+        imageAttrsLabel: 'Image attribute observation',
+        imageAttrsDescription: 'When on, each image is first observed for attributes and described, then the attributes decide whether an OCR round runs for the text in the image. When off, the basic mode applies: every image is described and OCR runs for all of them',
+        imageAttrsSchemaLabel: 'Observable image attributes',
+        imageAttrsSchemaDescription: 'The model observes the attributes below (defined by the backend registry) to drive the OCR policy',
+        imageAttrsOcrConditions: 'Trigger OCR based on the observed attribute conditions',
+        imageAttrsOcrConditionsDesc: 'When the observed attributes match the conditions below, OCR runs on the image',
+        imageAttrsOcrOnUnobserved: 'Run OCR when image-attribute observation fails',
+        imageAttrsOcrOnUnobservedDesc: 'When the model fails to observe the image attributes correctly, OCR runs by default so body text is never lost; turn off to skip. (A small vision model such as 4B, or custom image-instruction prompts that conflict with the system prompt, can cause the observation to fail; 8B and above rarely fail, so leaving this on is recommended)',
+        imagePipelineKbNote: 'Defaults follow the knowledge base settings; adjust them for this task'
       }
     }
   },
@@ -3955,6 +4077,13 @@ export default {
     channelIm: 'IM',
     chunkLabel: 'Chunk {index}:',
     navigateToDocument: 'View document details',
+    referenceSourceBack: 'All sources',
+    referenceSourceView: 'View in original',
+    referenceSourceRelocate: 'Locate again',
+    referenceSourceLocating: 'Locating the cited passage…',
+    referenceSourceFoundPage: 'Found on page {page}',
+    referenceSourceNotFound: 'Could not pinpoint the cited passage; the original is open',
+    referenceSourceOpenWeb: 'Open the web page at this passage',
     chunkIdLabel: 'Chunk ID:',
     documentIdLabel: 'Document ID:',
     faqIdLabel: 'FAQ ID:',
@@ -5889,6 +6018,8 @@ export default {
     retry: 'Retry',
     unsupported: 'This file type does not support online preview',
     unsupportedHint: 'Please download and open with a local application',
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
     fullscreen: 'Fullscreen',
     exitFullscreen: 'Exit Fullscreen',
     htmlRendered: 'Rendered preview',
@@ -6974,7 +7105,7 @@ export default {
       empty: 'No MCP endpoints yet',
       disabled: 'Disabled',
       cardSummary: '{tools} tools · {scope}',
-      scopeAll: 'All knowledge bases',
+              scopeAll: 'All knowledge bases',
       scopeCount: '{count} knowledge bases',
       create: 'New endpoint',
       editTitle: 'Edit MCP endpoint',
@@ -7622,5 +7753,34 @@ export default {
     capabilityRequired: 'Select at least one capability',
     loadFailed: 'Failed to load platform API keys',
     createFailed: 'Failed to create platform API key'
+  },
+  // Display text for the observed image attributes, keyed by attribute name.
+  // Attribute names escape their dots (contain.text → contain_text) because
+  // vue-i18n walks a key segment by segment on the dots, so a literal
+  // 'contain.text' key would never resolve. An attribute without a translation
+  // falls back to the registry's own wording.
+  //
+  // Every value carries a short label for compact controls (a filter
+  // checkbox) and a description for wherever there is room (a tooltip). One
+  // bundle therefore serves both the settings panel and the image gallery,
+  // including the gallery's fallback for attributes it does not declare.
+  imageAttr: {
+    contain_text: {
+      label: 'Text in the image',
+      description: 'How much body text the picture itself carries. Decides whether reading its text is worth a separate OCR pass.',
+      values: {
+        none: { label: 'None', description: 'no text at all' },
+        sparse: { label: 'Sparse', description: 'a few words — a logo, a road sign, a single label' },
+        block: { label: 'Block', description: 'a block of body text — a screenshot, a table, a document page' }
+      }
+    },
+    contain_data_visual: {
+      label: 'Data visual',
+      description: 'Whether the picture conveys data as a chart, graph, diagram or infographic. Such images keep their labels on the OCR path even when the text looks sparse.',
+      values: {
+        'true': { label: 'Yes', description: 'a chart, graph or diagram with plotted values' },
+        'false': { label: 'No', description: 'a photo, drawing, icon or decoration' }
+      }
+    }
   }
 }
