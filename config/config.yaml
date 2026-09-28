@@ -147,3 +147,17 @@ ai_chat:
   search_agent_id: "f8058b6c-cdbc-4745-b683-99a5ff5dffde"
   # 搜索开关：true 时 largeTable 页面走结构化搜索条件生成；false 时全部回退流式问答
   search_enabled: true
+
+# record_admin_info 内置工具（管理员信息记录通道）。智能体在 allowed_tools 勾选后，
+# 模型把内部细节（执行过的 SQL、文档 ID、系统字段名、schema 摘要、失败重试）通过
+# 该工具的参数记录下来，回答正文保持业务语言；前端按 tool_call 事件的 arguments
+# 渲染管理员折叠面板。
+admin_info_tool:
+  enabled: true                # 全局开关；false 时智能体勾选了也不注册
+  # description: ""            # 可选：覆盖默认工具描述（模型看到的用法说明）
+  # categories:                # 可选：category 参数的合法枚举；不配置则为自由文本
+  #   - sql
+  #   - fields
+  #   - ids
+  #   - schema
+  #   - notes

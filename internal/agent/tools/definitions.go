@@ -11,6 +11,11 @@ const (
 	ToolCallMCPTool      = "call_mcp_tool"
 	ToolThinking         = "thinking"
 	ToolTodoWrite        = "todo_write"
+	// ToolRecordAdminInfo is the administrator-info channel: agents record
+	// internal details (executed SQL, document IDs, system field names) into
+	// its arguments so the answer body can stay user-facing and frontends can
+	// render the records as a collapsed admin panel. Side-effect free.
+	ToolRecordAdminInfo = "record_admin_info"
 	// Knowledge retrieval surface. search_knowledge covers semantic, keyword
 	// and hybrid retrieval over chunk-indexed knowledge bases; read_document
 	// reads a document's metadata and chunks (by page, by chunk handle, or by
@@ -88,6 +93,7 @@ func AvailableToolDefinitions() []AvailableTool {
 	return []AvailableTool{
 		{Name: ToolThinking, Label: "思考", Description: "动态和反思性的问题解决思考工具"},
 		{Name: ToolTodoWrite, Label: "制定计划", Description: "创建结构化的研究计划"},
+		{Name: ToolRecordAdminInfo, Label: "记录管理员信息", Description: "把内部细节(SQL/文档ID/系统字段名等)记录到工具参数中，由前端渲染为管理员折叠面板，保持回答面向普通用户"},
 		{Name: ToolSearchKnowledge, Label: "检索知识库", Description: "语义、关键词或混合检索知识库分块"},
 		{Name: ToolReadDocument, Label: "阅读文档", Description: "读取文档元数据与分块内容，支持分页和文内查找"},
 		{Name: ToolListDocuments, Label: "浏览文档列表", Description: "分页列出知识库中的文档"},

@@ -1000,6 +1000,28 @@ func (s *agentService) registerSandboxShellTool(
 	}
 }
 
+// adminInfoToolEnabled reports whether config.admin_info_tool is switched on.
+// A nil section (or a nil Enabled) defaults to enabled: the per-agent
+// allowed_tools list is the primary gate, and a section that only customizes
+// description or categories must not silently turn the tool off.
+func adminInfoToolEnabled(cfg *config.Config) bool {
+	if cfg == nil || cfg.AdminInfoTool == nil {
+		return true
+	}
+	return cfg.AdminInfoTool.Enabled == nil || *cfg.AdminInfoTool.Enabled
+}
+
+// adminInfoToolOptions maps config.admin_info_tool onto the tool options.
+func adminInfoToolOptions(cfg *config.Config) tools.RecordAdminInfoOptions {
+	if cfg == nil || cfg.AdminInfoTool == nil {
+		return tools.RecordAdminInfoOptions{}
+	}
+	return tools.RecordAdminInfoOptions{
+		Description: cfg.AdminInfoTool.Description,
+		Categories:  cfg.AdminInfoTool.Categories,
+	}
+}
+
 // registerTools registers tools based on the agent configuration
 func (s *agentService) registerTools(
 	ctx context.Context,
@@ -1138,6 +1160,15 @@ func (s *agentService) registerTools(
 		logger.Infof(ctx, "search_memory not registered: long-term memory is off for this request")
 	}
 
+	// record_admin_info follows the deployment switch in config.admin_info_tool:
+	// when disabled globally it is dropped even if an allowlist still names it,
+	// mirroring the web_search / search_memory runtime switches above. The
+	// per-agent allowlist stays the primary gate.
+	if !adminInfoToolEnabled(s.cfg) {
+		allowedTools = withoutString(allowedTools, tools.ToolRecordAdminInfo)
+		logger.Infof(ctx, "record_admin_info not registered: disabled by config.admin_info_tool")
+	}
+
 	// Tool capability sets — used by the hard safety nets below to drop tools
 	// whose runtime prerequisite (a matching KB surface) is missing.
 	//
@@ -1224,6 +1255,9 @@ func (s *agentService) registerTools(
 			toolToRegister = tools.NewSequentialThinkingTool()
 		case tools.ToolTodoWrite:
 			toolToRegister = tools.NewTodoWriteTool()
+		case tools.ToolRecordAdminInfo:
+			toolToRegister = tools.NewRecordAdminInfoTool(adminInfoToolOptions(s.cfg))
+			logger.Infof(ctx, "Registered record_admin_info tool for session: %s", sessionID)
 		case tools.ToolSearchKnowledge:
 			toolToRegister = tools.NewSearchKnowledgeTool(
 				s.knowledgeBaseService,

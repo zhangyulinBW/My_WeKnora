@@ -18,6 +18,7 @@ func TestEveryBuiltInToolDeclaresAModelHandlePolicy(t *testing.T) {
 		ToolCallMCPTool,
 		ToolThinking,
 		ToolTodoWrite,
+		ToolRecordAdminInfo,
 		ToolSearchKnowledge,
 		ToolReadDocument,
 		ToolListDocuments,

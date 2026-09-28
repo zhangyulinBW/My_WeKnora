@@ -366,6 +366,10 @@ func compactToolSummary(success bool, errMsg string, data map[string]interface{}
 		if parsed > 0 {
 			return fmt.Sprintf("Parsed %d attachment(s)", parsed)
 		}
+	case "admin_info":
+		if cat := stringField(data, "category"); cat != "" {
+			return fmt.Sprintf("Recorded admin info (%s)", cat)
+		}
 	}
 	if displayType := stringField(data, "display_type"); displayType != "" {
 		return fmt.Sprintf("Tool completed (%s; payload omitted from history)", displayType)

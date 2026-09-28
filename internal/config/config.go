@@ -34,6 +34,7 @@ type Config struct {
 	IM              *IMConfig              `yaml:"im"               json:"im"`
 	Agent           *AgentConfig           `yaml:"agent"            json:"agent"`
 	AIChat          *AIChatConfig          `yaml:"ai_chat"          json:"ai_chat"`
+	AdminInfoTool   *AdminInfoToolConfig   `yaml:"admin_info_tool"  json:"admin_info_tool"`
 	// FrontendBaseURL is the externally-visible origin of the SPA, used
 	// to compose absolute share-link URLs. Empty falls back to a host-
 	// relative URL ("/register?token=…") which the SPA then resolves
@@ -90,10 +91,29 @@ type AIChatConfig struct {
 type AIChatAgentConfig struct {
 	// ID is the synthetic agent ID recorded on assistant messages. Empty falls
 	// back to a built-in constant at resolution time.
-	ID          string `yaml:"id" json:"id,omitempty"`
-	Name        string `yaml:"name" json:"name,omitempty"`
-	Description string `yaml:"description" json:"description,omitempty"`
+	ID                      string `yaml:"id" json:"id,omitempty"`
+	Name                    string `yaml:"name" json:"name,omitempty"`
+	Description             string `yaml:"description" json:"description,omitempty"`
 	types.CustomAgentConfig `yaml:",squash"`
+}
+
+// AdminInfoToolConfig configures the built-in record_admin_info tool — the
+// administrator-info channel agents use to keep internal details (executed
+// SQL, document IDs, system field names) out of the user-facing answer.
+// Model-facing texts default in code and can be overridden here, so a
+// deployment can retune them without recompiling.
+type AdminInfoToolConfig struct {
+	// Enabled is the deployment switch. Nil (or an absent section) means
+	// enabled: the per-agent allowed_tools list stays the primary gate, and a
+	// section that only customizes the texts below must not silently turn
+	// the tool off.
+	Enabled *bool `yaml:"enabled" json:"enabled,omitempty"`
+	// Description overrides the model-facing tool description (its usage
+	// instructions). Empty uses the built-in default.
+	Description string `yaml:"description" json:"description,omitempty"`
+	// Categories optionally restricts the category parameter to an enum.
+	// Empty leaves the parameter free-form.
+	Categories []string `yaml:"categories" json:"categories,omitempty"`
 }
 
 // IMConfig configures the IM integration service.

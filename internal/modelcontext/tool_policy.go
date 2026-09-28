@@ -172,8 +172,9 @@ var toolHandlePolicies = map[string]toolHandlePolicy{
 	// Agent-private bookkeeping tools echo model-authored text. They need
 	// compaction so a durable ID quoted back by the model is re-compacted, but
 	// never structured source rendering.
-	"thinking":   {},
-	"todo_write": {},
+	"thinking":          {},
+	"todo_write":        {},
+	"record_admin_info": {},
 	// Skill output is user-authored content of unknown shape. Compact known
 	// durable IDs, but do not mine it for source keys: a skill's JSON may use
 	// "url"/"knowledge_id" with unrelated semantics.
