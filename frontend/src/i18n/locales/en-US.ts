@@ -6508,6 +6508,8 @@ export default {
       thinkingDesc: 'Dynamic and reflective problem-solving thinking tool',
       todoWrite: 'Plan',
       todoWriteDesc: 'Create structured research plans',
+      recordAdminInfo: 'Record admin info',
+      recordAdminInfoDesc: 'Record internal details (SQL/IDs/field names) into tool arguments for a collapsed admin panel, keeping answers user-facing',
       searchKnowledge: 'Search knowledge',
       searchKnowledgeDesc: 'Semantic, keyword or hybrid search over knowledge-base chunks',
       readDocument: 'Read document',

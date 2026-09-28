@@ -1466,6 +1466,8 @@ export default {
       thinkingDesc: '动态和反思性的问题解决思考工具',
       todoWrite: '制定计划',
       todoWriteDesc: '创建结构化的研究计划',
+      recordAdminInfo: '记录管理员信息',
+      recordAdminInfoDesc: '把内部细节（SQL/文档ID/系统字段名等）记录到工具参数，由前端渲染为管理员折叠面板，保持回答面向普通用户',
       searchKnowledge: '检索知识库',
       searchKnowledgeDesc: '语义、关键词或混合检索知识库分块',
       readDocument: '阅读文档',

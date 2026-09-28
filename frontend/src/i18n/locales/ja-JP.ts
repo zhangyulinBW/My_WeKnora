@@ -6508,6 +6508,8 @@ export default {
       thinkingDesc: '動的かつ内省的に問題を解決する思考ツール',
       todoWrite: '計画',
       todoWriteDesc: '構造化された調査計画を作成します',
+      recordAdminInfo: '管理者情報の記録',
+      recordAdminInfoDesc: '内部詳細（SQL/ID/フィールド名）をツール引数に記録し、管理者用の折りたたみパネルに表示。回答は一般ユーザー向けを維持します',
       searchKnowledge: 'ナレッジベースを検索',
       searchKnowledgeDesc: 'セマンティック・キーワード・ハイブリッド検索でナレッジベースのチャンクを検索します',
       readDocument: 'ドキュメントを読む',

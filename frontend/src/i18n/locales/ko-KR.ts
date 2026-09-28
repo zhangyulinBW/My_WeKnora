@@ -1464,6 +1464,8 @@ export default {
       thinkingDesc: '동적이고 반성적인 문제 해결 사고 도구',
       todoWrite: '계획 수립',
       todoWriteDesc: '구조화된 연구 계획 생성',
+      recordAdminInfo: '관리자 정보 기록',
+      recordAdminInfoDesc: '내부 세부 정보(SQL/ID/필드 이름)를 도구 인수에 기록하여 관리자용 접이 패널로 표시하고, 답변은 일반 사용자 대상으로 유지',
       searchKnowledge: '지식베이스 검색',
       searchKnowledgeDesc: '의미, 키워드 또는 하이브리드 방식으로 지식베이스 청크 검색',
       readDocument: '문서 읽기',

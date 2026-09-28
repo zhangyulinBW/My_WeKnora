@@ -1037,6 +1037,8 @@ export default {
       thinkingDesc: '動態和反思性的問題解決思考工具',
       todoWrite: '制定計劃',
       todoWriteDesc: '建立結構化的研究計劃',
+      recordAdminInfo: '記錄管理員資訊',
+      recordAdminInfoDesc: '把內部細節（SQL/文件ID/系統欄位名等）記錄到工具參數，由前端渲染為管理員摺疊面板，保持回答面向一般使用者',
       grepChunks: '關鍵詞搜尋',
       grepChunksDesc: '快速定位包含特定關鍵詞的文件和分塊',
       knowledgeSearch: '語義搜尋',

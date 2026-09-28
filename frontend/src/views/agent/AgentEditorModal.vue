@@ -2458,6 +2458,7 @@ const allTools = computed(() => [
   // 基础思考类
   { value: 'thinking', label: t('agentEditor.tools.thinking'), description: t('agentEditor.tools.thinkingDesc'), group: 'base' },
   { value: 'todo_write', label: t('agentEditor.tools.todoWrite'), description: t('agentEditor.tools.todoWriteDesc'), group: 'base' },
+  { value: 'record_admin_info', label: t('agentEditor.tools.recordAdminInfo'), description: t('agentEditor.tools.recordAdminInfoDesc'), group: 'base' },
   // 知识库检索 / 文档阅读（旧的 grep_chunks / knowledge_search / list_knowledge_chunks /
   // get_document_info 已合并，旧配置加载时由 normalizeLegacyToolNames 映射到新名字）
   { value: 'search_knowledge', label: t('agentEditor.tools.searchKnowledge'), description: t('agentEditor.tools.searchKnowledgeDesc'), group: 'rag' },
