@@ -147,7 +147,7 @@ WeKnora 自己跑在容器里时，要把 **实际的** docker socket 挂进 app
 socket 的 GID 把 `appuser` 加入对应组；不要依赖 compose `group_add`，也不要 `chmod 666`
 宿主机 socket。若 socket 是 `root:root` 且仅所有者可写，容器内无法安全补权，需在宿主机把
 socket 改成非 root 组的 `660`。逐步排障（含 Docker Desktop for Windows 的代理 socket
-路径与重启失效处理）见 [Docker 沙箱排障](./sandbox-docker-troubleshooting.md)。
+路径与重启失效处理）见 [Docker 沙箱排障](./沙箱Docker权限排障.md)。
 
 ## 边界
 

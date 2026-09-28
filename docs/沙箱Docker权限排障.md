@@ -1,5 +1,21 @@
 # Docker 沙箱排障：permission denied 连不上 docker.sock
 
+## 先跑这三条（无脑修复，不用判断）
+
+```powershell
+wsl -d docker-desktop -u root -- chgrp 999 /run/host-services/docker.proxy.sock
+```
+
+```bash
+cd F:\学习\My_WeKnora
+docker compose up -d --force-recreate app
+```
+
+跑完到「设置 → 沙箱后端」重新测试 Docker 配置。Git Bash 里跑第一条要加前缀
+`MSYS_NO_PATHCONV=1`。下面是原理与其它场景，仅供深究。
+
+---
+
 适用症状：Docker 沙箱后端报
 `permission denied while trying to connect to the docker API at unix:///var/run/docker.sock`，
 或「设置 → 沙箱后端」里 Docker 配置连通性检查失败。后端设计与配置见
@@ -119,7 +135,11 @@ docker exec -u appuser WeKnora-app sh -c \
 ### Docker Desktop 重启后失效
 
 重启 Docker Desktop（或重启电脑）会重建 socket，属主回到 `root:root`，需要重跑
-上面两步。嫌手动麻烦可以把 chgrp 一行放进登录任务（Windows 任务计划程序，
+上面两步。**是否需要第 2 步重建容器，用 `id appuser` 一眼判断**：组里还有
+`999(dockersock)`（容器只是 restart，`/etc/group` 未变）时，chgrp 后立即恢复，
+无需重建；组里没有 999（容器被 recreate 过，入口脚本在 socket 为 `root:root` 时
+启动、拒绝补权）时，运行中的进程不带该组，chgrp 无济于事，必须 force-recreate。
+嫌手动麻烦可以把 chgrp 一行放进登录任务（Windows 任务计划程序，
 触发器「登录时」），`--force-recreate` 只在 chgrp 后需要时手动执行。
 
 macOS 的 Docker Desktop 不走本文路径：官方支持的方式是

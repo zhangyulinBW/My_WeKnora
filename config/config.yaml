@@ -119,7 +119,7 @@ tenant:
 ai_chat:
   # normal 意图使用内置 Smart Reasoning 智能体；其他专用意图仍由下方各自的
   # intent/search/recommend_agent_id 驱动。若下方 agent: 内联定义存在，则本项会被忽略。
-  agent_id: "builtin-smart-reasoning"
+  agent_id: "6a188aae-b3fb-45c7-b59b-1d0a4620a113"
   # 可选：直接在 config.yaml 内联定义 normal 意图（普通问答）使用的智能体，
   # 无需在 custom_agents 表预建。存在即优先生效（忽略上面的 agent_id）。
   # 字段与智能体编辑器一致（完整 CustomAgentConfig），未写的字段由系统补默认值。
