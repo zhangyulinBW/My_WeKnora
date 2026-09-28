@@ -266,6 +266,27 @@ func (t *aiStreamTranslator) write(typ, content string, done bool, data map[stri
 	t.h.writeEvent(t.c, ev)
 }
 
+// writeAdminInfo 把 record_admin_info 的调用翻译成专属的 admin_info 事件：
+// content 为记录的事实文本，data 携带 category 与 tool_call_id。该工具不再走
+// 通用 tool_call/tool_result 帧，管理员层在协议上有独立的事件类型，前端无需
+// 再按 tool_name 匹配工具调用卡片。
+func (t *aiStreamTranslator) writeAdminInfo(data event.AgentToolCallData) {
+	category := "notes"
+	if v, ok := data.Arguments["category"].(string); ok {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			category = trimmed
+		}
+	}
+	detail := ""
+	if v, ok := data.Arguments["detail"].(string); ok {
+		detail = v
+	}
+	t.write(AIEventAdminInfo, detail, false, map[string]interface{}{
+		"category":     category,
+		"tool_call_id": data.ToolCallID,
+	})
+}
+
 // writeAnswerDone 发出终止的 answer_done 事件，携带会话和助手消息 ID，
 // 便于客户端拉取后续推荐问题。
 func (t *aiStreamTranslator) writeAnswerDone() {
@@ -305,6 +326,10 @@ func (t *aiStreamTranslator) subscribe(bus *event.EventBus) {
 		if !ok {
 			return nil
 		}
+		if data.ToolName == agenttools.ToolRecordAdminInfo {
+			t.writeAdminInfo(data)
+			return nil
+		}
 		t.write(AIEventToolCall, fmt.Sprintf("Calling tool: %s", data.ToolName), false, map[string]interface{}{
 			"tool_name":    data.ToolName,
 			"arguments":    data.Arguments,
@@ -316,6 +341,11 @@ func (t *aiStreamTranslator) subscribe(bus *event.EventBus) {
 	bus.On(event.EventAgentToolResult, func(ctx context.Context, evt event.Event) error {
 		data, ok := evt.Data.(event.AgentToolResultData)
 		if !ok {
+			return nil
+		}
+		if data.ToolName == agenttools.ToolRecordAdminInfo {
+			// 记录内容已在 tool_call 时通过 admin_info 事件完整下发（参数即全部
+			// 载荷），执行结果对客户端没有增量信息，不再发通用 tool_result 帧。
 			return nil
 		}
 		content := agenttools.StreamContentForToolResult(data.ToolName, data.Success, data.Error, data.Data)

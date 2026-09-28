@@ -153,6 +153,7 @@ const (
 	AIEventThinking          = "thinking"    // agent reasoning step
 	AIEventToolCall          = "tool_call"   // agent tool invocation
 	AIEventToolResult        = "tool_result" // agent tool result
+	AIEventAdminInfo         = "admin_info"  // record_admin_info record: content=detail, data={category,tool_call_id}; replaces this tool's generic tool_call/tool_result frames
 	AIEventReferences        = "references"  // knowledge references
 	AIEventReflection        = "reflection"  // agent reflection step
 	AIEventNeedSearchContext = "need_search_context"

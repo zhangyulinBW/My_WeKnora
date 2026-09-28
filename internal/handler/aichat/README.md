@@ -90,6 +90,12 @@ handleMessage
 ## 关键行为说明
 
 - **SSE 输出**：所有响应通过 `writeEvent` 以 `data: {json}\n\n` 输出（`handler.go`）。
+- **管理员信息事件（`admin_info`）**：智能体调用 `record_admin_info` 工具记录的内部细节
+  （SQL、文档 ID、系统字段名等）翻译成专属的 `admin_info` 事件下发：`content` 为记录文本，
+  `data` 携带 `category`（分类，缺省 `notes`）与 `tool_call_id`。该工具**不再**产生通用
+  `tool_call`/`tool_result` 帧，前端按 `category` 分组渲染管理员折叠面板即可，无需匹配
+  工具名。工具的启用（智能体 `allowed_tools`）与文案/枚举（config.yaml `admin_info_tool`）
+  见 `internal/agent/tools/record_admin_info.go`。
 - **沙箱产物（artifacts）**：normal 意图回合结束后，`aiStreamTranslator` 与官方
   `/agent-chat` 完成路径同源地回收沙箱输出目录（`ArtifactCollector`），把答案里的
   `sandbox:<文件名>` 占位重写为稳定 `resource://` 句柄，产物列表随助手消息落库，
