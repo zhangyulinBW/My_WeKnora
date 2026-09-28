@@ -35,6 +35,9 @@ export function getAgentToolIconName(
   if (toolName === 'todo_write') {
     return 'task'
   }
+  if (toolName === 'record_admin_info') {
+    return 'file'
+  }
   if (toolName === 'image_analysis' || toolName === 'query_understand') {
     return 'ai-search'
   }

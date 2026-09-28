@@ -68,6 +68,11 @@
       :data="toolData as ReadSkillData"
     />
 
+    <AdminInfoResult
+      v-else-if="displayType === 'admin_info'"
+      :data="toolData as AdminInfoData"
+    />
+
     <McpToolResult
       v-else-if="displayType === 'mcp_discovery' || displayType === 'mcp_call'"
       :discovery="displayType === 'mcp_discovery'" :data="toolData"
@@ -107,7 +112,8 @@ import type {
   ShellExecData,
   ListSandboxFilesData,
   WriteSandboxFileData,
-  ReadSkillData
+  ReadSkillData,
+  AdminInfoData
 } from '@/types/tool-results';
 
 import SearchResults from './tool-results/SearchResults.vue';
@@ -129,6 +135,7 @@ import SandboxFilesResult from './tool-results/SandboxFilesResult.vue';
 import WriteSandboxFileResult from './tool-results/WriteSandboxFileResult.vue';
 import ReadSkillResult from './tool-results/ReadSkillResult.vue';
 import McpToolResult from './tool-results/McpToolResult.vue';
+import AdminInfoResult from './tool-results/AdminInfoResult.vue';
 
 interface Props {
   success?: boolean;

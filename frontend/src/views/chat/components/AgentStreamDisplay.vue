@@ -752,6 +752,7 @@ const TOOL_NAME_KEYS: Record<string, string> = {
   wiki_read_issue: 'agentEditor.tools.wikiReadIssue',
   wiki_update_issue: 'agentEditor.tools.wikiUpdateIssue',
   todo_write: 'agentStream.tools.todoWrite',
+  record_admin_info: 'agentEditor.tools.recordAdminInfo',
   knowledge_graph_extract: 'agentStream.tools.knowledgeGraphExtract',
   thinking: 'agentStream.tools.thinking',
   attachment_parsing: 'agentStream.tools.attachmentParsing',
@@ -1238,6 +1239,9 @@ const resolveToolDisplayType = (event: any): DisplayType | undefined => {
   }
   if (event?.tool_name === 'read_skill' && event?.success !== false) {
     return 'read_skill'
+  }
+  if (event?.tool_name === 'record_admin_info' && event?.success !== false) {
+    return 'admin_info'
   }
   return undefined
 };

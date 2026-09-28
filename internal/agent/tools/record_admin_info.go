@@ -17,7 +17,9 @@ const DefaultRecordAdminInfoDescription = `Use this tool to record internal, adm
 
 Record with it: executed SQL statements, document/knowledge IDs (dN handles), real table and column (property) names, schema facts, page context metadata, failed queries and how they were fixed.
 
-Call it right after each tool use that produced such a fact, BEFORE writing the final answer. One topic per call: category classifies the record (e.g. sql, fields, ids, schema, notes), detail carries the fact as plain text.
+Call it right after each tool use that produced such a fact, BEFORE writing the final answer. One topic per call: category classifies the record (e.g. sql, fields, ids, schema, notes), detail carries the fact.
+
+The detail text is rendered as MARKDOWN in the admin panel: prefer short bullet lines (e.g. "- 行业：bcs_industry_new = semiconductor") or fenced code blocks for SQL over one long semicolon-separated sentence.
 
 The final answer must never contain these internal details and must never mention this tool. If the user asks for the SQL or internal field names, say they are recorded for administrators.`
 
@@ -45,7 +47,7 @@ type RecordAdminInfoTool struct {
 // internal fact per call; Category is optional and defaults to "notes".
 type RecordAdminInfoInput struct {
 	Category string `json:"category,omitempty" jsonschema:"Classification of the record, e.g. sql, fields, ids, schema, notes"`
-	Detail   string `json:"detail" jsonschema:"One internal fact worth keeping for administrators, as plain text"`
+	Detail   string `json:"detail" jsonschema:"One internal fact worth keeping for administrators; rendered as markdown, so bullet lines, key=value pairs and fenced SQL blocks are welcome"`
 }
 
 // NewRecordAdminInfoTool creates a record_admin_info tool instance.

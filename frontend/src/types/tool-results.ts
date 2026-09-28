@@ -32,7 +32,16 @@ export type DisplayType =
     | 'edit_sandbox_file'
     | 'read_skill'
     | 'mcp_discovery'
-    | 'mcp_call';
+    | 'mcp_call'
+    | 'admin_info';
+
+// record_admin_info 记录条目 —— 一条管理员可见的内部细节
+export interface AdminInfoData {
+    display_type: 'admin_info';
+    category: string;
+    detail: string;
+    recorded?: boolean;
+}
 
 // Search result item
 export interface SearchResultItem {
