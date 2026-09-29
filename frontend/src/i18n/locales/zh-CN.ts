@@ -1031,6 +1031,12 @@ export default {
     prereqStep3Brief_yuque: '（可选）企业版填写 Base URL',
     prereqStep3Desc_yuque: '公有云用户无需填写；语雀企业版或私有部署请填写企业域名',
     prereqOpenConsole_yuque: '前往语雀 Token 设置',
+    yuqueFolderModeLabel: '目录结构',
+    yuqueFolderModeToc: '按语雀目录分层',
+    yuqueFolderModeNone: '平铺在根目录',
+    yuqueFolderModeHint: '按语雀的目录层级放置文档。注意：之后在知识库里手动调整的目录，会在该文档下次同步时被覆盖回语雀的结构。',
+    yuqueTOCOnly: '只同步语雀目录中可见的文档',
+    yuqueTOCOnlyHint: '需要先选择「按语雀目录分层」。已经同步进知识库的文档不受影响——语雀中不在目录里的文档只是不再新增，不会被删除。',
     prereqBarText_dingtalk: '首次使用？点击查看钉钉应用配置指引',
     prereqStep1Brief_dingtalk: '创建企业内部应用',
     prereqStep1Desc_dingtalk: '在钉钉开放平台创建企业内部应用，并获取 Client ID 和 Client Secret',
@@ -1126,6 +1132,9 @@ export default {
       feedUrlsHint: '每行一个 RSS / Atom 订阅源地址，支持同时填写多个',
       authHeaders: '自定义请求头（可选）',
       authHeadersHint: '用于访问私有订阅源，每行一个，格式为「名称: 值」，例如 Authorization: Bearer xxxx'
+    },
+    confluence: {
+      cloudFolderLimitation: 'Confluence Cloud 暂不支持在此列出空间顶层文件夹等容器下的页面；选择整个空间仍会同步它们。'
     },
     connectorDesc: {
       feishu: '同步飞书知识库中的文档、表格、文件',
@@ -3959,6 +3968,13 @@ export default {
     referenceSourceView: '查看原文',
     referenceSourceRelocate: '重新定位',
     referenceSourceLocating: '正在定位引用位置…',
+    referenceSourceExact: "已精确定位原文片段",
+    referenceSourcePartial: "已高亮核验通过的原文片段，部分引用内容尚未匹配",
+    referenceSourceBlock: "已定位到来源区域，尚未精确匹配文字",
+    referenceSourceAmbiguous: "原文有多处相同内容，无法唯一定位",
+    referenceSourceStale: "原文或内容已更新，当前引用无法精确定位",
+    referenceSourcePrevious: "上一处引用",
+    referenceSourceNext: "下一处引用",
     referenceSourceFoundPage: '已定位到第 {page} 页',
     referenceSourceNotFound: '未能精确定位引用内容，已为你打开原文',
     referenceSourceOpenWeb: '打开原网页并定位',
@@ -6894,6 +6910,12 @@ export default {
     noActivity: '暂无解析记录',
     totalDuration: '总耗时：{d}',
     errorCode: {
+      DOCREADER_UNAVAILABLE: "文档解析服务不可用",
+      DOCREADER_UNAVAILABLE_SUGGESTION: "无法连接 DocReader，或连接已中断。请检查解析服务是否启动、是否反复重启以及网络是否正常；服务恢复后再重试，无需重复上传文件。",
+      DOCREADER_TIMEOUT: "文档解析超时",
+      DOCREADER_TIMEOUT_SUGGESTION: "请检查 DocReader 的健康状态和负载；服务正常后再重试，必要时拆分大文件。",
+      DOCREADER_PARSE_FAILED: "文档解析失败",
+      DOCREADER_PARSE_FAILED_SUGGESTION: "请检查文件格式，并让管理员查看本次解析对应的 DocReader 日志。",
       TASK_STALLED: '长时间无进展，已自动终止',
       TASK_STALLED_SUGGESTION: '处理超过阈值仍没有任何进展，且队列中已无对应任务，已被系统标记为失败。请点击「重试」；如反复出现，请检查该阶段依赖的服务（文档解析、模型、向量库）是否正常。',
       UNKNOWN_SUGGESTION: '请查看应用日志获取详细信息。'

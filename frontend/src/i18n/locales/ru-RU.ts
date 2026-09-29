@@ -1029,6 +1029,12 @@ export default {
     prereqStep3Brief_yuque: '(Опционально) Для Enterprise укажите Base URL',
     prereqStep3Desc_yuque: 'Пользователям публичного облака указывать не нужно. Для Yuque Enterprise или приватного развёртывания укажите корпоративный домен',
     prereqOpenConsole_yuque: 'Перейти к настройкам Yuque Token',
+    yuqueFolderModeLabel: 'Структура папок',
+    yuqueFolderModeToc: 'Как в оглавлении Yuque',
+    yuqueFolderModeNone: 'Всё в корне',
+    yuqueFolderModeHint: 'Раскладывает документы по папкам согласно оглавлению Yuque. Обратите внимание: папки, перемещённые вручную в базе знаний, будут перезаписаны структурой Yuque при следующей синхронизации этого документа.',
+    yuqueTOCOnly: 'Синхронизировать только видимые в оглавлении Yuque документы',
+    yuqueTOCOnlyHint: 'Требуется режим «Как в оглавлении Yuque». Документы, уже добавленные в базу знаний, остаются нетронутыми — документ, которого нет в оглавлении Yuque, просто перестаёт добавляться, но не удаляется.',
     prereqBarText_dingtalk: 'Используете впервые? Откройте руководство по настройке приложения DingTalk',
     prereqStep1Brief_dingtalk: 'Создайте внутреннее корпоративное приложение',
     prereqStep1Desc_dingtalk: 'Создайте внутреннее приложение в DingTalk Open Platform и скопируйте Client ID и Client Secret.',
@@ -1124,6 +1130,9 @@ export default {
       feedUrlsHint: 'По одному адресу ленты RSS / Atom в строке; можно указать несколько.',
       authHeaders: 'Пользовательские заголовки (необязательно)',
       authHeadersHint: 'Для приватных лент. По одному в строке в формате «Имя: Значение», например Authorization: Bearer xxxx'
+    },
+    confluence: {
+      cloudFolderLimitation: 'Confluence Cloud пока не может показать здесь страницы из папок верхнего уровня пространства; при выборе всего пространства они будут синхронизированы.'
     },
     connectorDesc: {
       feishu: 'Синхронизация документов, таблиц и файлов из Feishu Wiki',
@@ -3957,6 +3966,13 @@ export default {
     referenceSourceView: 'Открыть оригинал',
     referenceSourceRelocate: 'Найти снова',
     referenceSourceLocating: 'Поиск цитируемого фрагмента…',
+    referenceSourceExact: "Фрагмент источника найден",
+    referenceSourcePartial: "Проверенные фрагменты выделены; часть цитаты не сопоставлена",
+    referenceSourceBlock: "Найдена область источника; точное совпадение текста не подтверждено",
+    referenceSourceAmbiguous: "Найдено несколько совпадений; точное место неизвестно",
+    referenceSourceStale: "Источник или содержимое изменены; точное место цитаты недоступно",
+    referenceSourcePrevious: "Предыдущее место цитирования",
+    referenceSourceNext: "Следующее место цитирования",
     referenceSourceFoundPage: 'Найдено на странице {page}',
     referenceSourceNotFound: 'Не удалось точно найти фрагмент; открыт оригинал',
     referenceSourceOpenWeb: 'Открыть веб-страницу на этом фрагменте',
@@ -6892,6 +6908,12 @@ export default {
     noActivity: 'Нет активности парсинга',
     totalDuration: 'Всего: {d}',
     errorCode: {
+      DOCREADER_UNAVAILABLE: "Сервис обработки документов недоступен",
+      DOCREADER_UNAVAILABLE_SUGGESTION: "Не удалось подключиться к DocReader или соединение прервано. Проверьте состояние сервиса, повторные перезапуски и сеть. Повторите попытку после восстановления; загружать файл заново не нужно.",
+      DOCREADER_TIMEOUT: "Превышено время обработки документа",
+      DOCREADER_TIMEOUT_SUGGESTION: "Проверьте состояние и нагрузку DocReader перед повторной попыткой. При необходимости разделите большой файл.",
+      DOCREADER_PARSE_FAILED: "Ошибка обработки документа",
+      DOCREADER_PARSE_FAILED_SUGGESTION: "Проверьте формат файла и попросите администратора изучить журналы DocReader для этой попытки.",
       TASK_STALLED: 'Остановлено из-за отсутствия прогресса',
       TASK_STALLED_SUGGESTION: 'Обработка не продвигалась дольше порога, и в очереди не осталось задач, поэтому она помечена как ошибочная. Нажмите «Повторить»; если это повторяется, проверьте сервис, от которого зависит этап (разбор документов, модель или векторное хранилище).',
       UNKNOWN_SUGGESTION: 'Проверьте логи приложения для подробностей.'
