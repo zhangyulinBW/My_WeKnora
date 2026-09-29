@@ -617,6 +617,14 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// them only after the matching handlers are ready.
 	must(container.Invoke(recoverPendingWikiTasks))
 
+	// BrowserSkill is registered when its manager is constructed, which is
+	// early, so reverse-order cleanup would run it last. Force the manager
+	// to exist, then run that hook first so a slow cron stop cannot leave
+	// the daemon alive until the process is killed.
+	must(container.Invoke(func(cleaner interfaces.ResourceCleaner, _ *browserskill.Manager) {
+		cleaner.Promote("BrowserSkill")
+	}))
+
 	logger.Infof(ctx, "[Container] Container initialization completed successfully")
 	return container
 }
@@ -1913,7 +1921,7 @@ func startDataSourceScheduler(scheduler *datasource.Scheduler, cleaner interface
 	}
 
 	cleaner.RegisterWithName("DataSourceScheduler", func() error {
-		scheduler.Stop()
+		scheduler.StopWithin(cleanupStepTimeout)
 		return nil
 	})
 }
@@ -1931,7 +1939,7 @@ func startHousekeepingService(svc *service.HousekeepingService, cleaner interfac
 		logger.Warnf(context.Background(), "[Container] housekeeping start failed: %v", err)
 	}
 	cleaner.RegisterWithName("KnowledgeHousekeeping", func() error {
-		svc.Stop()
+		svc.StopWithin(cleanupStepTimeout)
 		return nil
 	})
 }
@@ -1947,7 +1955,7 @@ func startTenantSkillReaper(svc *service.TenantSkillService, cleaner interfaces.
 		logger.Warnf(context.Background(), "[Container] tenant skill reaper start failed: %v", err)
 	}
 	cleaner.RegisterWithName("TenantSkillReaper", func() error {
-		svc.Stop()
+		svc.StopWithin(cleanupStepTimeout)
 		return nil
 	})
 }
@@ -2023,7 +2031,7 @@ func startAuditLogRetention(
 ) {
 	runner.Start(context.Background())
 	cleaner.RegisterWithName("AuditLogRetentionRunner", func() error {
-		runner.Stop()
+		runner.StopWithin(cleanupStepTimeout)
 		return nil
 	})
 }
