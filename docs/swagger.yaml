@@ -6570,7 +6570,7 @@ definitions:
           type: integer
         type: array
       query:
-        description: Query text for knowledge base search
+        description: Query text; may be empty only when an image or file is attached
         type: string
       question_origin:
         allOf:
@@ -6596,8 +6596,6 @@ definitions:
       web_search_enabled:
         description: Whether web search is enabled for this request
         type: boolean
-    required:
-    - query
     type: object
   internal_handler_session.CreateSessionRequest:
     properties:

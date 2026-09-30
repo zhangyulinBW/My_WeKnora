@@ -26374,9 +26374,6 @@ const docTemplate = `{
         },
         "internal_handler_session.CreateKnowledgeQARequest": {
             "type": "object",
-            "required": [
-                "query"
-            ],
             "properties": {
                 "agent_enabled": {
                     "description": "Whether agent mode is enabled for this request",
@@ -26459,7 +26456,7 @@ const docTemplate = `{
                     }
                 },
                 "query": {
-                    "description": "Query text for knowledge base search",
+                    "description": "Query text; may be empty only when an image or file is attached",
                     "type": "string"
                 },
                 "question_origin": {

@@ -2816,7 +2816,8 @@ export default {
           },
           registration_mode: {
             self_serve: '自助註冊（任何人可註冊）',
-            invite_only: '僅邀請（關閉公網註冊）'
+            invite_register: '僅限邀請註冊（需有效邀請連結）',
+            invite_only: '禁止註冊（已有賬號仍可接受邀請）'
           }
         }
       },
@@ -2842,7 +2843,7 @@ export default {
           whitelist: 'SSRF 防護白名單。可填入 example.com / *.foo.com / 10.0.0.0/8 / 2001:db8::1。修改後立即生效。SSRF_WHITELIST_EXTRA 環境變數仍由部署方維護，不在此處覆蓋。'
         },
         auth: {
-          registration_mode: '自助註冊模式。self_serve = 任何人可註冊賬號；invite_only = 關閉公網註冊，僅 Owner/Admin 可邀請。修改後立即生效，但謹慎對待 self_serve（公網會接受 spam）。',
+          registration_mode: '註冊模式。開放註冊允許任何人建立賬號；僅限邀請註冊要求有效邀請連結；禁止註冊不允許建立賬號，但已有賬號仍可接受邀請。儲存後立即生效。',
           default_tenant_mode: '公開註冊後的空間初始化策略。create_personal 會自動建立個人空間並授予 Owner；tenantless 僅建立賬戶，使用者需要接受邀請或主動建立空間。隻影響之後註冊的使用者。'
         }
       },
@@ -2868,7 +2869,7 @@ export default {
           whitelist: 'SSRF 防護白名單'
         },
         auth: {
-          registration_mode: '自助註冊模式',
+          registration_mode: '註冊模式',
           default_tenant_mode: '註冊預設空間策略'
         }
       },

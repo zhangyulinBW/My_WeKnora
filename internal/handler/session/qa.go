@@ -43,7 +43,8 @@ type qaRequestContext struct {
 	sessionID             string
 	requestID             string
 	receivedAt            time.Time // Wall-clock time the handler started processing the request
-	query                 string
+	query                 string    // Question sent to models; the upload-only question when the user typed nothing
+	userInput             string    // Text the user typed, stored on the user message; may be empty
 	session               *types.Session
 	customAgent           *types.CustomAgent
 	assistantMessage      *types.Message
@@ -134,6 +135,25 @@ func (rc *qaRequestContext) buildQARequest() *types.QARequest {
 	return req
 }
 
+// uploadOnlyQuery returns the question used for a request that carries inline
+// image or file content but no text, or "" when it carries neither. URL-only
+// images do not count: parseQARequest strips client-supplied image URLs.
+// Pre-uploaded attachment IDs do not count either: those documents can still
+// fail or time out after the stream starts, leaving nothing to answer from.
+func uploadOnlyQuery(ctx context.Context, req *CreateKnowledgeQARequest) string {
+	hasUpload := false
+	for _, img := range req.Images {
+		hasUpload = hasUpload || strings.TrimSpace(img.Data) != ""
+	}
+	for _, att := range req.AttachmentUploads {
+		hasUpload = hasUpload || strings.TrimSpace(att.Data) != ""
+	}
+	if !hasUpload {
+		return ""
+	}
+	return types.UploadOnlyQuestion(types.LanguageFromContextOrDefault(ctx))
+}
+
 // parseQARequest parses and validates a QA request, returns the request context
 func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestContext, *CreateKnowledgeQARequest, error) {
 	receivedAt := time.Now()
@@ -172,9 +192,14 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		logger.Error(ctx, "Query content is invalid")
 		return nil, nil, errors.NewBadRequestError("Query content contains invalid content")
 	}
+	modelQuery := request.Query
 	if validatedQuery == "" {
-		logger.Error(ctx, "Query content is empty")
-		return nil, nil, errors.NewBadRequestError("Query content cannot be empty")
+		modelQuery = uploadOnlyQuery(ctx, &request)
+		if modelQuery == "" {
+			logger.Error(ctx, "Query content is empty")
+			return nil, nil, errors.NewBadRequestError("Query content cannot be empty")
+		}
+		request.Query = ""
 	}
 
 	// Resolve the storage-reference representation up front: once the SSE stream
@@ -221,7 +246,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	}
 
 	// Merge @mentioned items into knowledge_base_ids and knowledge_ids
-	kbIDs, knowledgeIDs := mergeKnowledgeTargets(request.KnowledgeBaseIDs, request.KnowledgeIds, request.MentionedItems)
+	kbIDs, knowledgeIDs := mergeKnowledgeTargets(request.KnowledgeBaseIDs, request.KnowledgeIDs, request.MentionedItems)
 	if err := types.AuthorizeTenantAPIKeyKnowledgeTargets(ctx, kbIDs, knowledgeIDs); err != nil {
 		return nil, nil, err
 	}
@@ -423,7 +448,8 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		sessionID:   sessionID,
 		requestID:   requestID,
 		receivedAt:  receivedAt,
-		query:       request.Query,
+		query:       modelQuery,
+		userInput:   request.Query,
 		session:     session,
 		customAgent: customAgent,
 		assistantMessage: &types.Message{
@@ -1067,7 +1093,7 @@ func (h *Handler) persistTurnMessages(ctx context.Context, reqCtx *qaRequestCont
 		userMsg, err := h.createUserMessage(
 			ctx,
 			reqCtx.sessionID,
-			reqCtx.query,
+			reqCtx.userInput,
 			reqCtx.requestID,
 			reqCtx.mentionedItems,
 			convertImageAttachments(reqCtx.images),
