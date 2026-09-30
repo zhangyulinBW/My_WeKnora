@@ -140,6 +140,10 @@ type aiStreamTranslator struct {
 	answered  bool
 	final     strings.Builder
 	refs      []*types.SearchResult
+	// writeMu 串行化对 SSE 响应的写入。EventBus 的 handler 运行在发射方协程上，
+	// 引擎并行执行工具时（ParallelToolCalls）多个 tool 事件会并发到达；gin 的
+	// ResponseWriter 非并发安全，交错写入会破坏 chunked 编码导致客户端断连。
+	writeMu sync.Mutex
 }
 
 func newAIStreamTranslator(
@@ -263,7 +267,9 @@ func (t *aiStreamTranslator) write(typ, content string, done bool, data map[stri
 		}
 		ev.Data["error"] = content
 	}
+	t.writeMu.Lock()
 	t.h.writeEvent(t.c, ev)
+	t.writeMu.Unlock()
 }
 
 // writeAdminInfo 把 record_admin_info 的调用翻译成专属的 admin_info 事件：
@@ -301,6 +307,7 @@ func (t *aiStreamTranslator) writeSuggestions(suggestions []AISuggestionItem) {
 	if t.c.Request.Context().Err() != nil {
 		return
 	}
+	t.writeMu.Lock()
 	t.h.writeEvent(t.c, AIEvent{
 		Version:        t.req.Version,
 		Type:           AIEventSuggestions,
@@ -308,10 +315,14 @@ func (t *aiStreamTranslator) writeSuggestions(suggestions []AISuggestionItem) {
 		RequestID:      t.req.RequestID,
 		Suggestions:    suggestions,
 	})
+	t.writeMu.Unlock()
 }
 
-// subscribe 将智能体事件总线上的每个事件映射为对应的 SSE 事件。
-func (t *aiStreamTranslator) subscribe(bus *event.EventBus) {
+// subscribeProgress 订阅智能体回合的进度事件（思考/工具调用/工具结果/引用/反思）
+// 并映射为 SSE 事件，同时在本地累积知识引用。完成类事件（final answer /
+// complete / error）与流程语义相关，由各流程自行订阅：normal 流见 subscribe，
+// 搜索草稿流见 searchDraftTranslator.subscribe。
+func (t *aiStreamTranslator) subscribeProgress(bus *event.EventBus) {
 	bus.On(event.EventAgentThought, func(ctx context.Context, evt event.Event) error {
 		data, ok := evt.Data.(event.AgentThoughtData)
 		if !ok {
@@ -379,6 +390,11 @@ func (t *aiStreamTranslator) subscribe(bus *event.EventBus) {
 		t.write(AIEventReflection, data.Content, data.Done, nil)
 		return nil
 	})
+}
+
+// subscribe 将智能体事件总线上的每个事件映射为对应的 SSE 事件。
+func (t *aiStreamTranslator) subscribe(bus *event.EventBus) {
+	t.subscribeProgress(bus)
 
 	bus.On(event.EventAgentFinalAnswer, func(ctx context.Context, evt event.Event) error {
 		data, ok := evt.Data.(event.AgentFinalAnswerData)

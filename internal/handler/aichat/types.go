@@ -40,6 +40,20 @@ type AISearchField struct {
 	Label   string          `json:"label"`             // human-readable display name
 	Type    string          `json:"type"`              // text | number | date | select | boolean
 	Options []AIFieldOption `json:"options,omitempty"` // legal enum values for select fields
+	// DataType 是前端实际使用的类型键（如 "boolean"/"date"/"foreign"）。
+	// 部分前端只传 data_type 不传 type，入口处由 normalizeSearchFields
+	// 归一化进 Type，后续流程只读 Type。
+	DataType string `json:"data_type,omitempty"`
+}
+
+// normalizeSearchFields 把前端可能单独携带的 data_type 归一化进 Type，
+// 保证条件生成与硬校验拿到的字段类型一致。type 优先，缺失时回填 data_type。
+func normalizeSearchFields(fields []AISearchField) {
+	for i := range fields {
+		if fields[i].Type == "" && fields[i].DataType != "" {
+			fields[i].Type = fields[i].DataType
+		}
+	}
 }
 
 // AIFieldOption is one legal value for a select field.

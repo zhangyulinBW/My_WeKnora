@@ -3,6 +3,8 @@ package aichat
 // 本文件实现搜索意图的两阶段流程：识别搜索任务 -> 若缺少搜索字段则向前端索取，
 // 否则生成搜索条件草稿、硬校验后发出 search_draft 或 need_clarification 事件。
 // 该流程只在「搜索开关开启 + 页面为 largeTable」时被触发（见 intent.go 的 shouldSearch）。
+// 条件生成与 normal 问答一致走 AgentQA（见 search_agent.go），search agent 关联的
+// 知识库可通过 knowledge_search 工具参与字段判断。
 
 import (
 	"context"
@@ -14,8 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
-	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -54,10 +56,10 @@ func (h *AIChatHandler) handleSearchMessage(
 		CreatedAt:   time.Now(),
 	})
 
-	// 若 start 阶段已提供 searchFields，则直接生成条件（conditionRules 包含在智能体系统提示词中）。
+	// 若 start 阶段已提供 searchFields，则直接生成条件（conditionRules 包含在智能体上下文中）。
 	page, searchFields, searchBody, _ := h.loadStartContext(ctx, session.ID)
 	if len(searchFields) > 0 {
-		h.generateAndEmitSearchDraft(ctx, c, req, agent, page, searchFields, searchBody, nil)
+		h.generateAndEmitSearchDraft(ctx, c, req, session, page, searchFields, searchBody, nil)
 		return
 	}
 
@@ -89,6 +91,7 @@ func (h *AIChatHandler) handleSearchContext(
 	c *gin.Context,
 	req *AIChatRequest,
 	agent *types.CustomAgent,
+	tenantID uint64,
 ) {
 	h.mu.Lock()
 	action := h.actions[req.ActionID]
@@ -98,16 +101,33 @@ func (h *AIChatHandler) handleSearchContext(
 		return
 	}
 
-	h.generateAndEmitSearchDraft(ctx, c, req, agent, action.Page, req.SearchFields, req.SearchBody, req.ConditionRules)
+	// 第二阶段请求由前端补齐字段触发，可不回传原始用户消息与页面上下文；
+	// 回填第一阶段记录的值，保证条件生成仍面向用户的原始请求。
+	if strings.TrimSpace(req.Message) == "" {
+		req.Message = action.Message
+	}
+	if req.Page == nil {
+		req.Page = action.Page
+	}
+	session, err := h.getOrCreateSession(ctx, action.ConversationID, tenantID)
+	if err != nil || session == nil {
+		h.writeEvent(c, h.errorEvent(req, "failed to create session"))
+		return
+	}
+
+	h.generateAndEmitSearchDraft(ctx, c, req, session, action.Page, req.SearchFields, req.SearchBody, req.ConditionRules)
 }
 
-// generateAndEmitSearchDraft 根据给定的 searchFields（及可选的 conditionRules）生成搜索条件，
-// 校验后发出 search_draft 或 need_clarification 事件。
+// generateAndEmitSearchDraft 根据给定的 searchFields（及可选的 conditionRules），
+// 以 AgentQA 方式驱动 search agent 生成搜索条件（进度事件流式输出），校验后
+// 发出 search_draft 或 need_clarification 事件。与 normal 流（handleAgentTurn）
+// 共用同一引擎路径：search agent 关联的知识库通过 knowledge_search 工具参与
+// 字段判断，系统提示词占位符（{{current_time}} 等）由引擎侧统一渲染。
 func (h *AIChatHandler) generateAndEmitSearchDraft(
 	ctx context.Context,
 	c *gin.Context,
 	req *AIChatRequest,
-	agent *types.CustomAgent,
+	session *types.Session,
 	page *AIPageContext,
 	searchFields []AISearchField,
 	searchBody json.RawMessage,
@@ -120,109 +140,77 @@ func (h *AIChatHandler) generateAndEmitSearchDraft(
 		h.writeEvent(c, h.errorEvent(req, err.Error()))
 		return
 	}
-	agent = searchAgent
-
-	modelID := agent.Config.ModelID
-	if h.config != nil && h.config.AIChat != nil && h.config.AIChat.ModelID != "" {
-		modelID = h.config.AIChat.ModelID
-	}
-	chatModel, err := h.modelService.GetChatModel(ctx, modelID)
-	if err != nil {
-		h.writeEvent(c, h.errorEvent(req, "model unavailable: "+err.Error()))
-		return
+	// 与 normal 流不同，这里优先使用 search agent 自己配置的模型：
+	// search agent 是专门为条件生成调校的（模型/温度/预算），ai_chat.model_id
+	// 的全局覆盖只在该智能体未声明模型时兜底（经 QARequest.SummaryModelID）。
+	qaModelID := ""
+	if strings.TrimSpace(searchAgent.Config.ModelID) == "" &&
+		h.config != nil && h.config.AIChat != nil {
+		qaModelID = h.config.AIChat.ModelID
 	}
 
-	lang := detectReplyLanguage(req.Message)
-	userContent := buildSearchPrompt(req.Message, page, searchFields, rules, lang)
-	logger.Infof(ctx, "[ai-chat] search draft: agent=%s model=%s searchFields=%d sysPromptLen=%d",
-		agent.ID, modelID, len(searchFields), len(agent.Config.SystemPrompt))
-	resp, err := chatModel.Chat(ctx, []chat.Message{
-		{Role: "system", Content: agent.Config.SystemPrompt},
-		{Role: "user", Content: userContent},
-	}, &chat.ChatOptions{Temperature: 0.1})
-	if err != nil {
-		h.writeEvent(c, h.errorEvent(req, "model call failed: "+err.Error()))
-		return
-	}
-	logger.Infof(ctx, "[ai-chat] search draft model output: %s", resp.Content)
-
-	result, err := parseSearchResult(resp.Content)
-	if err != nil {
-		h.writeEvent(c, h.errorEvent(req, "model output is not valid JSON: "+err.Error()))
-		return
-	}
-
-	// 契约校验：message 是输出格式的必填字段，措辞完全由 search agent 的
-	// 提示词决定，代码不内置任何兜底文案；缺失时回传违约输出做一次纠正
-	// 重试，仍缺失则按契约违约报错。
-	if strings.TrimSpace(result.Message) == "" {
-		result, err = h.repairSearchResult(ctx, chatModel, agent, userContent, resp.Content)
-		if err != nil {
-			h.writeEvent(c, h.errorEvent(req, "model retry failed: "+err.Error()))
-			return
-		}
-		if strings.TrimSpace(result.Message) == "" {
-			h.writeEvent(c, h.errorEvent(req, "model output missing required message field"))
-			return
-		}
-	}
-
-	// 硬校验：字段/操作符/枚举值不合法则要求澄清，而不是直接返回不可用的草稿。
-	unmatched := validateSearchResult(result, searchFields, rules)
-	if len(unmatched) > 0 {
-		h.writeEvent(c, AIEvent{
-			Version:        req.Version,
-			Type:           AIEventNeedClarification,
-			ConversationID: req.ConversationID,
-			RequestID:      req.RequestID,
-			ActionID:       req.ActionID,
-			Message:        "部分条件无法匹配，请确认或手动调整。",
-			Unmatched:      unmatched,
-		})
-		return
-	}
-
-	// 同时基于会话数据和查询生成推荐问题。
-	var suggestions []AISuggestionItem
-	if recommendAgent, rerr := h.resolveRecommendAgent(ctx); rerr == nil {
-		if s, serr := h.generateRecommendQuestions(ctx, recommendAgent, page, searchFields, searchBody, req.ItemData, req.Message); serr == nil {
-			suggestions = s
-		}
-	}
-
-	needConfirm := true
-	h.writeEvent(c, AIEvent{
-		Version:        req.Version,
-		Type:           AIEventSearchDraft,
-		ConversationID: req.ConversationID,
-		RequestID:      req.RequestID,
-		ActionID:       req.ActionID,
-		Message:        result.Message,
-		Conditions:     result.Conditions,
-		SearchBody:     result.SearchBody,
-		NeedConfirm:    &needConfirm,
-		Suggestions:    suggestions,
+	// 预创建助手消息：智能体步骤与最终草稿 JSON 落库，后续轮次的 refinement
+	// （如「改成去年」）能基于历史条件继续。
+	assistantMsg, err := h.messageService.CreateMessage(ctx, &types.Message{
+		SessionID:     session.ID,
+		Role:          "assistant",
+		RequestID:     req.RequestID,
+		IsCompleted:   false,
+		CreatedAt:     time.Now(),
+		AgentID:       searchAgent.ID,
+		AgentTenantID: searchAgent.TenantID,
+		ModelID:       searchAgent.Config.ModelID,
 	})
-}
-
-// repairSearchResult 在模型输出缺少必需的 message 字段时，把原提示词与
-// 违约输出一并回传给模型做一次纠正重试；文案措辞仍完全由提示词决定。
-func (h *AIChatHandler) repairSearchResult(
-	ctx context.Context,
-	chatModel chat.Chat,
-	agent *types.CustomAgent,
-	userContent, badOutput string,
-) (*AISearchResult, error) {
-	resp, err := chatModel.Chat(ctx, []chat.Message{
-		{Role: "system", Content: agent.Config.SystemPrompt},
-		{Role: "user", Content: userContent},
-		{Role: "assistant", Content: badOutput},
-		{Role: "user", Content: "你上一次的输出缺少必需的 message 字段。请严格按输出格式重新输出完整 JSON（必须包含 message），只输出一个纯 JSON 对象，禁止解释文字。"},
-	}, &chat.ChatOptions{Temperature: 0.1})
 	if err != nil {
-		return nil, err
+		h.writeEvent(c, h.errorEvent(req, "failed to persist assistant message: "+err.Error()))
+		return
 	}
-	return parseSearchResult(resp.Content)
+
+	// Query 保持用户原始消息（供语言检测与检索工具构造查询）；结构化上下文
+	// 与任务指令经 Metadata 注入，由 AgentQA 追加到智能体查询之后。
+	qaReq := &types.QARequest{
+		Session:            session,
+		Query:              req.Message,
+		AssistantMessageID: assistantMsg.ID,
+		CustomAgent:        searchAgent,
+		SummaryModelID:     qaModelID,
+		WebSearchEnabled:   searchAgent.Config.WebSearchEnabled,
+		Metadata:           buildSearchMetadata(page, searchFields, searchBody, rules),
+	}
+	logger.Infof(ctx, "[ai-chat] search draft via AgentQA: agent=%s model=%s searchFields=%d",
+		searchAgent.ID, searchAgent.Config.ModelID, len(searchFields))
+
+	bus := event.NewEventBus()
+	done := make(chan struct{})
+	base := newAIStreamTranslator(h, c, req, assistantMsg, session.TenantID, done)
+	translator := newSearchDraftTranslator(base, &searchDraftDeps{
+		h:            h,
+		agent:        searchAgent,
+		message:      req.Message,
+		page:         page,
+		searchFields: searchFields,
+		searchBody:   searchBody,
+		rules:        rules,
+		lang:         detectReplyLanguage(req.Message),
+	})
+	translator.subscribe(bus)
+
+	go func() {
+		defer translator.close()
+		// 多数运行期失败由 AgentQA 发到事件总线；部分装配失败（如开启
+		// knowledge_search 却未配置 rerank 模型）在引擎创建前直接返回，
+		// 需在此补发终止错误帧。
+		if err := h.sessionService.AgentQA(ctx, qaReq, bus); err != nil {
+			translator.write(AIEventError, err.Error(), true, map[string]interface{}{
+				"stage": "agent_execution",
+			})
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-c.Request.Context().Done():
+	}
 }
 
 // loadStartContext 返回会话中最近一条 "start" 消息存储的 page/searchFields/searchBody/itemData，
@@ -250,14 +238,16 @@ func (h *AIChatHandler) loadStartContext(
 		if err := json.Unmarshal([]byte(m.Content), &payload); err != nil {
 			continue
 		}
+		// 历史 start 消息可能只带 data_type（旧前端），回读时同样归一化进 Type。
+		normalizeSearchFields(payload.SearchFields)
 		return payload.Page, payload.SearchFields, payload.SearchBody, payload.ItemData
 	}
 	return nil, nil, nil, nil
 }
 
-// buildSearchPrompt 组装条件生成所需的用户侧上下文。
-// 搜索规则（字段类型→操作符、操作符语义、输出格式等）由专门的 search agent
-// 的 system_prompt 定义（见 resolveSearchAgent），这里只提供上下文与任务标记。
+// buildSearchPrompt 组装纠正重试（searchDraftDeps.repair）所需的用户侧上下文。
+// 任务契约（输出格式、字段与操作符规则等）完全由 search agent 的系统提示词
+// 定义，这里只提供结构化上下文与用户请求原文，不重复任何契约条款。
 func buildSearchPrompt(
 	message string,
 	page *AIPageContext,
@@ -272,8 +262,16 @@ func buildSearchPrompt(
 	if searchFields != nil {
 		ctxObj["searchFields"] = searchFields
 	}
-	if rules != nil {
+	// 与 buildSearchMetadata 一致：无 conditionRules 时用当前日期合成 dateContext，
+	// 保证纠正重试的输出与主路径的日期基准相同。
+	if rules != nil && rules.DateContext.CurrentDate != "" {
 		ctxObj["dateContext"] = rules.DateContext
+	} else {
+		ctxObj["dateContext"] = AIDateContext{
+			CurrentDate: time.Now().Format("2006-01-02"),
+			Timezone:    time.Local.String(),
+			ValueFormat: "YYYY-MM-DD",
+		}
 	}
 	ctxJSON, _ := json.Marshal(ctxObj)
 
@@ -283,10 +281,6 @@ func buildSearchPrompt(
 	sb.WriteString("\n\n")
 	sb.WriteString("用户请求：" + message)
 	sb.WriteString("\n\n[回复语言：" + lang + "]")
-	sb.WriteString("\n\n这是一次搜索任务。请把用户请求转换成搜索条件，只输出一个纯 JSON 对象（以 { 开头、以 } 结尾），禁止使用 markdown 代码块、禁止任何解释文字。")
-	sb.WriteString("\n输出格式：{\"message\":\"面向用户的简短结果说明\",\"conditions\":[{\"field\":\"字段name\",\"label\":\"字段label\",\"type\":\"字段type\",\"operator\":\"操作符\",\"value\":值}]}。")
-	sb.WriteString("message 为必填字段，用一句话向用户说明本次结果（如整理出的条件数量，或用户要求刷新/清空时说明已按请求刷新），具体措辞遵循系统提示词，必须使用[回复语言]。")
-	sb.WriteString("其中 field/label/type 必须来自上面 searchFields；operator 按字段类型与系统提示词规则取值；select 字段的 value 必须是其 options 中的某个 value。")
 	return sb.String()
 }
 

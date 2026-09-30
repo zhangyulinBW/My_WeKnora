@@ -107,6 +107,9 @@ func (h *AIChatHandler) Chat(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "conversationId and requestId are required"})
 		return
 	}
+	// 前端可能只传 data_type 不传 type，统一在入口归一化，
+	// 让 message/start/search_context 全部路径拿到一致的字段类型。
+	normalizeSearchFields(req.SearchFields)
 
 	tenantID := types.MustTenantIDFromContext(ctx)
 
@@ -126,7 +129,7 @@ func (h *AIChatHandler) Chat(c *gin.Context) {
 	case AIRequestTypeMessage:
 		h.handleMessage(ctx, c, &req, agent, tenantID)
 	case AIRequestTypeSearchContext:
-		h.handleSearchContext(ctx, c, &req, agent)
+		h.handleSearchContext(ctx, c, &req, agent, tenantID)
 	default:
 		h.writeEvent(c, h.errorEvent(&req, "unknown type: "+req.Type))
 	}
