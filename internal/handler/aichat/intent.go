@@ -102,6 +102,15 @@ func (h *AIChatHandler) handleMessage(
 		intent = IntentNormal
 	}
 
+	// 提示词契约里「统计/图表/汇总」等分析类请求归 normal（产物是统计结果或
+	// 图表，而非筛选后的记录列表），但意图模型对这类表述仍有概率误判为
+	// search（同一句话多次分类结果不一致）。命中分析特征词时按确定性规则
+	// 纠正，保证路由稳定。
+	if intent == IntentSearch && looksLikeAnalysisRequest(req.Message) {
+		logger.Infof(ctx, "AI chat intent corrected search->normal (analysis guard): %s", req.Message)
+		intent = IntentNormal
+	}
+
 	// 搜索开关：search 意图只在「开关开启 + 页面为 largeTable」时才走结构化搜索流程；
 	// 否则回退 normal（singleData 等场景答案就在 itemdata 里，直接让 Agent 流式回答）。
 	if intent == IntentSearch && !h.shouldSearch(ctx, req, tenantID) {
@@ -185,6 +194,26 @@ func (h *AIChatHandler) classifyIntent(
 	default:
 		return IntentNormal, nil
 	}
+}
+
+// analysisKeywords 是分析/图表类请求的特征词，与意图提示词中归 normal 的
+// 「数据分析与生成类任务」条款保持一致。列表刻意保守：只收无歧义的分析
+// 词汇，避免把真正的筛选指令（如「筛选金额大于10万的单」）误纠正为 normal。
+var analysisKeywords = []string{
+	"统计", "汇总", "聚合", "计数", "求和", "平均值",
+	"图表", "柱状", "饼图", "折线", "可视化", "报表",
+	"画个", "画一", "生成图", "分布", "占比",
+}
+
+// looksLikeAnalysisRequest 判断消息是否为分析/图表类请求（按契约应走 normal
+// 流）。仅在意图模型判为 search 时用于兜底纠正，normal 判定不受影响。
+func looksLikeAnalysisRequest(message string) bool {
+	for _, kw := range analysisKeywords {
+		if strings.Contains(message, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // persistIntent 将分类得到的意图作为专用的 "intent" 消息存入消息表。
