@@ -21,7 +21,7 @@ type AIChatRequest struct {
 	Page           *AIPageContext    `json:"page,omitempty"`         // page the user is on
 	SearchFields   []AISearchField   `json:"searchFields,omitempty"` // searchable table headers (search_context only)
 	SearchBody     json.RawMessage   `json:"searchBody,omitempty"`   // current applied search state (for "what is being queried" questions)
-	ItemData       json.RawMessage   `json:"itemdata,omitempty"`     // pageType=singleData 场景下单条记录的原始 JSON
+	ItemData       json.RawMessage   `json:"itemdata,omitempty"`     // 页面数据载荷：singleData 为单条记录，largeTable 等亦可携带表格数据
 	ConditionRules *AIConditionRules `json:"conditionRules,omitempty"`
 }
 

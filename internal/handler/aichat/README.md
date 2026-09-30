@@ -106,6 +106,8 @@ handleMessage
   `session_id` 与 `assistant_message_id`。本轮无产物时不推送该事件。
 - **上下文流转**：`start` 阶段把 `page` / `searchFields` / `searchBody` / `itemdata` 持久化为
   `role="start"` 消息；`message` / `search_context` 阶段通过 `loadStartContext` 回填。
+  `itemdata` 不限于 `singleData` 页面（`largeTable` 也可携带表格数据），normal 问答与搜索
+  草稿流程都会把它注入智能体上下文。
 - **搜索两阶段**：`message` 识别为搜索意图、但 `start` 未提供 `searchFields` 时，返回
   `need_search_context` 并写入内存态 `h.actions`（`pendingAction`），等前端用 `search_context`
   阶段回传字段后再生成草稿。**该状态仅存内存，重启丢失。**

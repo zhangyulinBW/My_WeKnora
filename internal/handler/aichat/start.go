@@ -32,7 +32,8 @@ func (h *AIChatHandler) handleStart(
 	}
 
 	// 将数据作为本次会话的基础数据持久化。
-	// singleData 场景下 itemdata 是核心载荷，必须一并落库，否则后续轮次会丢失。
+	// itemdata 不限于 singleData（largeTable 也可携带表格数据），必须一并落库，
+	// 否则后续轮次会丢失。
 	if payload, err := json.Marshal(map[string]interface{}{
 		"page":         req.Page,
 		"searchBody":   req.SearchBody,

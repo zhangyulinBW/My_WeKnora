@@ -57,9 +57,14 @@ func (h *AIChatHandler) handleSearchMessage(
 	})
 
 	// 若 start 阶段已提供 searchFields，则直接生成条件（conditionRules 包含在智能体上下文中）。
-	page, searchFields, searchBody, _ := h.loadStartContext(ctx, session.ID)
+	// itemdata 与 normal 流同样回填：它不限于 singleData（largeTable 也可携带表格数据），
+	// 条件生成可参考真实数据判断字段语义。
+	page, searchFields, searchBody, itemData := h.loadStartContext(ctx, session.ID)
+	if len(req.ItemData) == 0 {
+		req.ItemData = itemData
+	}
 	if len(searchFields) > 0 {
-		h.generateAndEmitSearchDraft(ctx, c, req, session, page, searchFields, searchBody, nil)
+		h.generateAndEmitSearchDraft(ctx, c, req, session, page, searchFields, searchBody, req.ItemData, nil)
 		return
 	}
 
@@ -114,8 +119,12 @@ func (h *AIChatHandler) handleSearchContext(
 		h.writeEvent(c, h.errorEvent(req, "failed to create session"))
 		return
 	}
+	// 第二阶段请求同样不重复携带页面数据，itemdata 从 start 上下文回填。
+	if _, _, _, itemData := h.loadStartContext(ctx, session.ID); len(req.ItemData) == 0 {
+		req.ItemData = itemData
+	}
 
-	h.generateAndEmitSearchDraft(ctx, c, req, session, action.Page, req.SearchFields, req.SearchBody, req.ConditionRules)
+	h.generateAndEmitSearchDraft(ctx, c, req, session, action.Page, req.SearchFields, req.SearchBody, req.ItemData, req.ConditionRules)
 }
 
 // generateAndEmitSearchDraft 根据给定的 searchFields（及可选的 conditionRules），
@@ -131,6 +140,7 @@ func (h *AIChatHandler) generateAndEmitSearchDraft(
 	page *AIPageContext,
 	searchFields []AISearchField,
 	searchBody json.RawMessage,
+	itemData json.RawMessage,
 	rules *AIConditionRules,
 ) {
 	// 搜索条件生成使用专门的 search agent（其 system_prompt 定义搜索规则），
@@ -175,7 +185,7 @@ func (h *AIChatHandler) generateAndEmitSearchDraft(
 		CustomAgent:        searchAgent,
 		SummaryModelID:     qaModelID,
 		WebSearchEnabled:   searchAgent.Config.WebSearchEnabled,
-		Metadata:           buildSearchMetadata(page, searchFields, searchBody, rules),
+		Metadata:           buildSearchMetadata(page, searchFields, searchBody, itemData, rules),
 	}
 	logger.Infof(ctx, "[ai-chat] search draft via AgentQA: agent=%s model=%s searchFields=%d",
 		searchAgent.ID, searchAgent.Config.ModelID, len(searchFields))
@@ -190,6 +200,7 @@ func (h *AIChatHandler) generateAndEmitSearchDraft(
 		page:         page,
 		searchFields: searchFields,
 		searchBody:   searchBody,
+		itemData:     itemData,
 		rules:        rules,
 		lang:         detectReplyLanguage(req.Message),
 	})
@@ -252,6 +263,7 @@ func buildSearchPrompt(
 	message string,
 	page *AIPageContext,
 	searchFields []AISearchField,
+	itemData json.RawMessage,
 	rules *AIConditionRules,
 	lang string,
 ) string {
@@ -261,6 +273,9 @@ func buildSearchPrompt(
 	}
 	if searchFields != nil {
 		ctxObj["searchFields"] = searchFields
+	}
+	if len(itemData) > 0 {
+		ctxObj["itemdata"] = itemData
 	}
 	// 与 buildSearchMetadata 一致：无 conditionRules 时用当前日期合成 dateContext，
 	// 保证纠正重试的输出与主路径的日期基准相同。

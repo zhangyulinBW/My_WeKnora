@@ -26,10 +26,11 @@ import (
 type searchDraftDeps struct {
 	h            *AIChatHandler
 	agent        *types.CustomAgent // 已应用 ai_chat.model_id 覆盖的 search agent
-	message      string             // 用户原始请求（纠正重试的提示词材料）
+	message      string            // 用户原始请求（纠正重试的提示词材料）
 	page         *AIPageContext
 	searchFields []AISearchField
 	searchBody   json.RawMessage
+	itemData     json.RawMessage // 页面数据载荷，不限于 singleData（largeTable 可为表格数据）
 	rules        *AIConditionRules
 	lang         string
 }
@@ -45,7 +46,7 @@ func (d *searchDraftDeps) repair(ctx context.Context, badOutput string) (*AISear
 	systemPrompt := types.RenderPromptPlaceholders(d.agent.Config.SystemPrompt, types.PlaceholderValues{
 		"language": d.lang,
 	})
-	userContent := buildSearchPrompt(d.message, d.page, d.searchFields, d.rules, d.lang)
+	userContent := buildSearchPrompt(d.message, d.page, d.searchFields, d.itemData, d.rules, d.lang)
 	resp, err := chatModel.Chat(ctx, []chat.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userContent},
@@ -177,7 +178,7 @@ func (t *searchDraftTranslator) subscribe(bus *event.EventBus) {
 		// 同时基于会话数据和查询生成推荐问题。
 		var suggestions []AISuggestionItem
 		if recommendAgent, rerr := t.h.resolveRecommendAgent(ctx); rerr == nil {
-			if s, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.deps.page, t.deps.searchFields, t.deps.searchBody, t.req.ItemData, t.deps.message); serr == nil {
+			if s, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.deps.page, t.deps.searchFields, t.deps.searchBody, t.deps.itemData, t.deps.message); serr == nil {
 				suggestions = s
 			}
 		}
@@ -216,6 +217,8 @@ func (t *searchDraftTranslator) subscribe(bus *event.EventBus) {
 // [用户提供的结构化上下文] 追加到智能体查询之后（与 normal 流的
 // buildAIMetadata 注入方式一致）。任务指令与输出契约由 search agent 自己的
 // system_prompt 定义，代码不注入任务文案，避免与提示词形成双份契约。
+// itemdata 不限于 singleData（largeTable 也可携带表格数据），与 normal 流一致
+// 注入，供字段判断参考真实数据。
 // dateContext 优先取前端两阶段路径的 conditionRules；快捷路径（start 已带
 // searchFields）没有规则时由服务端用当前日期合成，search agent 的日期换算
 // 规则（以 dateContext.currentDate 为基准）因此始终可用。
@@ -223,17 +226,20 @@ func buildSearchMetadata(
 	page *AIPageContext,
 	searchFields []AISearchField,
 	searchBody json.RawMessage,
+	itemData json.RawMessage,
 	rules *AIConditionRules,
 ) types.JSON {
 	payload := struct {
 		Page         *AIPageContext  `json:"page,omitempty"`
 		SearchFields []AISearchField `json:"searchFields,omitempty"`
 		SearchBody   json.RawMessage `json:"searchBody,omitempty"`
+		ItemData     json.RawMessage `json:"itemdata,omitempty"`
 		DateContext  *AIDateContext  `json:"dateContext,omitempty"`
 	}{
 		Page:         page,
 		SearchFields: searchFields,
 		SearchBody:   searchBody,
+		ItemData:     itemData,
 	}
 	if rules != nil && rules.DateContext.CurrentDate != "" {
 		payload.DateContext = &rules.DateContext
