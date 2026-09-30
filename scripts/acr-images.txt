@@ -1,0 +1,6 @@
+docker.1ms.run/library/redis:7.0-alpine
+m.daocloud.io/docker.io/library/neo4j:2025.10.1
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/paradedb/paradedb:v0.22.6-pg17
+wechatopenai/weknora-app:latest
+wechatopenai/weknora-docreader:latest
+wechatopenai/weknora-ui:latest
