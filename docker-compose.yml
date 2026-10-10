@@ -46,6 +46,7 @@ services:
         - APK_MIRROR_ARG=${APK_MIRROR_ARG:-}
         - WITH_ANYDOC=${WITH_ANYDOC:-1}
         - GOPROXY_ARG=${GOPROXY_ARG:-}
+        - PIP_INDEX_URL=${PIP_INDEX_URL:-}
     container_name: WeKnora-app
     ports:
       - "${APP_PORT:-8080}:8080"
@@ -430,6 +431,7 @@ services:
         - APT_MIRROR=${APT_MIRROR:-}
         - PIP_INDEX_URL=${PIP_INDEX_URL:-}
         - UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-}
+        - PYPI_MIRROR=${PYPI_MIRROR:-}
         - PLAYWRIGHT_DOWNLOAD_HOST=${PLAYWRIGHT_DOWNLOAD_HOST:-}
         - PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST=${PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST:-}
     container_name: WeKnora-docreader

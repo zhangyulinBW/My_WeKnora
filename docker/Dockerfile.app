@@ -141,6 +141,11 @@ RUN if [ -n "$APK_MIRROR_ARG" ]; then \
     rm -rf /var/lib/apt/lists/*
 
 # Then switch to mirror if specified and install other packages
+# 国内网络：pypi.org / astral.sh 常不可达。PIP_INDEX_URL 让 pip 组件升级与
+# uv 回退安装都走镜像源；astral.sh 安装器拉取失败时回退用 pip 安装 uv
+# （同样提供 uv/uvx 命令，版本以镜像源提供的为准）。
+ARG PIP_INDEX_URL=
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 RUN if [ -n "$APK_MIRROR_ARG" ]; then \
         sed -i "s@deb.debian.org@${APK_MIRROR_ARG}@g" /etc/apt/sources.list.d/debian.sources; \
     fi && \
@@ -154,10 +159,14 @@ RUN if [ -n "$APK_MIRROR_ARG" ]; then \
         ffmpeg && \
     python3 -m pip install --break-system-packages --upgrade pip setuptools wheel && \
     mkdir -p /home/appuser/.local/bin && \
-    curl -LsSf https://astral.sh/uv/install.sh | CARGO_HOME=/home/appuser/.cargo UV_INSTALL_DIR=/home/appuser/.local/bin sh && \
+    (curl -m 60 -LsSf https://astral.sh/uv/install.sh -o /tmp/uv-install.sh && \
+        CARGO_HOME=/home/appuser/.cargo UV_INSTALL_DIR=/home/appuser/.local/bin sh /tmp/uv-install.sh && \
+        rm -f /tmp/uv-install.sh && \
+        ln -sf /home/appuser/.local/bin/uvx /usr/local/bin/uvx && \
+        chmod +x /usr/local/bin/uvx) || \
+    (echo "[fallback] astral.sh 不可达，改用 pip 镜像源安装 uv" && \
+        python3 -m pip install --break-system-packages uv) && \
     chown -R appuser:appuser /home/appuser && \
-    ln -sf /home/appuser/.local/bin/uvx /usr/local/bin/uvx && \
-    chmod +x /usr/local/bin/uvx && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

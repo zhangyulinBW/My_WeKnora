@@ -72,6 +72,15 @@ COPY docreader/pyproject.toml docreader/uv.lock ./
 ARG PIP_INDEX_URL=
 ARG UV_DEFAULT_INDEX=
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX}
+# uv.lock 把 wheel URL 锁定为 files.pythonhosted.org，UV_DEFAULT_INDEX 只影响
+# 解析、不重写锁定 URL，国内网络 sync 仍直连超时。PYPI_MIRROR 传镜像源根
+# （须按 pythonhosted 的 /packages/ 路径结构提供文件，如
+# https://mirrors.aliyun.com/pypi），构建期重写 lock 中的 URL；uv 仍按 lock
+# 记录的 sha256 校验，镜像文件不一致会直接失败。
+ARG PYPI_MIRROR=
+RUN if [ -n "$PYPI_MIRROR" ]; then \
+        sed -i "s@https://files.pythonhosted.org@${PYPI_MIRROR}@g" uv.lock; \
+    fi
 # --frozen：完全按 uv.lock 安装、不做 lock 新鲜度比对（镜像源 URL 与 lock
 # 记录不同会让 --locked 的比对失败）；版本仍由 lock 精确锁定。
 RUN pip install uv --break-system-packages && \
