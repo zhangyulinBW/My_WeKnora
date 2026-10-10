@@ -308,6 +308,7 @@ export interface GrepResultsData {
 // Chunk row inside a knowledge_chunks_list payload. `role` / `match_snippet`
 // are only set by read_document in query mode (in-document search).
 export interface KnowledgeChunksListChunk {
+    id?: string;
     index?: number;
     chunk_id?: string;
     chunk_index?: number;
@@ -340,6 +341,9 @@ export interface KnowledgeChunksListDocument {
 export interface KnowledgeChunksListData {
     display_type: 'knowledge_chunks_list';
     knowledge_id?: string;
+    knowledge_base_id?: string;
+    chunk_ids?: string[];
+    source_chunk_id?: string;
     knowledge_title?: string;
     total_chunks?: number;
     fetched_chunks?: number;

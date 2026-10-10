@@ -1266,7 +1266,7 @@ func (s *agentService) registerTools(
 				config.SearchTargets,
 				rerankModel,
 				s.cfg,
-			)
+			).WithContextImages(config.ChatModelSupportsVision)
 		case tools.ToolReadDocument:
 			toolToRegister = tools.NewReadDocumentTool(s.knowledgeService, s.chunkService, config.SearchTargets)
 		case tools.ToolListDocuments:
