@@ -146,6 +146,14 @@ func (h *AIChatHandler) handleMessage(
 		intent = IntentNormal
 	}
 
+	// 同一分析类误判对 approval 同样存在：processApproval 页面上的统计请求
+	// （如「统计任务数量」）会被页面语境带偏成 approval。签核动作类表述
+	// （同意/提交/勾选清单等）不含分析特征词，不受该守卫影响。
+	if intent == IntentApproval && looksLikeAnalysisRequest(req.Message) {
+		logger.Infof(ctx, "AI chat intent corrected approval->normal (analysis guard): %s", req.Message)
+		intent = IntentNormal
+	}
+
 	// 搜索开关：search 意图只在「开关开启 + 页面为 largeTable」时才走结构化搜索流程；
 	// 否则回退 normal（singleData 等场景答案就在 itemdata 里，直接让 Agent 流式回答）。
 	if intent == IntentSearch && !h.shouldSearch(ctx, req, tenantID) {
@@ -267,7 +275,8 @@ var analysisKeywords = []string{
 }
 
 // looksLikeAnalysisRequest 判断消息是否为分析/图表类请求（按契约应走 normal
-// 流）。仅在意图模型判为 search 时用于兜底纠正，normal 判定不受影响。
+// 流）。仅在意图模型判为 search 或 approval 时用于兜底纠正，normal 判定不受
+// 影响。
 func looksLikeAnalysisRequest(message string) bool {
 	for _, kw := range analysisKeywords {
 		if strings.Contains(message, kw) {
