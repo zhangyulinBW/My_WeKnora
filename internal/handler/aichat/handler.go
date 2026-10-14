@@ -16,6 +16,8 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/handler/session"
+	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -40,6 +42,11 @@ type AIChatHandler struct {
 	suggestionService  interfaces.MessageSuggestionService
 	config             *config.Config
 
+	// fileService / attachmentProcessor 支撑消息附件：图片落存储、文件
+	// 保存与内容提取（复用官方会话接口的处理器），见 attachments.go。
+	fileService         interfaces.FileService
+	attachmentProcessor *session.AttachmentProcessor
+
 	// artifactCollector 在智能体回合结束后把沙箱产物（图表/文件）落盘并
 	// 附到助手消息上，与官方 /agent-chat 流的完成处理保持同一套逻辑。
 	// 可能为 nil（沙箱后端不支持会话文件系统），此时按“无产物”降级。
@@ -61,6 +68,9 @@ func NewAIChatHandler(
 	customAgentService interfaces.CustomAgentService,
 	suggestionService interfaces.MessageSuggestionService,
 	artifactCollector *service.ArtifactCollector,
+	fileService interfaces.FileService,
+	documentReader interfaces.DocumentReader,
+	imageResolver *docparser.ImageResolver,
 	cfg *config.Config,
 ) *AIChatHandler {
 	h := &AIChatHandler{
@@ -70,9 +80,16 @@ func NewAIChatHandler(
 		customAgentService: customAgentService,
 		suggestionService:  suggestionService,
 		artifactCollector:  artifactCollector,
-		config:             cfg,
-		intents:            newIntentRegistry(),
-		actions:            make(map[string]*pendingAction),
+		fileService:        fileService,
+		attachmentProcessor: session.NewAttachmentProcessor(
+			fileService,
+			documentReader,
+			imageResolver,
+			modelService,
+		),
+		config:  cfg,
+		intents: newIntentRegistry(),
+		actions: make(map[string]*pendingAction),
 	}
 	// 意图注册：normal 作为默认/回退意图最先注册，search 其次。
 	h.intents.register(&normalIntentHandler{h: h})
@@ -113,13 +130,24 @@ func (h *AIChatHandler) Chat(c *gin.Context) {
 
 	tenantID := types.MustTenantIDFromContext(ctx)
 
-	h.setSSEHeaders(c)
-
 	agent, err := h.resolveAgent(ctx)
 	if err != nil {
+		h.setSSEHeaders(c)
 		h.writeEvent(c, h.errorEvent(&req, err.Error()))
 		return
 	}
+
+	// 内联附件只在 SSE 建立前处理：解码/配额/类型校验失败时还能返回干净的
+	// 400（建立后只能以流内 error 帧报告），与官方会话接口的 pre-stream
+	// 校验时机一致。处理结果挂在 req 的服务端字段上，由后续流程消费。
+	if req.Type == AIRequestTypeMessage && req.hasInlineUploads() {
+		if err := h.processUploads(ctx, &req, agent, tenantID); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	h.setSSEHeaders(c)
 
 	// 按请求 type 分发到协议阶段：start 建立会话上下文，message 进入意图分析 + 分发，
 	// search_context 是搜索流程的第二阶段（前端回传搜索字段）。

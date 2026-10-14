@@ -46,7 +46,8 @@ func (h *AIChatHandler) handleSearchMessage(
 		return
 	}
 
-	// 持久化用户消息，保证会话历史完整。
+	// 持久化用户消息，保证会话历史完整。携带附件的消息不会进入搜索意图
+	// （见 handleMessage），这里的附件字段只是防御性落库。
 	_, _ = h.messageService.CreateMessage(ctx, &types.Message{
 		SessionID:   session.ID,
 		Role:        "user",
@@ -54,6 +55,8 @@ func (h *AIChatHandler) handleSearchMessage(
 		RequestID:   req.RequestID,
 		IsCompleted: true,
 		CreatedAt:   time.Now(),
+		Images:      req.processedImages,
+		Attachments: req.processedAttachments,
 	})
 
 	// 若 start 阶段已提供 searchFields，则直接生成条件（conditionRules 包含在智能体上下文中）。

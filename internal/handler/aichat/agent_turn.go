@@ -65,6 +65,9 @@ func (h *AIChatHandler) handleAgentTurn(
 		RequestID:   req.RequestID,
 		IsCompleted: true,
 		CreatedAt:   time.Now(),
+		// 附件随用户消息持久化：多轮历史构建器会把它重新拼进上下文。
+		Images:      req.processedImages,
+		Attachments: req.processedAttachments,
 	}); err != nil {
 		h.writeEvent(c, h.errorEvent(req, "failed to persist user message: "+err.Error()))
 		return
@@ -86,9 +89,16 @@ func (h *AIChatHandler) handleAgentTurn(
 		return
 	}
 
+	// 仅附件无文本时，替用户补一句默认提问（用户消息仍落库原文），
+	// 与官方接口的 upload-only 语义一致。
+	query := req.Message
+	if strings.TrimSpace(query) == "" && req.hasUploads {
+		query = types.UploadOnlyQuestion(types.LanguageFromContextOrDefault(ctx))
+	}
+
 	qaReq := &types.QARequest{
 		Session:            session,
-		Query:              req.Message,
+		Query:              query,
 		AssistantMessageID: assistantMsg.ID,
 		CustomAgent:        agent,
 		// AgentQA combines this per-request switch with the agent-level setting.
@@ -96,6 +106,11 @@ func (h *AIChatHandler) handleAgentTurn(
 		// agent capability for normal-intent turns instead of letting the bool
 		// zero value disable web search.
 		WebSearchEnabled: agent.Config.WebSearchEnabled,
+		// 附件注入：文档内容由 AgentQA 拼进 query；图片按模型视觉能力直传
+		// 或以 VLM 描述降级（见 attachments.go 的处理）。
+		Attachments:      req.processedAttachments,
+		ImageURLs:        req.imageURLs,
+		ImageDescription: req.imageDescription,
 		Metadata:         buildAIMetadata(req),
 	}
 

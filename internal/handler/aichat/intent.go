@@ -96,10 +96,16 @@ func (h *AIChatHandler) handleMessage(
 	agent *types.CustomAgent,
 	tenantID uint64,
 ) {
-	intent, err := h.classifyIntent(ctx, req.Message, req.Page, agent)
-	if err != nil {
-		logger.Warnf(ctx, "AI chat intent classification failed, defaulting to normal: %v", err)
-		intent = IntentNormal
+	// 携带附件/图片的消息直接走 normal：结构化搜索面向表格筛选，附件内容
+	// 对条件生成没有意义；且「仅附件无文本」的消息也无法做意图分类。
+	intent := IntentNormal
+	if !req.hasUploads {
+		var err error
+		intent, err = h.classifyIntent(ctx, req.Message, req.Page, agent)
+		if err != nil {
+			logger.Warnf(ctx, "AI chat intent classification failed, defaulting to normal: %v", err)
+			intent = IntentNormal
+		}
 	}
 
 	// 提示词契约里「统计/图表/汇总」等分析类请求归 normal（产物是统计结果或

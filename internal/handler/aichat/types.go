@@ -4,7 +4,11 @@ package aichat
 // 这些类型对应 /api/v1/ai/chat 的请求体与 SSE 事件负载（协议版本 1.0），
 // 是前后端契约，字段的 json tag 不能随意改动。
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/Tencent/WeKnora/internal/types"
+)
 
 // AIChatRequest is the request body for the custom /api/v1/ai/chat endpoint.
 // It is a self-describing, versioned protocol (v1.0) where `type` discriminates
@@ -12,17 +16,47 @@ import "encoding/json"
 // frontend supplying search fields + condition rules after a search task was
 // recognised).
 type AIChatRequest struct {
-	Version        string            `json:"version"`
-	Type           string            `json:"type"`                   // "message" | "search_context"
-	ConversationID string            `json:"conversationId"`         // opaque frontend-managed session id
-	RequestID      string            `json:"requestId"`              // per-send correlation id (echoed back)
-	ActionID       string            `json:"actionId,omitempty"`     // search task id, only for search_context
-	Message        string            `json:"message,omitempty"`      // user text (message only)
-	Page           *AIPageContext    `json:"page,omitempty"`         // page the user is on
-	SearchFields   []AISearchField   `json:"searchFields,omitempty"` // searchable table headers (search_context only)
-	SearchBody     json.RawMessage   `json:"searchBody,omitempty"`   // current applied search state (for "what is being queried" questions)
-	ItemData       json.RawMessage   `json:"itemdata,omitempty"`     // 页面数据载荷：singleData 为单条记录，largeTable 等亦可携带表格数据
-	ConditionRules *AIConditionRules `json:"conditionRules,omitempty"`
+	Version        string               `json:"version"`
+	Type           string               `json:"type"`                   // "message" | "search_context"
+	ConversationID string               `json:"conversationId"`         // opaque frontend-managed session id
+	RequestID      string               `json:"requestId"`              // per-send correlation id (echoed back)
+	ActionID       string               `json:"actionId,omitempty"`     // search task id, only for search_context
+	Message        string               `json:"message,omitempty"`      // user text (message only)
+	Images         []AIImageAttachment  `json:"images,omitempty"`       // inline base64 images (message only)
+	Attachments    []AIAttachmentUpload `json:"attachments,omitempty"`  // inline base64 file attachments (message only)
+	Page           *AIPageContext       `json:"page,omitempty"`         // page the user is on
+	SearchFields   []AISearchField      `json:"searchFields,omitempty"` // searchable table headers (search_context only)
+	SearchBody     json.RawMessage      `json:"searchBody,omitempty"`   // current applied search state (for "what is being queried" questions)
+	ItemData       json.RawMessage      `json:"itemdata,omitempty"`     // 页面数据载荷：singleData 为单条记录，largeTable 等亦可携带表格数据
+	ConditionRules *AIConditionRules    `json:"conditionRules,omitempty"`
+
+	// 以下字段由服务端在入口处理后携带，不来自请求 JSON，也不会回发。
+	// processedAttachments / processedImages 是已落存储的附件与图片（随用户消息持久化），
+	// imageURLs 是可直接喂给视觉模型的数据 URI，imageDescription 是非视觉模型下的
+	// VLM 降级描述。见 attachments.go。
+	processedAttachments types.MessageAttachments
+	processedImages      types.MessageImages
+	imageURLs            []string
+	imageDescription     string
+	hasUploads           bool
+}
+
+// hasInlineUploads 报告请求是否携带内联图片或文件（message 阶段才有效）。
+func (r *AIChatRequest) hasInlineUploads() bool {
+	return len(r.Images) > 0 || len(r.Attachments) > 0
+}
+
+// AIImageAttachment 是消息携带的内联图片。客户端只应填 Data（data URI）；
+// URL/Caption 由服务端生成，前端传入会被忽略（防 SSRF，与官方会话接口一致）。
+type AIImageAttachment struct {
+	Data string `json:"data,omitempty"` // base64 data URI (data:image/png;base64,...)
+}
+
+// AIAttachmentUpload 是消息携带的内联文件附件。
+type AIAttachmentUpload struct {
+	Data     string `json:"data"`      // base64-encoded file content
+	FileName string `json:"file_name"` // original filename
+	FileSize int64  `json:"file_size"` // client-declared size, metadata only
 }
 
 // AIPageContext identifies the page/tab the user is interacting with.
