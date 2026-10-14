@@ -6,6 +6,7 @@ package aichat
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -40,7 +41,46 @@ func (e *errModelService) GetChatModel(_ context.Context, _ string) (chat.Chat, 
 	return nil, context.Canceled
 }
 
+// fakeSuggestModelService 返回一个固定输出的对话模型（推荐问题生成）。
+type fakeSuggestModelService struct {
+	interfaces.ModelService
+	model chat.Chat
+}
+
+func (f *fakeSuggestModelService) GetChatModel(_ context.Context, _ string) (chat.Chat, error) {
+	return f.model, nil
+}
+
+// fakeSuggestChatModel 对任意对话返回固定文本（Chat 接口三方法直接实现，
+// 避免内嵌接口与其同名方法字段冲突）。
+type fakeSuggestChatModel struct {
+	resp string
+}
+
+func (f *fakeSuggestChatModel) Chat(_ context.Context, _ []chat.Message, _ *chat.ChatOptions) (*types.ChatResponse, error) {
+	return &types.ChatResponse{Content: f.resp}, nil
+}
+
+func (f *fakeSuggestChatModel) ChatStream(_ context.Context, _ []chat.Message, _ *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+	return nil, context.Canceled
+}
+
+func (f *fakeSuggestChatModel) GetModelName() string { return "fake-suggest" }
+
+func (f *fakeSuggestChatModel) GetModelID() string { return "fake-suggest" }
+
+// errCustomAgentService 让智能体解析失败（推荐问题生成被跳过）。
+type errCustomAgentService struct {
+	interfaces.CustomAgentService
+}
+
+func (e *errCustomAgentService) GetAgentByID(_ context.Context, _ string) (*types.CustomAgent, error) {
+	return nil, context.Canceled
+}
+
 // newApprovalTestTranslator 构造挂在测试录制器上的签核翻译器。
+// customAgentService/modelService 缺省为「解析失败」伪造，推荐问题与纠正
+// 重试均被跳过，聚焦草案主路径。
 func newApprovalTestTranslator(t *testing.T, deps *approvalDraftDeps, withErrModel bool) (*event.EventBus, *httptest.ResponseRecorder, *fakeApprovalMessageService) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -49,7 +89,10 @@ func newApprovalTestTranslator(t *testing.T, deps *approvalDraftDeps, withErrMod
 	c.Request = httptest.NewRequest("POST", "/ai/chat", nil)
 
 	msgSvc := &fakeApprovalMessageService{}
-	h := &AIChatHandler{messageService: msgSvc}
+	h := &AIChatHandler{
+		messageService:     msgSvc,
+		customAgentService: &errCustomAgentService{},
+	}
 	if withErrModel {
 		h.modelService = &errModelService{}
 	}
@@ -194,4 +237,55 @@ func TestApprovalTranslatorInvalidJSONEmitsCodedError(t *testing.T) {
 	if len(frames) != 1 || frames[0].Type != AIEventError || frames[0].Code != AIErrorCodeApprovalDraft {
 		t.Fatalf("frames = %+v", frames)
 	}
+}
+
+// TestApprovalTranslatorAttachesSuggestions 验证推荐问题链路接通：
+// 推荐智能体解析成功且模型返回问题时，approval_draft 事件携带 suggestions。
+func TestApprovalTranslatorAttachesSuggestions(t *testing.T) {
+	deps := approvalTestDeps()
+	deps.page = &AIPageContext{PageType: PageTypeProcessApproval}
+	deps.itemData = json.RawMessage(`{"masterItem":[]}`)
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest("POST", "/ai/chat", nil)
+
+	msgSvc := &fakeApprovalMessageService{}
+	h := &AIChatHandler{
+		messageService: msgSvc,
+		customAgentService: &fakeRecommendAgentService{agent: &types.CustomAgent{
+			Config: types.CustomAgentConfig{ModelID: "model-rc"},
+		}},
+		modelService: &fakeSuggestModelService{model: &fakeSuggestChatModel{
+			resp: `{"questions":[{"text":"确认草案后如何完成签核？"},{"text":"清单核验还有哪些未完成？"}]}`,
+		}},
+	}
+	deps.h = h
+	req := &AIChatRequest{Version: AIProtocolVersion, ConversationID: "conv-ap", RequestID: "req-ap"}
+	done := make(chan struct{})
+	base := newAIStreamTranslator(h, c, req, &types.Message{ID: "m1", SessionID: "s1"}, 1, done)
+	translator := newApprovalDraftTranslator(base, deps)
+	bus := event.NewEventBus()
+	translator.subscribe(bus)
+
+	emitComplete(t, bus, `{"message":"正在处理 ECO-000003。","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1"]}}]}`)
+
+	frames := parseSSEFrames(t, recorder.Body.String())
+	if len(frames) != 1 || frames[0].Type != AIEventApprovalDraft {
+		t.Fatalf("frames = %+v", frames)
+	}
+	if len(frames[0].Suggestions) != 2 || !strings.Contains(frames[0].Suggestions[0].Text, "完成签核") {
+		t.Fatalf("suggestions = %+v", frames[0].Suggestions)
+	}
+}
+
+// fakeRecommendAgentService 返回固定推荐智能体。
+type fakeRecommendAgentService struct {
+	interfaces.CustomAgentService
+	agent *types.CustomAgent
+}
+
+func (f *fakeRecommendAgentService) GetAgentByID(_ context.Context, _ string) (*types.CustomAgent, error) {
+	return f.agent, nil
 }

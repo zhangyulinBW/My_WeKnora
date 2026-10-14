@@ -207,6 +207,8 @@ func (h *AIChatHandler) handleApprovalMessage(
 		message:    req.Message,
 		metadata:   metadata,
 		lang:       detectReplyLanguage(req.Message),
+		page:       page,
+		itemData:   req.ItemData,
 		binding:    binding,
 		cfg:        cfg,
 		inputDraft: inputDraft,
@@ -281,6 +283,8 @@ type approvalDraftDeps struct {
 	message    string             // 用户原始请求
 	metadata   types.JSON         // 主路径注入的结构化上下文（重试复用）
 	lang       string
+	page       *AIPageContext       // 页面（推荐问题生成上下文）
+	itemData   json.RawMessage      // itemData 原文（推荐问题生成上下文）
 	binding    *ApprovalTaskBinding // 当前激活任务；nil 表示未激活
 	cfg        *ApprovalConfigEntry // 匹配的签审上下文；nil 表示数据未取得
 	inputDraft *ApprovalDraft       // 输入中处于 editing 的草案（可无）
@@ -423,9 +427,18 @@ func (t *approvalDraftTranslator) subscribe(bus *event.EventBus) {
 			return nil
 		}
 
+		// 与搜索草稿一致：基于会话数据与本轮正文生成本轮推荐问题，随事件返回。
+		var suggestions []AISuggestionItem
+		if recommendAgent, rerr := t.h.resolveRecommendAgent(ctx); rerr == nil {
+			if s, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.deps.page, nil, nil, t.deps.itemData, result.Message); serr == nil {
+				suggestions = s
+			}
+		}
+
 		// 单条 approval_draft 终止事件：正文说明复用 message 字段，草案在
-		// approvalDrafts 数组（与 search_draft 携带 Conditions 的方式一致，
-		// 不追加 answer_done，也不回显请求侧数据）。
+		// approvalDrafts 数组，推荐问题在 suggestions（与 search_draft 携带
+		// Conditions/Suggestions 的方式一致，不追加 answer_done，也不回显
+		// 请求侧数据）。
 		t.writeMu.Lock()
 		t.h.writeEvent(t.c, AIEvent{
 			Version:        t.req.Version,
@@ -434,6 +447,7 @@ func (t *approvalDraftTranslator) subscribe(bus *event.EventBus) {
 			RequestID:      t.req.RequestID,
 			Message:        result.Message,
 			ApprovalDrafts: drafts,
+			Suggestions:    suggestions,
 		})
 		t.writeMu.Unlock()
 		t.close()

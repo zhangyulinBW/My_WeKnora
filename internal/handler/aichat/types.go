@@ -216,7 +216,7 @@ const (
 	AIEventNeedSearchContext = "need_search_context"
 	AIEventSearchDraft       = "search_draft"
 	AIEventNeedClarification = "need_clarification"
-	AIEventApprovalDraft     = "approval_draft" // 签审轮终止事件：message 承载正文说明，approvalDrafts 承载草案；其后不追加 answer_done
+	AIEventApprovalDraft     = "approval_draft" // 签审轮终止事件：message 承载正文说明，approvalDrafts 承载草案，suggestions 携带本轮推荐问题；其后不追加 answer_done
 	AIEventSuggestions       = "suggestions"
 	AIEventError             = "error"
 )

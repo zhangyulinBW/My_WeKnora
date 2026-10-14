@@ -93,8 +93,10 @@ handleMessage
 - 结构卡控（`approval_validation.go`）：绑定必须匹配激活卡片、pathId ∈ paths、
   checkedTaskIds ⊆ tasks 无重复；违约先纠正重试一次，仍违约以 `error` 事件
   （`code: APPROVAL_DRAFT_ERROR`）终止。
-- 终止事件为单条 `approval_draft`（`message` 承载正文、`approvalDrafts` 承载草案），
-  其后不追加 `answer_done`；`drafts` 为空表示纯正文回答（普通咨询/澄清）。
+- 终止事件为单条 `approval_draft`（`message` 承载正文、`approvalDrafts` 承载草案、
+  `suggestions` 携带本轮推荐问题），其后不追加 `answer_done`；`drafts` 为空表示
+  纯正文回答（普通咨询/澄清）。消息省略 `page` 时，意图分类与门控回退最近一次
+  start 同步的页面。
 - 保存/完成条件（文档 3 §6.2/§6.3）由 `computeApprovalReadiness` 确定性判定并注入
   提示词元数据（`inputFormReadiness`），正文措辞由提示词决定。
 - 系统提示词与意图提示词增补文案见 `APPROVAL_PROMPT.md`。

@@ -101,9 +101,10 @@ func runApprovalFlow(t *testing.T, mutate func(req *AIChatRequest), finalAnswer 
 			ApprovalEnabled: true,
 			Approval:        &config.AIChatAgentConfig{Name: "approval-test"},
 		}},
-		sessionService: sessSvc,
-		messageService: msgSvc,
-		modelService:   &errModelService{},
+		sessionService:     sessSvc,
+		messageService:     msgSvc,
+		customAgentService: &errCustomAgentService{},
+		modelService:       &errModelService{},
 	}
 	h.handleApprovalMessage(context.Background(), c, &req, nil, 1)
 	return recorder.Body.String(), sessSvc.qaReq, msgSvc

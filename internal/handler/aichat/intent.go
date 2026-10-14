@@ -114,6 +114,17 @@ func (h *AIChatHandler) handleMessage(
 	agent *types.CustomAgent,
 	tenantID uint64,
 ) {
+	// 消息请求可能省略 page（协议允许省略未变化字段），而意图分类与
+	// search/approval 门控都依赖页面类型：回退最近一次 start 同步的页面，
+	// 保证 processApproval 会话的 approval 判定不因省略 page 而失效。
+	if req.Page == nil {
+		if session, err := h.getOrCreateSession(ctx, req.ConversationID, tenantID); err == nil && session != nil {
+			if p, _, _, _ := h.loadStartContext(ctx, session.ID); p != nil {
+				req.Page = p
+			}
+		}
+	}
+
 	// 携带附件/图片的消息直接走 normal：结构化搜索面向表格筛选，附件内容
 	// 对条件生成没有意义；且「仅附件无文本」的消息也无法做意图分类。
 	intent := IntentNormal
