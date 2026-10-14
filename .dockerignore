@@ -39,6 +39,7 @@ temp/
 # 本地构建产物 / 二进制
 WeKnora
 WeKnora-lite
+WeKnora-test
 /server
 /dist/
 /build/
