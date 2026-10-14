@@ -1,8 +1,9 @@
 package aichat
 
 // 本文件实现 ai_chat 的意图分析与分发：把用户消息分类为类型化 Intent，
-// 再经意图注册表分发到对应处理逻辑（search 结构化搜索 / normal 智能体问答）。
-// 搜索意图是否走结构化流程由 shouldSearch 控制（config 开关 + largeTable 页面）。
+// 再经意图注册表分发到对应处理逻辑（search 结构化搜索 / approval 签审草案 /
+// normal 智能体问答）。搜索与签核意图是否走结构化流程分别由 shouldSearch、
+// shouldApprove 控制（config 开关 + 页面类型）。
 
 import (
 	"context"
@@ -22,10 +23,12 @@ import (
 // 保证新增意图不会破坏已有会话里已持久化的意图记录。
 type Intent string
 
-// 已识别的意图。normal 是默认/回退意图，search 是搜索任务意图。
+// 已识别的意图。normal 是默认/回退意图，search 是搜索任务意图，
+// approval 是流程签审草案意图（仅 processApproval 页面生效）。
 const (
-	IntentNormal Intent = "normal"
-	IntentSearch Intent = "search"
+	IntentNormal   Intent = "normal"
+	IntentSearch   Intent = "search"
+	IntentApproval Intent = "approval"
 )
 
 // intentHandler 是某个意图的处理逻辑。
@@ -87,6 +90,21 @@ func (n *normalIntentHandler) Handle(
 	n.h.handleAgentTurn(ctx, c, req, agent, tenantID)
 }
 
+// approvalIntentHandler 是签核意图的适配器，委托给 AIChatHandler.handleApprovalMessage。
+type approvalIntentHandler struct{ h *AIChatHandler }
+
+func (a *approvalIntentHandler) Intent() Intent { return IntentApproval }
+
+func (a *approvalIntentHandler) Handle(
+	ctx context.Context,
+	c *gin.Context,
+	req *AIChatRequest,
+	agent *types.CustomAgent,
+	tenantID uint64,
+) {
+	a.h.handleApprovalMessage(ctx, c, req, agent, tenantID)
+}
+
 // handleMessage 通过意图分析智能体对消息进行分类、持久化意图，
 // 然后经意图注册表分发到对应的处理逻辑。
 func (h *AIChatHandler) handleMessage(
@@ -123,6 +141,12 @@ func (h *AIChatHandler) handleMessage(
 		intent = IntentNormal
 	}
 
+	// 签核开关：approval 意图只在「开关开启 + 页面为 processApproval」时才走
+	// 签审草案流程；否则回退 normal（其他页面的误分类不产生签核草案）。
+	if intent == IntentApproval && !h.shouldApprove(ctx, req, tenantID) {
+		intent = IntentNormal
+	}
+
 	h.persistIntent(ctx, req, tenantID, intent)
 
 	// 意图注册表分发：新增意图无需改这里。
@@ -150,6 +174,24 @@ func (h *AIChatHandler) shouldSearch(ctx context.Context, req *AIChatRequest, te
 		}
 	}
 	return page != nil && page.PageType == "largeTable"
+}
+
+// shouldApprove 判断当前请求是否应走签审草案流程：
+// 仅当 config 开启签核开关、且页面类型为 processApproval 时返回 true。
+// 页面优先取当前请求的 page，未携带时回退到 start 上下文里的 page。
+func (h *AIChatHandler) shouldApprove(ctx context.Context, req *AIChatRequest, tenantID uint64) bool {
+	if h.config == nil || h.config.AIChat == nil || !h.config.AIChat.ApprovalEnabled {
+		return false
+	}
+	page := req.Page
+	if page == nil || page.PageType == "" {
+		if session, err := h.getOrCreateSession(ctx, req.ConversationID, tenantID); err == nil && session != nil {
+			if p, _, _, _ := h.loadStartContext(ctx, session.ID); p != nil {
+				page = p
+			}
+		}
+	}
+	return page != nil && page.PageType == PageTypeProcessApproval
 }
 
 // classifyIntent 使用意图分析智能体的系统提示词 + 模型（来自 ai_chat.intent_agent_id）
@@ -197,6 +239,8 @@ func (h *AIChatHandler) classifyIntent(
 	switch key {
 	case string(IntentSearch):
 		return IntentSearch, nil
+	case string(IntentApproval):
+		return IntentApproval, nil
 	default:
 		return IntentNormal, nil
 	}

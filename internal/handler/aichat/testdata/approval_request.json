@@ -1,0 +1,364 @@
+{
+  "version": "1.0",
+  "type": "start",
+  "conversationId": "7e718cb3-a7fa-4cde-af8b-af22cd8aa306",
+  "requestId": "046261a2-0306-47e9-b4b2-0de14b156b52",
+  "message": "",
+  "page": {
+    "tabId": "gotoProcessApproval",
+    "pageType": "processApproval",
+    "contextVersion": "ctx_3c1e7e78"
+  },
+  "approvalTaskIndex": [
+    {
+      "activityId": "90A5FEA6080A43CABADFF7BF76C417EA",
+      "activityLabel": "確認送出",
+      "activityMessage": "確認表單填寫完整,且附掛正確變更的圖文",
+      "assignedToName": "Innovator Admin",
+      "assignmentId": "27D0EF7E805A445A9C1581833700ABEB",
+      "dueDate": "2026-08-27T17:38:10",
+      "itemId": "F18E2D7D075448ECB5D0A2F82B19C783",
+      "itemKeyedName": "ECO-000003",
+      "menuPaths": [
+        {
+          "groupLabel": "ECO-工程變更命令",
+          "groupName": "Simple ECO",
+          "menuId": "process-01",
+          "menuLabel": "待辦"
+        }
+      ],
+      "startDate": "2026-08-27T17:38:10",
+      "state": "Active"
+    },
+    {
+      "activityId": "121B8513739B490083A13CB31C9032DB",
+      "activityLabel": "執行變更",
+      "activityMessage": "執行變更,請修訂新版物件內容.",
+      "assignedToName": "Innovator Admin",
+      "assignmentId": "C13557AC5B89402C87C3E82D793ACE0F",
+      "dueDate": "2026-08-28T10:40:41",
+      "itemId": "75BD8659078B4754BE587194A09FA36E",
+      "itemKeyedName": "ECO-000004",
+      "menuPaths": [
+        {
+          "groupLabel": "ECO-工程變更命令",
+          "groupName": "Simple ECO",
+          "menuId": "process-01",
+          "menuLabel": "待辦"
+        }
+      ],
+      "startDate": "2026-08-28T10:40:41",
+      "state": "Active"
+    },
+    {
+      "activityId": "F58087DD60F24304995C9AA6EE532375",
+      "activityLabel": "建檔者確認",
+      "activityMessage": "Please Review...",
+      "assignedToName": "Innovator Admin",
+      "assignmentId": "61FC85F497814F4FAC656A91B9B060D4",
+      "dueDate": "2026-07-21T11:46:02",
+      "itemId": "09CBB9EBC3B84AF8970BDB173B09BF0C",
+      "itemKeyedName": "PR-000001",
+      "menuPaths": [
+        {
+          "groupLabel": "問題單",
+          "groupName": "PR",
+          "menuId": "process-01",
+          "menuLabel": "待辦"
+        }
+      ],
+      "startDate": "2026-07-21T11:46:02",
+      "state": "Active"
+    },
+    {
+      "activityId": "D4E965F769F3451EB3564AB52FD75A48",
+      "activityLabel": "執行者回覆",
+      "activityMessage": "請回報處理結果...",
+      "assignedToName": "Administrators",
+      "assignmentId": "39563BC64E7843E8B5CDFBB7AD3BF3CD",
+      "dueDate": "2026-08-30T17:05:22",
+      "itemId": "8A1395E61D2A421EB3ABFDB0E6F076FC",
+      "itemKeyedName": "123",
+      "menuPaths": [
+        {
+          "groupLabel": "處理工作單",
+          "groupName": "BCS Action",
+          "menuId": "process-01",
+          "menuLabel": "待辦"
+        }
+      ],
+      "startDate": "2026-08-27T17:05:22",
+      "state": "Active"
+    }
+  ],
+  "itemData": {
+    "additionalItems": [],
+    "approvalConfig": [
+      {
+        "activityId": "90A5FEA6080A43CABADFF7BF76C417EA",
+        "assignmentId": "27D0EF7E805A445A9C1581833700ABEB",
+        "bcs_comment_required": "0",
+        "currentForm": {
+          "checkedTaskIds": [],
+          "comments": "",
+          "pathId": null
+        },
+        "paths": [
+          {
+            "id": "9402D951D1B64F0EABD0FBA7754E9563",
+            "label": "確認送出",
+            "name": "Submit"
+          }
+        ],
+        "tasks": [
+          {
+            "description": "Please fill the form content, attche correct affected items.",
+            "description@aras.lang": "en",
+            "description@aras.lang.en": "Please fill the form content, attche correct affected items.",
+            "description@aras.lang.zc": "确认窗体填写完整,且附挂正确变更的对象",
+            "description@aras.lang.zt": "確認表單填寫完整,且附掛正確變更的物件",
+            "id": "CF55C5DD589C4C98835733DC23CCD7D9",
+            "is_required": "1",
+            "sequence": 1
+          }
+        ]
+      }
+    ],
+    "approvalDrafts": [],
+    "approvalItem": [
+      {
+        "@aras.id": "F18E2D7D075448ECB5D0A2F82B19C783",
+        "@aras.type": "Simple ECO",
+        "@aras.typeId": "05C2AC1EB54742FF95CBB12FE12F5EDB",
+        "Relationships": {
+          "Item": {
+            "@aras.id": "0A33F4CDD18749A49F48ECF014993441",
+            "@aras.type": "Simple ECO Affected Item",
+            "@aras.typeId": "FAE5DF5AFEC0437C9ADC9E38184EA8D6",
+            "behavior": "float",
+            "config_id": {
+              "#text": "0A33F4CDD18749A49F48ECF014993441",
+              "@aras.keyed_name": "0A33F4CDD18749A49F48ECF014993441",
+              "@aras.type": "Simple ECO Affected Item"
+            },
+            "created_by_id": {
+              "#text": "30B991F927274FA3829655F50C99472E",
+              "@aras.keyed_name": "Innovator Admin",
+              "@aras.type": "User"
+            },
+            "created_on": "2026-08-27T17:38:09",
+            "generation": "1",
+            "id": {
+              "#text": "0A33F4CDD18749A49F48ECF014993441",
+              "@aras.keyed_name": "0A33F4CDD18749A49F48ECF014993441",
+              "@aras.type": "Simple ECO Affected Item"
+            },
+            "is_current": "1",
+            "is_released": "0",
+            "keyed_name": "0A33F4CDD18749A49F48ECF014993441",
+            "major_rev": "A",
+            "managed_by_id": {
+              "#text": "80727DB851A94DBCB10419D30ED69F9F",
+              "@aras.keyed_name": "Change Specialist I",
+              "@aras.type": "Identity"
+            },
+            "modified_by_id": {
+              "#text": "30B991F927274FA3829655F50C99472E",
+              "@aras.keyed_name": "Innovator Admin",
+              "@aras.type": "User"
+            },
+            "modified_on": "2026-08-27T17:38:09",
+            "new_version": "1",
+            "not_lockable": "0",
+            "owned_by_id": {
+              "#text": "DBA5D86402BF43D5976854B8B48FCDD1",
+              "@aras.keyed_name": "Innovator Admin",
+              "@aras.type": "Identity"
+            },
+            "permission_id": {
+              "#text": "8DEF7FAAC789435B9A56E70FB1B24557",
+              "@aras.keyed_name": "New Change",
+              "@aras.type": "Permission"
+            },
+            "related_id": {
+              "#text": "",
+              "@aras.keyed_name": "C562AD3545DC449DA00DC856AB59EA65",
+              "@aras.type": "Affected Item",
+              "Item": {
+                "@aras.id": "C562AD3545DC449DA00DC856AB59EA65",
+                "@aras.type": "Affected Item",
+                "@aras.typeId": "BFAAB0F6838D4F80BF12CB328FF5B097",
+                "action": "Change",
+                "affected_id": {
+                  "#text": "DBC490120912495E85010F94A061C300",
+                  "@aras.keyed_name": "Mec2406-000013 led flashlight",
+                  "@aras.type": "Change Controlled Item"
+                },
+                "affected_rev": "A",
+                "affected_type": "../images/CAD.svg",
+                "config_id": {
+                  "#text": "C562AD3545DC449DA00DC856AB59EA65",
+                  "@aras.keyed_name": "C562AD3545DC449DA00DC856AB59EA65",
+                  "@aras.type": "Affected Item"
+                },
+                "created_by_id": {
+                  "#text": "30B991F927274FA3829655F50C99472E",
+                  "@aras.keyed_name": "Innovator Admin",
+                  "@aras.type": "User"
+                },
+                "created_on": "2026-08-27T17:38:09",
+                "current_state": {
+                  "#text": "C363ABDADF8D485393BB89877DBDCFD0",
+                  "@aras.keyed_name": "Released",
+                  "@aras.name": "Released",
+                  "@aras.type": "Life Cycle State"
+                },
+                "generation": "1",
+                "id": {
+                  "#text": "C562AD3545DC449DA00DC856AB59EA65",
+                  "@aras.keyed_name": "C562AD3545DC449DA00DC856AB59EA65",
+                  "@aras.type": "Affected Item"
+                },
+                "interchangeable": "1",
+                "is_current": "1",
+                "is_released": "1",
+                "keyed_name": "C562AD3545DC449DA00DC856AB59EA65",
+                "major_rev": "A",
+                "modified_by_id": {
+                  "#text": "30B991F927274FA3829655F50C99472E",
+                  "@aras.keyed_name": "Innovator Admin",
+                  "@aras.type": "User"
+                },
+                "modified_on": "2026-08-27T17:38:09",
+                "new_version": "1",
+                "not_lockable": "0",
+                "permission_id": {
+                  "#text": "1712BEEB88234763B5E431015F9CFD2D",
+                  "@aras.keyed_name": "New Affected Item",
+                  "@aras.type": "Permission"
+                },
+                "state": "Released"
+              }
+            },
+            "sort_order": "128",
+            "source_id": {
+              "#text": "F18E2D7D075448ECB5D0A2F82B19C783",
+              "@aras.keyed_name": "ECO-000003",
+              "@aras.type": "Simple ECO"
+            }
+          }
+        },
+        "bcs_isrestricted": "0",
+        "bcs_not_bulkchange": "0",
+        "bcs_ref_current_state_label": {
+          "#text": "New",
+          "@aras.xml:lang": "en"
+        },
+        "change_category": "Phase In",
+        "config_id": {
+          "#text": "F18E2D7D075448ECB5D0A2F82B19C783",
+          "@aras.keyed_name": "ECO-000003",
+          "@aras.type": "Simple ECO"
+        },
+        "created_by_id": {
+          "#text": "30B991F927274FA3829655F50C99472E",
+          "@aras.keyed_name": "Innovator Admin",
+          "@aras.type": "User"
+        },
+        "created_on": "2026-08-27T17:38:09",
+        "current_state": {
+          "#text": "97F426B285804EB19B5B0ACBF9431C39",
+          "@aras.keyed_name": "New",
+          "@aras.name": "New",
+          "@aras.type": "Life Cycle State"
+        },
+        "generation": "1",
+        "id": {
+          "#text": "F18E2D7D075448ECB5D0A2F82B19C783",
+          "@aras.keyed_name": "ECO-000003",
+          "@aras.type": "Simple ECO"
+        },
+        "is_current": "1",
+        "is_released": "0",
+        "item_number": "ECO-000003",
+        "itemtype": "05C2AC1EB54742FF95CBB12FE12F5EDB",
+        "keyed_name": "ECO-000003",
+        "major_rev": "A",
+        "managed_by_id": {
+          "#text": "80727DB851A94DBCB10419D30ED69F9F",
+          "@aras.keyed_name": "Change Specialist I",
+          "@aras.type": "Identity"
+        },
+        "modified_by_id": {
+          "#text": "30B991F927274FA3829655F50C99472E",
+          "@aras.keyed_name": "Innovator Admin",
+          "@aras.type": "User"
+        },
+        "modified_on": "2026-08-27T17:38:09",
+        "new_version": "1",
+        "not_lockable": "0",
+        "owned_by_id": {
+          "#text": "DBA5D86402BF43D5976854B8B48FCDD1",
+          "@aras.keyed_name": "Innovator Admin",
+          "@aras.type": "Identity"
+        },
+        "permission_id": {
+          "#text": "8DEF7FAAC789435B9A56E70FB1B24557",
+          "@aras.keyed_name": "New Change",
+          "@aras.type": "Permission"
+        },
+        "state": "New",
+        "workflow_id": "81E21CC617B248CAA513A5BA89763750"
+      }
+    ],
+    "masterItem": [
+      {
+        "@aras.id": "27D0EF7E805A445A9C1581833700ABEB",
+        "@aras.type": "InBasket Task",
+        "@aras.typeId": "BC7977377FFF40D59FF14205914E9C71",
+        "act_id": "90A5FEA6080A43CABADFF7BF76C417EA",
+        "assigned_to": {
+          "#text": "DBA5D86402BF43D5976854B8B48FCDD1",
+          "@aras.keyed_name": "Innovator Admin",
+          "@aras.type": "Identity"
+        },
+        "classification": "My",
+        "container": {
+          "#text": "81E21CC617B248CAA513A5BA89763750",
+          "@aras.keyed_name": "ECO-000003",
+          "@aras.type": "Workflow Process"
+        },
+        "current_state": {
+          "#text": "EACB6244391B461EBCAF7D91E28BDFCF",
+          "@aras.keyed_name": "Active",
+          "@aras.name": "Active",
+          "@aras.type": "Life Cycle State"
+        },
+        "due_date": "2026-08-27T17:38:10",
+        "id": {
+          "#text": "27D0EF7E805A445A9C1581833700ABEB",
+          "@aras.keyed_name": "Accept",
+          "@aras.type": "InBasket Task"
+        },
+        "instructions": "Make sure fill form and attche correct items.",
+        "item": {
+          "#text": "F18E2D7D075448ECB5D0A2F82B19C783",
+          "@aras.keyed_name": "ECO-000003",
+          "@aras.type": "Simple ECO"
+        },
+        "item_type_id": {
+          "#text": "05C2AC1EB54742FF95CBB12FE12F5EDB",
+          "@aras.keyed_name": "Simple ECO",
+          "@aras.name": "Simple ECO",
+          "@aras.type": "ItemType"
+        },
+        "itemtype": "321BD822949149C597FD596B1212B85C",
+        "keyed_name": "Accept",
+        "language_code_filter": "en",
+        "my_assignment": "1",
+        "start_date": "2026-08-27T17:38:10",
+        "state": "Active"
+      }
+    ]
+  }
+}

@@ -57,6 +57,22 @@ func (h *AIChatHandler) handleAgentTurn(
 	if len(req.ItemData) == 0 {
 		req.ItemData = itemData
 	}
+	// processApproval 会话：动态字段走独立同步通道（start 与历次 message 的
+	// 合并结果），其 itemData 比 start 时刻的快照新，优先回填；携带新值时
+	// 同步落库供后续轮次沿用。普通咨询据此拿到最新任务/草案数据。
+	if req.Page != nil && req.Page.PageType == PageTypeProcessApproval {
+		h.syncApprovalContext(ctx, session, req)
+		if len(req.ItemData) == 0 || len(req.ApprovalTaskIndex) == 0 {
+			if ac := h.loadApprovalContext(ctx, session.ID); ac != nil {
+				if len(req.ItemData) == 0 {
+					req.ItemData = ac.ItemData
+				}
+				if len(req.ApprovalTaskIndex) == 0 {
+					req.ApprovalTaskIndex = ac.ApprovalTaskIndex
+				}
+			}
+		}
+	}
 
 	if _, err := h.messageService.CreateMessage(ctx, &types.Message{
 		SessionID:   session.ID,
@@ -534,6 +550,10 @@ func buildAIMetadata(req *AIChatRequest) types.JSON {
 	}
 	if len(req.ItemData) > 0 {
 		ctxObj["itemdata"] = req.ItemData
+	}
+	// processApproval 页：任务索引帮助普通咨询理解用户提及的单号/节点/分组。
+	if len(req.ApprovalTaskIndex) > 0 {
+		ctxObj["approvalTaskIndex"] = req.ApprovalTaskIndex
 	}
 	b, _ := json.Marshal(ctxObj)
 	return types.JSON(b)

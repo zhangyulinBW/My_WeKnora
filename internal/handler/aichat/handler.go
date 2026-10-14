@@ -31,6 +31,10 @@ const defaultAIAgentID = "6a188aae-b3fb-45c7-b59b-1d0a4620a113"
 // 仅用于标识「本轮由 config.yaml 内联定义的智能体驱动」。
 const inlineAIAgentID = "ai-chat-inline-agent"
 
+// inlineApprovalAgentID 是 ai_chat.approval 内联定义未声明 id 时使用的合成
+// 智能体 ID，作用同 inlineAIAgentID，用于区分签核轮的驱动智能体。
+const inlineApprovalAgentID = "ai-chat-approval-inline-agent"
+
 // AIChatHandler 实现自定义 /api/v1/ai/chat 协议。
 // 它是协议入口 + 智能体解析/会话/SSE 输出等基础设施；意图分类与分发见 intent.go，
 // 搜索流程见 search.go，Agent 执行见 agent_turn.go，start 流程见 start.go。
@@ -91,9 +95,10 @@ func NewAIChatHandler(
 		intents: newIntentRegistry(),
 		actions: make(map[string]*pendingAction),
 	}
-	// 意图注册：normal 作为默认/回退意图最先注册，search 其次。
+	// 意图注册：normal 作为默认/回退意图最先注册，search、approval 其次。
 	h.intents.register(&normalIntentHandler{h: h})
 	h.intents.register(&searchIntentHandler{h: h})
+	h.intents.register(&approvalIntentHandler{h: h})
 	return h
 }
 
@@ -167,8 +172,10 @@ func (h *AIChatHandler) Chat(c *gin.Context) {
 // 解析顺序：config.yaml 内联定义 (ai_chat.agent) -> config.yaml (ai_chat.agent_id)
 // -> 环境变量 WEKNORA_AI_AGENT_ID -> 内置默认值。内联定义存在时不查 custom_agents 表。
 func (h *AIChatHandler) resolveAgent(ctx context.Context) (*types.CustomAgent, error) {
-	if agent := h.agentFromInlineConfig(ctx); agent != nil {
-		return agent, nil
+	if h.config != nil && h.config.AIChat != nil {
+		if agent := h.agentFromInlineConfig(ctx, h.config.AIChat.Agent, inlineAIAgentID); agent != nil {
+			return agent, nil
+		}
 	}
 	id := defaultAIAgentID
 	if h.config != nil && h.config.AIChat != nil && h.config.AIChat.AgentID != "" {
@@ -183,18 +190,37 @@ func (h *AIChatHandler) resolveAgent(ctx context.Context) (*types.CustomAgent, e
 	return agent, nil
 }
 
-// agentFromInlineConfig 把 config.yaml 的 ai_chat.agent 内联定义构造成一次性的
-// *types.CustomAgent（不落库）。未配置内联定义时返回 nil，由调用方回退到
-// agent_id 解析链。构造方式对齐内置智能体的 buildAgentFromEntry：按请求 tenant
-// 盖章、补默认值，从而正常走 AgentQA 的检索租户与模型解析。
-func (h *AIChatHandler) agentFromInlineConfig(ctx context.Context) *types.CustomAgent {
-	if h.config == nil || h.config.AIChat == nil || h.config.AIChat.Agent == nil {
+// resolveApprovalAgent 加载用于签审草案生成的智能体（其系统提示词承载文档 3
+// 的固定生成规则）。解析顺序：config.yaml 内联定义 (ai_chat.approval)
+// -> ai_chat.approval_agent_id（custom_agents 表）-> 主智能体。
+func (h *AIChatHandler) resolveApprovalAgent(ctx context.Context) (*types.CustomAgent, error) {
+	if h.config != nil && h.config.AIChat != nil {
+		if agent := h.agentFromInlineConfig(ctx, h.config.AIChat.Approval, inlineApprovalAgentID); agent != nil {
+			return agent, nil
+		}
+		if h.config.AIChat.ApprovalAgentID != "" {
+			agent, err := h.customAgentService.GetAgentByID(ctx, h.config.AIChat.ApprovalAgentID)
+			if err != nil || agent == nil {
+				return nil, fmt.Errorf("approval agent %s not found", h.config.AIChat.ApprovalAgentID)
+			}
+			return agent, nil
+		}
+	}
+	return h.resolveAgent(ctx)
+}
+
+// agentFromInlineConfig 把 config.yaml 的内联智能体定义（ai_chat.agent 或
+// ai_chat.approval）构造成一次性的 *types.CustomAgent（不落库）。未配置内联
+// 定义时返回 nil，由调用方回退到 agent_id 解析链。构造方式对齐内置智能体的
+// buildAgentFromEntry：按请求 tenant 盖章、补默认值，从而正常走 AgentQA 的
+// 检索租户与模型解析。fallbackID 是定义未声明 id 时使用的合成智能体 ID。
+func (h *AIChatHandler) agentFromInlineConfig(ctx context.Context, def *config.AIChatAgentConfig, fallbackID string) *types.CustomAgent {
+	if h.config == nil || h.config.AIChat == nil || def == nil {
 		return nil
 	}
-	def := h.config.AIChat.Agent
 	id := strings.TrimSpace(def.ID)
 	if id == "" {
-		id = inlineAIAgentID
+		id = fallbackID
 	}
 	tenantID, _ := types.TenantIDFromContext(ctx)
 	agent := &types.CustomAgent{
@@ -319,9 +345,10 @@ func (h *AIChatHandler) writeEvent(c *gin.Context, ev AIEvent) {
 	c.Writer.Flush()
 }
 
-// errorEvent 构建一个终止性错误事件。
-func (h *AIChatHandler) errorEvent(req *AIChatRequest, msg string) AIEvent {
-	return AIEvent{
+// errorEvent 构建一个终止性错误事件。可选的 code 是错误类别的机器可读标识
+// （如 APPROVAL_DRAFT_ERROR），不传时与历史行为一致。
+func (h *AIChatHandler) errorEvent(req *AIChatRequest, msg string, code ...string) AIEvent {
+	ev := AIEvent{
 		ID:             req.RequestID,
 		ResponseType:   AIEventError,
 		Version:        req.Version,
@@ -333,4 +360,9 @@ func (h *AIChatHandler) errorEvent(req *AIChatRequest, msg string) AIEvent {
 		Done:           true,
 		Data:           map[string]interface{}{"error": msg},
 	}
+	if len(code) > 0 && code[0] != "" {
+		ev.Code = code[0]
+		ev.Data["code"] = code[0]
+	}
+	return ev
 }

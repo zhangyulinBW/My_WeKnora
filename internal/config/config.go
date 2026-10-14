@@ -73,15 +73,30 @@ type AIChatConfig struct {
 	// conditions for the search intent. Its system prompt defines the search
 	// rules. Empty falls back to AgentID.
 	SearchAgentID string `yaml:"search_agent_id" json:"search_agent_id"`
+	// ApprovalAgentID is the custom agent used to generate editable approval
+	// drafts for the approval intent (processApproval pages). Its system
+	// prompt carries the fixed draft-generation rules. Empty falls back to
+	// the inline Agent definition below, then AgentID.
+	ApprovalAgentID string `yaml:"approval_agent_id" json:"approval_agent_id"`
 	// SearchEnabled controls whether the search intent takes the "structured
 	// search draft" path. When true (and the page is a largeTable), the search
-	// intent generates structured search conditions; otherwise it falls back to
-	// normal streaming Q&A (e.g. singleData, where the answer lives in itemdata).
+	// intent generates structured search conditions; otherwise it falls back
+	// to normal streaming Q&A (e.g. singleData, where the answer lives in itemdata).
 	SearchEnabled bool `yaml:"search_enabled" json:"search_enabled"`
+	// ApprovalEnabled controls whether the approval intent takes the
+	// "structured approval draft" path. When true (and the page is a
+	// processApproval page), approval requests generate editable approval
+	// drafts; otherwise they fall back to normal streaming Q&A.
+	ApprovalEnabled bool `yaml:"approval_enabled" json:"approval_enabled"`
 	// Agent inline-defines the agent used by the normal intent (regular Q&A)
 	// directly in config.yaml, without a pre-created custom_agents DB row.
 	// When non-nil it takes precedence over AgentID.
 	Agent *AIChatAgentConfig `yaml:"agent" json:"agent,omitempty"`
+	// Approval inline-defines the agent used by the approval intent directly
+	// in config.yaml. When non-nil it takes precedence over ApprovalAgentID.
+	// The system prompt should follow the contract documented in
+	// internal/handler/aichat/APPROVAL_PROMPT.md.
+	Approval *AIChatAgentConfig `yaml:"approval" json:"approval,omitempty"`
 }
 
 // AIChatAgentConfig is the inline agent definition under ai_chat.agent. The

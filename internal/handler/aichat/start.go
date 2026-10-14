@@ -50,6 +50,10 @@ func (h *AIChatHandler) handleStart(
 		})
 	}
 
+	// processApproval 页的动态字段走独立同步通道（整体替换语义），start
+	// 携带时同样落库，后续省略字段的请求据此沿用。
+	h.syncApprovalContext(ctx, session, req)
+
 	recommendAgent, err := h.resolveRecommendAgent(ctx)
 	if err != nil {
 		h.writeEvent(c, h.errorEvent(req, err.Error()))

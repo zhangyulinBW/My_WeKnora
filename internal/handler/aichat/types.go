@@ -27,8 +27,11 @@ type AIChatRequest struct {
 	Page           *AIPageContext       `json:"page,omitempty"`         // page the user is on
 	SearchFields   []AISearchField      `json:"searchFields,omitempty"` // searchable table headers (search_context only)
 	SearchBody     json.RawMessage      `json:"searchBody,omitempty"`   // current applied search state (for "what is being queried" questions)
-	ItemData       json.RawMessage      `json:"itemdata,omitempty"`     // 页面数据载荷：singleData 为单条记录，largeTable 等亦可携带表格数据
+	ItemData       json.RawMessage      `json:"itemdata,omitempty"`     // 页面数据载荷：singleData 为单条记录，largeTable 等亦可携带表格数据；processApproval 页为五数组结构（json 反序列化大小写不敏感，前端发的 "itemData" 同样落入本字段）
 	ConditionRules *AIConditionRules    `json:"conditionRules,omitempty"`
+	// ApprovalTaskIndex 是 processApproval 页的扁平任务索引（整体替换语义）。
+	// 仅在该页面类型下使用，其他页面不携带。
+	ApprovalTaskIndex json.RawMessage `json:"approvalTaskIndex,omitempty"`
 
 	// 以下字段由服务端在入口处理后携带，不来自请求 JSON，也不会回发。
 	// processedAttachments / processedImages 是已落存储的附件与图片（随用户消息持久化），
@@ -178,6 +181,12 @@ type AIEvent struct {
 	SearchBody     json.RawMessage        `json:"searchBody,omitempty"`
 	NeedConfirm    *bool                  `json:"needConfirm,omitempty"`
 	Unmatched      []AIUnmatched          `json:"unmatchedConditions,omitempty"`
+	// Code 是错误类别的机器可读标识（如 APPROVAL_DRAFT_ERROR），
+	// 供前端按类别处理错误；非错误事件不携带。
+	Code string `json:"code,omitempty"`
+	// ApprovalDrafts 是 approval_draft 事件的载荷：可编辑签审草案数组。
+	// 与 search_draft 携带 Conditions 的方式一致，请求侧数据不回显。
+	ApprovalDrafts []*ApprovalDraft `json:"approvalDrafts,omitempty"`
 }
 
 // AIUnmatched describes a condition fragment that could not be safely mapped.
@@ -207,6 +216,7 @@ const (
 	AIEventNeedSearchContext = "need_search_context"
 	AIEventSearchDraft       = "search_draft"
 	AIEventNeedClarification = "need_clarification"
+	AIEventApprovalDraft     = "approval_draft" // 签审轮终止事件：message 承载正文说明，approvalDrafts 承载草案；其后不追加 answer_done
 	AIEventSuggestions       = "suggestions"
 	AIEventError             = "error"
 )

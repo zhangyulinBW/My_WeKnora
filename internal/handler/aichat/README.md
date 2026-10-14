@@ -11,6 +11,7 @@ WeKnora Agent 引擎（`sessionService.AgentQA`）或结构化搜索草稿生成
 核心流程：**意图分析 → 注册表分发**。
 
 - `search` 意图 → 结构化搜索流程（生成可编辑的搜索条件草稿，`search_draft`）。
+- `approval` 意图 → 签审草案流程（生成可编辑的签审草案，`approval_draft`，仅 processApproval 页）。
 - `normal` 意图 → Agent 流式问答（`AgentQA`，ReAct 引擎）。
 
 ## 目录结构
@@ -18,13 +19,19 @@ WeKnora Agent 引擎（`sessionService.AgentQA`）或结构化搜索草稿生成
 | 文件 | 职责 |
 |---|---|
 | `handler.go` | `AIChatHandler` 结构体、`NewAIChatHandler` 构造函数、`Chat` 入口分发；智能体解析、会话创建、SSE 输出工具 |
-| `intent.go` | 意图注册表：`Intent` 类型、`intentHandler` 接口、`intentRegistry`；意图分类 `classifyIntent`、分发 `handleMessage`、搜索开关 `shouldSearch`、落库 `persistIntent` |
+| `intent.go` | 意图注册表：`Intent` 类型、`intentHandler` 接口、`intentRegistry`；意图分类 `classifyIntent`、分发 `handleMessage`、搜索/签核开关 `shouldSearch`/`shouldApprove`、落库 `persistIntent` |
 | `search.go` | 搜索意图两阶段流程：`handleSearchMessage` / `handleSearchContext`、条件生成与硬校验、搜索提示词、JSON 解析、语言检测 |
 | `validation.go` | 搜索条件的机器规则硬校验（字段/操作符/枚举值） |
 | `agent_turn.go` | 普通问答意图：`handleAgentTurn` + `aiStreamTranslator`（事件总线 → SSE 翻译）、元数据/上下文组装 |
+| `approval.go` | 签核意图：`handleApprovalMessage` + `approvalDraftTranslator`（模型输出解析为「正文+草案」envelope，结构卡控后合并为单条 `approval_draft` 事件；draftId/revision/status 由代码组装） |
+| `approval_types.go` | 流程签审协议类型：itemData 五数组结构、签审配置/清单/草案表单、激活卡片绑定解析 |
+| `approval_validation.go` | 签核机器规则：结构卡控（绑定/pathId/勾选集合）、保存与完成条件判定（§6.2/§6.3，含保存默认动作） |
+| `approval_context.go` | processApproval 动态字段同步：`approvalTaskIndex`/`itemData` 的整体替换/省略沿用/`[]` 清空语义，落库为 `role="approval_context"` 消息 |
+| `attachments.go` | 消息内联附件：图片/文件解码、配额与类型校验、落存储、VLM 降级描述 |
 | `artifact_reference.go` | 沙箱产物引用处理（session 包同名文件的私有镜像，需保持同步）：`sandbox:` 引用重写、引用解析、合并/去重、公开视图 |
 | `start.go` | `start` 阶段：建立会话、持久化基础数据、生成推荐问题 |
 | `types.go` | 协议类型与常量（请求体、SSE 事件、`AIRequestType*`、`AIEvent*`、`AIProtocolVersion`） |
+| `APPROVAL_PROMPT.md` | 签核智能体系统提示词全文与意图提示词增补文案（部署指引） |
 
 ## 请求协议与意图分发
 
@@ -35,7 +42,7 @@ Chat (handler.go)
  ├─ "start"           → handleStart            (start.go)   建立会话上下文 + 推荐问题
  ├─ "message"         → handleMessage          (intent.go)  意图分析 + 注册表分发
  │                        └─ classifyIntent → 类型化 Intent
- │                        └─ shouldSearch 开关判断
+ │                        └─ shouldSearch / shouldApprove 开关判断
  │                        └─ intents.resolve(intent).Handle(...)
  ├─ "search_context"  → handleSearchContext    (search.go)  搜索流程第二阶段（前端回传搜索字段）
  └─ 其他               → 错误事件
@@ -46,9 +53,12 @@ Chat (handler.go)
 ```
 handleMessage
  ├─ classifyIntent   用 intent_agent_id 的模型对消息分类，输出 Intent
+ │                   （approval 需意图智能体提示词含该输出类别，见 APPROVAL_PROMPT.md）
  ├─ shouldSearch     search 意图仅在「search_enabled=true 且页面为 largeTable」时保留
+ ├─ shouldApprove    approval 意图仅在「approval_enabled=true 且页面为 processApproval」时保留
  ├─ persistIntent    把意图作为 role="intent" 消息落库（不污染 LLM 上下文）
- └─ intents.resolve  命中 search → 结构化搜索；命中/回退 normal → Agent 问答
+ └─ intents.resolve  命中 search → 结构化搜索；命中 approval → 签审草案；
+                     命中/回退 normal → Agent 问答
 ```
 
 ## 搜索开关（search_enabled）
@@ -61,6 +71,33 @@ handleMessage
 只有同时满足才走结构化搜索（生成 `search_draft` / `need_clarification` 搜索条件草稿）；
 否则回退 `normal` 流式问答。例如 `singleData` 场景（答案就在 `itemdata` 里）会回退 normal，
 由 Agent 直接基于数据流式回答。
+
+## 签核开关（approval_enabled）与签审草案流程
+
+`approval` 意图走签审草案流程，由两个条件共同决定（`intent.go` 的 `shouldApprove`）：
+
+1. `config.yaml` 的 `ai_chat.approval_enabled` 为 `true`；
+2. 页面类型为 `processApproval`（流程签审页）。
+
+流程与搜索草稿同构（`approval.go`）：
+
+- 请求携带 `approvalTaskIndex`（扁平任务索引）与 `itemData`（五数组：masterItem /
+  approvalConfig / approvalItem / additionalItems / approvalDrafts）。两字段按
+  「出现整体替换、省略沿用、`[]` 清空」语义落库为 `role="approval_context"` 消息
+  （`approval_context.go`），跨请求与重启后仍可回读；normal 流程在 processApproval
+  会话同样回填最新值并注入元数据。
+- approval 智能体经 AgentQA 执行，最终答案解析为 `{"message", "drafts"}` JSON：
+  正文说明 + 至多一份草案（绑定 + 完整 form）。`draftId`/`revision`/`status` 由
+  后端组装（同一 editing 草案优化沿用 draftId 且 revision+1，新实例 revision 1），
+  模型只产出正文与 form。
+- 结构卡控（`approval_validation.go`）：绑定必须匹配激活卡片、pathId ∈ paths、
+  checkedTaskIds ⊆ tasks 无重复；违约先纠正重试一次，仍违约以 `error` 事件
+  （`code: APPROVAL_DRAFT_ERROR`）终止。
+- 终止事件为单条 `approval_draft`（`message` 承载正文、`approvalDrafts` 承载草案），
+  其后不追加 `answer_done`；`drafts` 为空表示纯正文回答（普通咨询/澄清）。
+- 保存/完成条件（文档 3 §6.2/§6.3）由 `computeApprovalReadiness` 确定性判定并注入
+  提示词元数据（`inputFormReadiness`），正文措辞由提示词决定。
+- 系统提示词与意图提示词增补文案见 `APPROVAL_PROMPT.md`。
 
 ## 如何新增一种意图
 
@@ -156,5 +193,10 @@ ai_chat:
   model_id:            "..."   # 覆盖智能体自身对话模型
   intent_agent_id:     "..."   # 意图分类智能体
   recommend_agent_id:  "..."   # 推荐问题智能体
+  search_agent_id:     "..."   # 搜索条件生成智能体
   search_enabled:      true    # 搜索开关：true 时 largeTable 走结构化搜索，false 全走流式问答
+  approval_agent_id:   "..."   # 签核草案生成智能体（DB）；approval 段存在时被忽略
+  approval:                    # 内联定义签核智能体（可选），提示词见 APPROVAL_PROMPT.md
+    system_prompt:     "..."
+  approval_enabled:    true    # 签核开关：true 时 processApproval 走签审草案，false 全走流式问答
 ```

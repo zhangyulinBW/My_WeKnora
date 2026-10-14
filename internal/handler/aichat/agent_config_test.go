@@ -15,7 +15,11 @@ func TestAgentFromInlineConfig(t *testing.T) {
 	t.Run("nil when not configured", func(t *testing.T) {
 		for _, cfg := range []*config.Config{nil, {}, {AIChat: &config.AIChatConfig{}}} {
 			h := &AIChatHandler{config: cfg}
-			if got := h.agentFromInlineConfig(context.Background()); got != nil {
+			var def *config.AIChatAgentConfig
+			if cfg != nil && cfg.AIChat != nil {
+				def = cfg.AIChat.Agent
+			}
+			if got := h.agentFromInlineConfig(context.Background(), def, inlineAIAgentID); got != nil {
 				t.Fatalf("expected nil agent for config %+v, got %+v", cfg, got)
 			}
 		}
@@ -25,7 +29,7 @@ func TestAgentFromInlineConfig(t *testing.T) {
 		h := &AIChatHandler{config: &config.Config{AIChat: &config.AIChatConfig{
 			Agent: &config.AIChatAgentConfig{Name: "Inline"},
 		}}}
-		agent := h.agentFromInlineConfig(context.Background())
+		agent := h.agentFromInlineConfig(context.Background(), h.config.AIChat.Agent, inlineAIAgentID)
 		if agent == nil {
 			t.Fatal("expected inline agent to be built")
 		}
@@ -50,6 +54,19 @@ func TestAgentFromInlineConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("approval inline uses its own synthetic id", func(t *testing.T) {
+		h := &AIChatHandler{config: &config.Config{AIChat: &config.AIChatConfig{
+			Approval: &config.AIChatAgentConfig{Name: "Approval"},
+		}}}
+		agent := h.agentFromInlineConfig(context.Background(), h.config.AIChat.Approval, inlineApprovalAgentID)
+		if agent == nil {
+			t.Fatal("expected approval inline agent to be built")
+		}
+		if agent.ID != inlineApprovalAgentID {
+			t.Fatalf("agent.ID = %q, want synthetic %q", agent.ID, inlineApprovalAgentID)
+		}
+	})
+
 	t.Run("explicit id honored", func(t *testing.T) {
 		h := &AIChatHandler{config: &config.Config{AIChat: &config.AIChatConfig{
 			Agent: &config.AIChatAgentConfig{
@@ -63,7 +80,7 @@ func TestAgentFromInlineConfig(t *testing.T) {
 				},
 			},
 		}}}
-		agent := h.agentFromInlineConfig(context.Background())
+		agent := h.agentFromInlineConfig(context.Background(), h.config.AIChat.Agent, inlineAIAgentID)
 		if agent.ID != "ai-chat-main" {
 			t.Fatalf("agent.ID = %q, want ai-chat-main", agent.ID)
 		}
@@ -84,12 +101,12 @@ func TestAgentFromInlineConfig(t *testing.T) {
 			Agent: &config.AIChatAgentConfig{},
 		}}}
 		ctx := types.WithExecutionTenant(context.Background(), 42)
-		agent := h.agentFromInlineConfig(ctx)
+		agent := h.agentFromInlineConfig(ctx, h.config.AIChat.Agent, inlineAIAgentID)
 		if agent.TenantID != 42 {
 			t.Fatalf("agent.TenantID = %d, want 42", agent.TenantID)
 		}
 		// 无 tenant 上下文时不报错，交由检索侧回退会话租户。
-		if bare := h.agentFromInlineConfig(context.Background()); bare == nil || bare.TenantID != 0 {
+		if bare := h.agentFromInlineConfig(context.Background(), h.config.AIChat.Agent, inlineAIAgentID); bare == nil || bare.TenantID != 0 {
 			t.Fatalf("agent without tenant ctx = %+v", bare)
 		}
 	})

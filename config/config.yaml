@@ -147,6 +147,24 @@ ai_chat:
   search_agent_id: "f8058b6c-cdbc-4745-b683-99a5ff5dffde"
   # 搜索开关：true 时 largeTable 页面走结构化搜索条件生成；false 时全部回退流式问答
   search_enabled: true
+  # 签核草案生成智能体 ID（其 system_prompt 承载流程签审文档 3 的生成规则，
+  # 参考全文见 internal/handler/aichat/APPROVAL_PROMPT.md）；留空则回退到下方
+  # approval: 内联定义，再回退到 agent_id
+  # approval_agent_id: "<custom_agents 表里建好的签核智能体 ID>"
+  # 签核开关：true 且页面为 processApproval 时签核需求生成可编辑签审草案
+  # （approval_draft 事件），否则回退流式问答。意图智能体的提示词需同步增加
+  # approval 输出类别（增补文案见 APPROVAL_PROMPT.md 文末）。
+  approval_enabled: false
+  # 可选：直接在 config.yaml 内联定义签核智能体（存在即忽略 approval_agent_id），
+  # system_prompt 粘贴 APPROVAL_PROMPT.md 的「提示词全文」段：
+  # approval:
+  #   name: "流程签审草案智能体"
+  #   agent_mode: "quick-answer"
+  #   system_prompt: |
+  #     <APPROVAL_PROMPT.md 提示词全文>
+  #   model_id: "c108a7a9-2f09-4399-ad61-9e90fb6f9ce5"
+  #   kb_selection_mode: "none"
+  #   allowed_tools: []
 
 # record_admin_info 内置工具（管理员信息记录通道）。智能体在 allowed_tools 勾选后，
 # 模型把内部细节（执行过的 SQL、文档 ID、系统字段名、schema 摘要、失败重试）通过
