@@ -220,9 +220,11 @@ func (h *AIChatHandler) handleApprovalMessage(
 		// 装配失败在引擎创建前直接返回，需补发终止错误帧（同搜索草稿流）。
 		if err := h.sessionService.AgentQA(ctx, qaReq, bus); err != nil {
 			t := translator
-			t.writeMu.Lock()
-			t.h.writeEvent(t.c, t.h.errorEvent(t.req, err.Error(), AIErrorCodeApprovalDraft))
-			t.writeMu.Unlock()
+			if t.c.Request.Context().Err() == nil {
+				t.writeMu.Lock()
+				t.h.writeEvent(t.c, t.h.errorEvent(t.req, err.Error(), AIErrorCodeApprovalDraft))
+				t.writeMu.Unlock()
+			}
 		}
 	}()
 
@@ -420,9 +422,14 @@ func (t *approvalDraftTranslator) subscribe(bus *event.EventBus) {
 
 		if len(problems) > 0 {
 			msg := "approval draft output violates the contract: " + strings.Join(problems, "；")
-			t.writeMu.Lock()
-			t.h.writeEvent(t.c, t.h.errorEvent(t.req, msg, AIErrorCodeApprovalDraft))
-			t.writeMu.Unlock()
+			// 客户端断开后不再写入已结束的响应（write 直连路径需自带与
+			// aiStreamTranslator.write 相同的守卫，否则后台完成协程 flush
+			// 已回收的 response 会 panic）。
+			if t.c.Request.Context().Err() == nil {
+				t.writeMu.Lock()
+				t.h.writeEvent(t.c, t.h.errorEvent(t.req, msg, AIErrorCodeApprovalDraft))
+				t.writeMu.Unlock()
+			}
 			t.close()
 			return nil
 		}
@@ -439,6 +446,10 @@ func (t *approvalDraftTranslator) subscribe(bus *event.EventBus) {
 		// approvalDrafts 数组，推荐问题在 suggestions（与 search_draft 携带
 		// Conditions/Suggestions 的方式一致，不追加 answer_done，也不回显
 		// 请求侧数据）。
+		if t.c.Request.Context().Err() != nil {
+			t.close()
+			return nil
+		}
 		t.writeMu.Lock()
 		t.h.writeEvent(t.c, AIEvent{
 			Version:        t.req.Version,

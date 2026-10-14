@@ -26,7 +26,7 @@ import (
 type searchDraftDeps struct {
 	h            *AIChatHandler
 	agent        *types.CustomAgent // 已应用 ai_chat.model_id 覆盖的 search agent
-	message      string            // 用户原始请求（纠正重试的提示词材料）
+	message      string             // 用户原始请求（纠正重试的提示词材料）
 	page         *AIPageContext
 	searchFields []AISearchField
 	searchBody   json.RawMessage
@@ -160,6 +160,10 @@ func (t *searchDraftTranslator) subscribe(bus *event.EventBus) {
 		// 硬校验：字段/操作符/枚举值不合法则要求澄清，而不是直接返回不可用的草稿。
 		// 事件需携带 unmatched 字段，直接构造完整 AIEvent 而非走 write（同样持写锁）。
 		if unmatched := validateSearchResult(result, t.deps.searchFields, t.deps.rules); len(unmatched) > 0 {
+			if t.c.Request.Context().Err() != nil {
+				t.close()
+				return nil
+			}
 			t.writeMu.Lock()
 			t.h.writeEvent(t.c, AIEvent{
 				Version:        t.req.Version,
@@ -184,6 +188,10 @@ func (t *searchDraftTranslator) subscribe(bus *event.EventBus) {
 		}
 
 		needConfirm := true
+		if t.c.Request.Context().Err() != nil {
+			t.close()
+			return nil
+		}
 		t.writeMu.Lock()
 		t.h.writeEvent(t.c, AIEvent{
 			Version:        t.req.Version,
