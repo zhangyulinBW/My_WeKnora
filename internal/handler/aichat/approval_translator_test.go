@@ -158,13 +158,17 @@ func TestApprovalTranslatorEmitsSingleDraftEvent(t *testing.T) {
 		t.Fatalf("approval_draft must not carry error code / done: %+v", ev)
 	}
 
-	// 助手消息落库为「正文 + 组装后草案」的 envelope JSON，支撑多轮优化。
+	// 助手消息历史只存正文纯文本：envelope JSON 仅在事件交付，避免 normal
+	// 意图模仿历史格式把普通回答输出成 JSON 文本。
 	if len(msgSvc.updated) != 1 {
 		t.Fatalf("assistant message updates = %d", len(msgSvc.updated))
 	}
 	content := msgSvc.updated[0].Content
-	if !strings.Contains(content, `"approvalDrafts"`) || !strings.Contains(content, d.DraftID) {
-		t.Fatalf("persisted content = %s", content)
+	if content != ev.Message {
+		t.Fatalf("persisted content = %q, want plain message text", content)
+	}
+	if strings.Contains(content, "approvalDrafts") || strings.Contains(content, d.DraftID) {
+		t.Fatalf("persisted content must not carry the envelope JSON: %s", content)
 	}
 	if !msgSvc.updated[0].IsCompleted {
 		t.Fatal("assistant message should be marked completed")

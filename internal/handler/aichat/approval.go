@@ -400,17 +400,17 @@ func (t *approvalDraftTranslator) subscribe(bus *event.EventBus) {
 			}
 		}
 
-		// 落库助手消息：正文 + 组装后的草案 JSON（多轮优化基于此历史继续）。
+		// 落库助手消息只存正文纯文本：envelope JSON 仅在事件里交付。历史若存
+		// envelope，后续 normal 意图的主智能体会模仿该格式，把普通回答也输出成
+		// JSON 文本（answer_chunk 拼出一段 JSON）。多轮优化不依赖历史里的草案
+		// JSON：前端按规格把正在编辑的草案经 itemData.approvalDrafts 回传，
+		// 那才是每轮草案取值的权威输入。
+		persisted := final
 		if len(problems) == 0 {
-			if content, err := json.Marshal(struct {
-				Message        string           `json:"message"`
-				ApprovalDrafts []*ApprovalDraft `json:"approvalDrafts"`
-			}{Message: result.Message, ApprovalDrafts: drafts}); err == nil {
-				final = string(content)
-			}
+			persisted = result.Message
 		}
 		updateCtx := context.WithValue(context.WithoutCancel(ctx), types.TenantIDContextKey, t.tenantID)
-		t.asstMsg.Content = final
+		t.asstMsg.Content = persisted
 		if steps, ok := data.AgentSteps.([]types.AgentStep); ok {
 			t.asstMsg.AgentSteps = agenttools.SanitizeAgentStepsForStorage(steps)
 		}
