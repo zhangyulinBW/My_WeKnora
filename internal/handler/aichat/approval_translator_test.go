@@ -108,10 +108,12 @@ func newApprovalTestTranslator(t *testing.T, deps *approvalDraftDeps, withErrMod
 
 func approvalTestDeps() *approvalDraftDeps {
 	return &approvalDraftDeps{
-		agent:   &types.CustomAgent{Config: types.CustomAgentConfig{ModelID: "model-x"}},
-		lang:    "zh",
-		binding: approvalTestBinding(),
-		cfg:     approvalTestConfig(`"1"`),
+		agent: &types.CustomAgent{Config: types.CustomAgentConfig{ModelID: "model-x"}},
+		lang:  "zh",
+		tasks: approvalTestTaskSet(&approvalTaskContext{
+			binding: *approvalTestBinding(),
+			cfg:     approvalTestConfig(`"1"`),
+		}),
 	}
 }
 
@@ -177,7 +179,7 @@ func TestApprovalTranslatorEmitsSingleDraftEvent(t *testing.T) {
 
 func TestApprovalTranslatorContinuesEditingInstance(t *testing.T) {
 	deps := approvalTestDeps()
-	deps.inputDraft = &ApprovalDraft{
+	deps.tasks.lookup("ACT-1", "ASG-1").inputDraft = &ApprovalDraft{
 		DraftID: "draft-existing", Revision: 1, Status: ApprovalStatusEditing,
 		ActivityID: "ACT-1", AssignmentID: "ASG-1",
 		Form: &ApprovalForm{PathID: strPtr("P_APPROVE"), Comments: "旧意见", CheckedTaskIDs: []string{"T_1"}},
@@ -193,6 +195,44 @@ func TestApprovalTranslatorContinuesEditingInstance(t *testing.T) {
 	d := frames[0].ApprovalDrafts[0]
 	if d.DraftID != "draft-existing" || d.Revision != 2 {
 		t.Fatalf("same instance must keep draftId and bump revision: %+v", d)
+	}
+}
+
+// TestApprovalTranslatorMultiTaskDrafts 验证多笔草案事件：每份按活动+指派
+// 组装自己的标识，优化中的任务沿用 draftId 递增 revision，新任务创建
+// revision 1，两笔互不串版本。
+func TestApprovalTranslatorMultiTaskDrafts(t *testing.T) {
+	t1 := &approvalTaskContext{binding: *approvalTestBinding(), cfg: approvalTestConfig(`"1"`)}
+	t2 := approvalTestTask2()
+	t2.inputDraft = &ApprovalDraft{
+		DraftID: "draft-existing-2", Revision: 1, Status: ApprovalStatusEditing,
+		ActivityID: "ACT-2", AssignmentID: "ASG-2",
+	}
+	deps := &approvalDraftDeps{
+		agent: &types.CustomAgent{Config: types.CustomAgentConfig{ModelID: "model-x"}},
+		lang:  "zh",
+		tasks: approvalTestTaskSet(t1, t2),
+	}
+	bus, recorder, _ := newApprovalTestTranslator(t, deps, false)
+
+	envelope := `{"message":"已分别整理两笔草案，请逐笔核对。","drafts":[` +
+		`{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1","T_3"]}},` +
+		`{"activityId":"ACT-2","assignmentId":"ASG-2","form":{"pathId":"P_APPROVE","comments":"","checkedTaskIds":[]}}]}`
+	emitComplete(t, bus, envelope)
+
+	frames := parseSSEFrames(t, recorder.Body.String())
+	if len(frames) != 1 || frames[0].Type != AIEventApprovalDraft {
+		t.Fatalf("frames = %+v", frames)
+	}
+	drafts := frames[0].ApprovalDrafts
+	if len(drafts) != 2 {
+		t.Fatalf("approvalDrafts = %+v, want 2", drafts)
+	}
+	if drafts[0].ActivityID != "ACT-1" || drafts[0].AssignmentID != "ASG-1" || drafts[0].Revision != 1 || drafts[0].DraftID == "" {
+		t.Fatalf("first draft must be a new ACT-1 instance: %+v", drafts[0])
+	}
+	if drafts[1].ActivityID != "ACT-2" || drafts[1].AssignmentID != "ASG-2" || drafts[1].DraftID != "draft-existing-2" || drafts[1].Revision != 2 {
+		t.Fatalf("second draft must continue the ACT-2 instance: %+v", drafts[1])
 	}
 }
 

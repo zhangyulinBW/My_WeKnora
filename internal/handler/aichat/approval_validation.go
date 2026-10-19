@@ -38,37 +38,45 @@ func containsString(list []string, s string) bool {
 }
 
 // validateApprovalDrafts 对模型产出的草案做结构卡控（文档 3 §6.1）：
-// 首版最多一份草案；绑定（activityId + assignmentId）必须与当前激活卡片
-// 一致；必须存在匹配的签审上下文；pathId 必须属于本任务 paths 或为 null；
-// checkedTaskIds 必须是本任务全部清单 ID 的子集（去重由 normalize 处理）。
-// 返回违约说明，空切片表示通过。不能为解决结构错误编造任务 ID 或选项。
-func validateApprovalDrafts(drafts []approvalModelDraft, binding *ApprovalTaskBinding, cfg *ApprovalConfigEntry) []string {
+// 每份草案的绑定（activityId + assignmentId）必须与某个已添加任务一致且
+// 同一任务最多一份；必须存在该任务匹配的签审上下文；pathId 必须属于该任务
+// paths 或为 null；checkedTaskIds 必须是该任务全部清单 ID 的子集（去重由
+// normalize 处理）。返回违约说明，空切片表示通过。不能为解决结构错误编造
+// 任务 ID 或选项。
+func validateApprovalDrafts(drafts []approvalModelDraft, tasks *approvalTaskSet) []string {
 	var issues []string
-	if len(drafts) > 1 {
-		issues = append(issues, "首版一次只处理一张当前激活的任务卡片，drafts 数组最多一份草案")
+	if len(drafts) == 0 {
+		return issues
 	}
+	if tasks.empty() {
+		return []string{"当前没有已添加的待签核任务，不能生成可操作草案，drafts 必须为空数组"}
+	}
+	seen := make(map[approvalBindingKey]int, len(drafts))
 	for i, d := range drafts {
-		if binding == nil {
-			issues = append(issues, fmt.Sprintf("drafts[%d]：当前没有激活任务，不能生成可操作草案", i))
+		key := approvalBindingKey{activityID: d.ActivityID, assignmentID: d.AssignmentID}
+		if prev, dup := seen[key]; dup {
+			issues = append(issues, fmt.Sprintf("drafts[%d]：与 drafts[%d] 绑定同一任务，同一任务最多一份草案", i, prev))
 			continue
 		}
-		if d.ActivityID != binding.ActivityID || d.AssignmentID != binding.AssignmentID {
-			issues = append(issues, fmt.Sprintf("drafts[%d]：activityId/assignmentId 与当前激活任务不一致", i))
+		seen[key] = i
+		task := tasks.lookup(d.ActivityID, d.AssignmentID)
+		if task == nil {
+			issues = append(issues, fmt.Sprintf("drafts[%d]：activityId/assignmentId 不属于本次已添加的任务", i))
 			continue
 		}
-		if cfg == nil {
-			issues = append(issues, fmt.Sprintf("drafts[%d]：缺少与激活任务匹配的签审上下文（approvalConfig）", i))
+		if task.cfg == nil {
+			issues = append(issues, fmt.Sprintf("drafts[%d]：缺少与该任务匹配的签审上下文（approvalConfig）", i))
 			continue
 		}
 		if d.Form == nil {
 			issues = append(issues, fmt.Sprintf("drafts[%d]：缺少完整 form", i))
 			continue
 		}
-		if d.Form.PathID != nil && !containsPathID(cfg.Paths, *d.Form.PathID) {
+		if d.Form.PathID != nil && !containsPathID(task.cfg.Paths, *d.Form.PathID) {
 			issues = append(issues, fmt.Sprintf("drafts[%d].form.pathId：%q 不是本任务的真实动作 ID", i, *d.Form.PathID))
 		}
 		for _, id := range d.Form.CheckedTaskIDs {
-			if !containsTaskID(cfg.Tasks, id) {
+			if !containsTaskID(task.cfg.Tasks, id) {
 				issues = append(issues, fmt.Sprintf("drafts[%d].form.checkedTaskIds：%q 不是本任务的清单条目 ID", i, id))
 			}
 		}
@@ -94,6 +102,14 @@ type approvalReadiness struct {
 	MissingForSave     []string             `json:"missingForSave,omitempty"`
 	MissingForComplete []string             `json:"missingForComplete,omitempty"`
 	DefaultSavePath    *approvalDefaultPath `json:"defaultSavePath,omitempty"`
+}
+
+// approvalTaskReadiness 给单个任务的输入表单判定补上任务绑定，多笔时模型
+// 能逐笔对号入座；approvalReadiness 的字段经内嵌平铺到同一层。
+type approvalTaskReadiness struct {
+	ActivityID   string `json:"activityId"`
+	AssignmentID string `json:"assignmentId"`
+	approvalReadiness
 }
 
 // computeApprovalReadiness 分别计算保存与完成条件（文档 3 §6.2）：

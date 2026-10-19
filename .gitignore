@@ -80,3 +80,4 @@ skills/
 !.build-cache/duckdb/
 .build-cache/duckdb/*
 !.build-cache/duckdb/.gitkeep
+WeKnora_Agent机制分析.md

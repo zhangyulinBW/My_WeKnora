@@ -27,15 +27,15 @@ import (
 
 // approvalModelOutput 是 approval 智能体的输出契约（approval_draft 事件的
 // 源头）：message 是给用户的正文说明（目标/建议/需补充/下一步四部分）；
-// drafts 为空表示本轮纯正文回答（普通咨询或澄清），不生成草案。
-// draftId/revision/status 由后端组装，模型不产出。
+// drafts 为 0..N 份，每份绑定一个已添加任务；为空表示本轮纯正文回答
+// （普通咨询或澄清）。draftId/revision/status 由后端组装，模型不产出。
 type approvalModelOutput struct {
 	Message string               `json:"message"`
 	Drafts  []approvalModelDraft `json:"drafts"`
 }
 
 // approvalModelDraft 是模型产出的一份草案：绑定标识 + 完整 form。
-// 绑定必须与当前激活任务一致（validateApprovalDrafts 卡控）。
+// 绑定必须与某个已添加任务一致（validateApprovalDrafts 卡控）。
 type approvalModelDraft struct {
 	ActivityID   string        `json:"activityId"`
 	AssignmentID string        `json:"assignmentId"`
@@ -71,6 +71,96 @@ func assembleApprovalDraft(modelDraft approvalModelDraft, binding ApprovalTaskBi
 		d.Revision = 1
 	}
 	return d
+}
+
+// assembleApprovalDrafts 逐份组装模型草案：每份按活动+指派匹配自己的任务
+// 上下文，沿用该任务 editing 输入草案的 draftId（递增 revision）或创建新
+// 实例（revision 1）。绑定不在已添加集合中的草案已被 validateApprovalDrafts
+// 拦截，此处防御性跳过。
+func assembleApprovalDrafts(modelDrafts []approvalModelDraft, tasks *approvalTaskSet) []*ApprovalDraft {
+	drafts := make([]*ApprovalDraft, 0, len(modelDrafts))
+	for _, md := range modelDrafts {
+		task := tasks.lookup(md.ActivityID, md.AssignmentID)
+		if task == nil {
+			continue
+		}
+		drafts = append(drafts, assembleApprovalDraft(md, task.binding, task.inputDraft))
+	}
+	return drafts
+}
+
+// approvalBindingKey 是任务绑定的索引键：活动+指派同时相等才是同一任务。
+type approvalBindingKey struct {
+	activityID   string
+	assignmentID string
+}
+
+// approvalTaskContext 是单个已添加任务的输入事实：卡片绑定、匹配的签审
+// 上下文、该任务处于 editing 的输入草案与输入表单的保存/完成条件判定。
+// 多笔任务各自独立，动作、意见、清单与草案互不共用。
+type approvalTaskContext struct {
+	binding    ApprovalTaskBinding
+	cfg        *ApprovalConfigEntry // nil 表示该笔签审数据未取得
+	inputDraft *ApprovalDraft       // 该任务回传的 editing 草案（可无）
+	readiness  approvalReadiness    // 仅在 cfg 非 nil 时有意义
+}
+
+// approvalTaskSet 按活动+指派索引全部已添加任务的输入事实。同一绑定只保留
+// 首次出现的卡片（协议约定已添加集合按活动+指派去重）。
+type approvalTaskSet struct {
+	tasks []*approvalTaskContext
+	index map[approvalBindingKey]*approvalTaskContext
+}
+
+// buildApprovalTaskSet 逐笔遍历已添加卡片：提取绑定标识、匹配各自的签审
+// 上下文与 editing 草案，并对输入表单做保存/完成条件判定。绑定标识不完整
+// 的卡片跳过（按「缺少任务数据」由模型澄清），不影响其他笔。
+func buildApprovalTaskSet(data *ApprovalData) *approvalTaskSet {
+	set := &approvalTaskSet{index: make(map[approvalBindingKey]*approvalTaskContext)}
+	for _, raw := range data.MasterItem {
+		b, ok := parseMasterItemBinding(raw)
+		if !ok {
+			continue
+		}
+		key := approvalBindingKey{activityID: b.ActivityID, assignmentID: b.AssignmentID}
+		if _, dup := set.index[key]; dup {
+			continue
+		}
+		task := &approvalTaskContext{binding: b}
+		task.cfg = data.matchConfig(b)
+		task.inputDraft = data.editingDraft(b)
+		if task.cfg != nil {
+			task.readiness = computeApprovalReadiness(cfgCurrentOrDraftForm(task.cfg, task.inputDraft), task.cfg)
+		}
+		set.tasks = append(set.tasks, task)
+		set.index[key] = task
+	}
+	return set
+}
+
+// lookup 返回绑定到指定活动+指派的任务上下文；nil 表示该绑定不在已添加
+// 集合中。
+func (s *approvalTaskSet) lookup(activityID, assignmentID string) *approvalTaskContext {
+	if s == nil {
+		return nil
+	}
+	return s.index[approvalBindingKey{activityID: activityID, assignmentID: assignmentID}]
+}
+
+// empty 报告是否没有任何可绑定的已添加任务。
+func (s *approvalTaskSet) empty() bool {
+	return s == nil || len(s.tasks) == 0
+}
+
+// editingCount 返回携带 editing 输入草案的任务数（日志用）。
+func (s *approvalTaskSet) editingCount() int {
+	n := 0
+	for _, t := range s.tasks {
+		if t.inputDraft != nil {
+			n++
+		}
+	}
+	return n
 }
 
 // handleApprovalMessage 处理签核意图的消息：同步动态字段、解析五数组、
@@ -139,25 +229,11 @@ func (h *AIChatHandler) handleApprovalMessage(
 		return
 	}
 
-	// 绑定与输入事实：激活卡片 -> 匹配上下文 -> 正在编辑的草案（本轮人工
-	// 编辑的完整事实）。输入表单的保存/完成条件在此确定性判定后注入元数据。
-	var binding *ApprovalTaskBinding
-	var cfg *ApprovalConfigEntry
-	var inputDraft *ApprovalDraft
-	if len(data.MasterItem) > 0 {
-		if b, ok := parseMasterItemBinding(data.MasterItem[0]); ok {
-			binding = &b
-			cfg = data.matchConfig(b)
-			inputDraft = data.editingDraft(b)
-		}
-	}
-	inputForm := cfgCurrentOrDraftForm(cfg, inputDraft)
-	var readiness *approvalReadiness
-	if cfg != nil {
-		r := computeApprovalReadiness(inputForm, cfg)
-		readiness = &r
-	}
-	metadata := buildApprovalMetadata(page, req.ApprovalTaskIndex, req.ItemData, binding, inputDraft, readiness)
+	// 绑定与输入事实：逐笔遍历已添加卡片 -> 各自匹配上下文 -> 各自的
+	// editing 草案（本轮人工编辑的完整事实）。输入表单的保存/完成条件逐笔
+	// 确定性判定后注入元数据。
+	tasks := buildApprovalTaskSet(data)
+	metadata := buildApprovalMetadata(page, req.ApprovalTaskIndex, req.ItemData, tasks)
 
 	// 与搜索草稿流一致：优先使用 approval agent 自己配置的模型，
 	// ai_chat.model_id 只在其未声明模型时兜底（经 QARequest.SummaryModelID）。
@@ -195,23 +271,21 @@ func (h *AIChatHandler) handleApprovalMessage(
 		WebSearchEnabled:   approvalAgent.Config.WebSearchEnabled,
 		Metadata:           metadata,
 	}
-	logger.Infof(ctx, "[ai-chat] approval draft via AgentQA: agent=%s model=%s binding=%+v hasEditingDraft=%t",
-		approvalAgent.ID, approvalAgent.Config.ModelID, binding, inputDraft != nil)
+	logger.Infof(ctx, "[ai-chat] approval draft via AgentQA: agent=%s model=%s addedTasks=%d editingDrafts=%d",
+		approvalAgent.ID, approvalAgent.Config.ModelID, len(tasks.tasks), tasks.editingCount())
 
 	bus := event.NewEventBus()
 	done := make(chan struct{})
 	base := newAIStreamTranslator(h, c, req, assistantMsg, session.TenantID, done)
 	translator := newApprovalDraftTranslator(base, &approvalDraftDeps{
-		h:          h,
-		agent:      approvalAgent,
-		message:    req.Message,
-		metadata:   metadata,
-		lang:       detectReplyLanguage(req.Message),
-		page:       page,
-		itemData:   req.ItemData,
-		binding:    binding,
-		cfg:        cfg,
-		inputDraft: inputDraft,
+		h:        h,
+		agent:    approvalAgent,
+		message:  req.Message,
+		metadata: metadata,
+		lang:     detectReplyLanguage(req.Message),
+		page:     page,
+		itemData: req.ItemData,
+		tasks:    tasks,
 	})
 	translator.subscribe(bus)
 
@@ -248,29 +322,44 @@ func cfgCurrentOrDraftForm(cfg *ApprovalConfigEntry, inputDraft *ApprovalDraft) 
 
 // buildApprovalMetadata 组装签核草案生成的结构化上下文（与 buildSearchMetadata
 // 注入方式一致）。代码只注入数据事实：页面、任务索引、itemData 原文（含草案
-// 结束标记）、当前激活任务绑定、正在编辑的草案、输入表单的保存/完成条件判定；
+// 结束标记）、全部已添加任务的绑定（activeTasks）、各自的 editing 草案
+// （editingDrafts）与输入表单的保存/完成条件逐笔判定（inputFormReadiness）；
 // 任务指令与输出契约完全由 approval agent 的系统提示词定义，避免双份契约。
 func buildApprovalMetadata(
 	page *AIPageContext,
 	approvalTaskIndex json.RawMessage,
 	itemData json.RawMessage,
-	binding *ApprovalTaskBinding,
-	inputDraft *ApprovalDraft,
-	readiness *approvalReadiness,
+	tasks *approvalTaskSet,
 ) types.JSON {
+	activeTasks := make([]*ApprovalTaskBinding, 0, len(tasks.tasks))
+	editingDrafts := make([]*ApprovalDraft, 0, len(tasks.tasks))
+	readiness := make([]*approvalTaskReadiness, 0, len(tasks.tasks))
+	for _, t := range tasks.tasks {
+		activeTasks = append(activeTasks, &t.binding)
+		if t.inputDraft != nil {
+			editingDrafts = append(editingDrafts, t.inputDraft)
+		}
+		if t.cfg != nil {
+			readiness = append(readiness, &approvalTaskReadiness{
+				ActivityID:        t.binding.ActivityID,
+				AssignmentID:      t.binding.AssignmentID,
+				approvalReadiness: t.readiness,
+			})
+		}
+	}
 	payload := struct {
-		Page               *AIPageContext       `json:"page,omitempty"`
-		ApprovalTaskIndex  json.RawMessage      `json:"approvalTaskIndex,omitempty"`
-		ItemData           json.RawMessage      `json:"itemData,omitempty"`
-		ActiveTask         *ApprovalTaskBinding `json:"activeTask,omitempty"`
-		EditingDraft       *ApprovalDraft       `json:"editingDraft,omitempty"`
-		InputFormReadiness *approvalReadiness   `json:"inputFormReadiness,omitempty"`
+		Page               *AIPageContext           `json:"page,omitempty"`
+		ApprovalTaskIndex  json.RawMessage          `json:"approvalTaskIndex,omitempty"`
+		ItemData           json.RawMessage          `json:"itemData,omitempty"`
+		ActiveTasks        []*ApprovalTaskBinding   `json:"activeTasks,omitempty"`
+		EditingDrafts      []*ApprovalDraft         `json:"editingDrafts,omitempty"`
+		InputFormReadiness []*approvalTaskReadiness `json:"inputFormReadiness,omitempty"`
 	}{
 		Page:               page,
 		ApprovalTaskIndex:  approvalTaskIndex,
 		ItemData:           itemData,
-		ActiveTask:         binding,
-		EditingDraft:       inputDraft,
+		ActiveTasks:        activeTasks,
+		EditingDrafts:      editingDrafts,
 		InputFormReadiness: readiness,
 	}
 	b, _ := json.Marshal(payload)
@@ -278,18 +367,16 @@ func buildApprovalMetadata(
 }
 
 // approvalDraftDeps 汇聚签核草案完成路径所需的依赖：纠正重试所需的智能体
-// 与提示词材料，以及组装/校验草案所需的绑定事实。
+// 与提示词材料，以及组装/校验草案所需的全部已添加任务输入事实。
 type approvalDraftDeps struct {
-	h          *AIChatHandler
-	agent      *types.CustomAgent // approval 智能体（未应用全局模型覆盖）
-	message    string             // 用户原始请求
-	metadata   types.JSON         // 主路径注入的结构化上下文（重试复用）
-	lang       string
-	page       *AIPageContext       // 页面（推荐问题生成上下文）
-	itemData   json.RawMessage      // itemData 原文（推荐问题生成上下文）
-	binding    *ApprovalTaskBinding // 当前激活任务；nil 表示未激活
-	cfg        *ApprovalConfigEntry // 匹配的签审上下文；nil 表示数据未取得
-	inputDraft *ApprovalDraft       // 输入中处于 editing 的草案（可无）
+	h        *AIChatHandler
+	agent    *types.CustomAgent // approval 智能体（未应用全局模型覆盖）
+	message  string             // 用户原始请求
+	metadata types.JSON         // 主路径注入的结构化上下文（重试复用）
+	lang     string
+	page     *AIPageContext   // 页面（推荐问题生成上下文）
+	itemData json.RawMessage  // itemData 原文（推荐问题生成上下文）
+	tasks    *approvalTaskSet // 全部已添加任务的输入事实；空集合表示未添加任务
 }
 
 // repair 在模型输出违反输出契约（非 JSON、缺正文、草案结构违约）时，把
@@ -309,7 +396,7 @@ func (d *approvalDraftDeps) repair(ctx context.Context, badOutput string, proble
 		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, p))
 	}
 	sb.WriteString("请严格按系统提示词定义的输出格式重新输出完整 JSON（必须包含 message；" +
-		"若当前没有激活任务或不满足生成条件，drafts 返回空数组），只输出一个纯 JSON 对象，禁止解释文字。")
+		"若当前没有已添加任务或不满足生成条件，drafts 返回空数组），只输出一个纯 JSON 对象，禁止解释文字。")
 	resp, err := chatModel.Chat(ctx, []chat.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: buildApprovalPrompt(d.message, d.metadata, d.lang)},
@@ -379,12 +466,12 @@ func (t *approvalDraftTranslator) subscribe(bus *event.EventBus) {
 		// 契约校验：可解析、正文非空、草案结构合法。违约时回传违约输出
 		// 做一次纠正重试，仍违约则按契约违约报错（不发出不可用草案）。
 		result, parseErr := parseApprovalOutput(final)
-		problems := approvalOutputProblems(result, parseErr, t.deps.binding, t.deps.cfg)
+		problems := approvalOutputProblems(result, parseErr, t.deps.tasks)
 		if len(problems) > 0 {
 			repaired, repairErr := t.deps.repair(ctx, final, problems)
 			if repairErr != nil {
 				logger.Warnf(ctx, "[ai-chat] approval draft repair failed: %v", repairErr)
-			} else if repairedProblems := approvalOutputProblems(repaired, nil, t.deps.binding, t.deps.cfg); len(repairedProblems) == 0 {
+			} else if repairedProblems := approvalOutputProblems(repaired, nil, t.deps.tasks); len(repairedProblems) == 0 {
 				result = repaired
 				problems = nil
 			} else {
@@ -392,12 +479,12 @@ func (t *approvalDraftTranslator) subscribe(bus *event.EventBus) {
 			}
 		}
 
-		// 组装草案：绑定/状态/版本由代码决定；drafts 为空表示纯正文回答。
+		// 组装草案：绑定/状态/版本由代码决定，每份草案按活动+指派匹配自己
+		// 任务的输入草案（沿用 draftId 递增 revision 或新建实例）；drafts 为
+		// 空表示纯正文回答。
 		var drafts []*ApprovalDraft
-		if len(problems) == 0 && t.deps.binding != nil {
-			for _, md := range result.Drafts {
-				drafts = append(drafts, assembleApprovalDraft(md, *t.deps.binding, t.deps.inputDraft))
-			}
+		if len(problems) == 0 {
+			drafts = assembleApprovalDrafts(result.Drafts, t.deps.tasks)
 		}
 
 		// 落库助手消息只存正文纯文本：envelope JSON 仅在事件里交付。历史若存
@@ -480,7 +567,7 @@ func (t *approvalDraftTranslator) subscribe(bus *event.EventBus) {
 
 // approvalOutputProblems 汇总一次模型输出的全部契约问题：解析失败、正文
 // 缺失、草案结构违约（validateApprovalDrafts）。空切片表示可用。
-func approvalOutputProblems(result *approvalModelOutput, parseErr error, binding *ApprovalTaskBinding, cfg *ApprovalConfigEntry) []string {
+func approvalOutputProblems(result *approvalModelOutput, parseErr error, tasks *approvalTaskSet) []string {
 	if parseErr != nil || result == nil {
 		return []string{"输出不是合法的 JSON envelope：" + fmt.Sprintf("%v", parseErr)}
 	}
@@ -488,6 +575,6 @@ func approvalOutputProblems(result *approvalModelOutput, parseErr error, binding
 	if strings.TrimSpace(result.Message) == "" {
 		problems = append(problems, "缺少必需的 message 字段（给用户的正文说明）")
 	}
-	problems = append(problems, validateApprovalDrafts(result.Drafts, binding, cfg)...)
+	problems = append(problems, validateApprovalDrafts(result.Drafts, tasks)...)
 	return problems
 }

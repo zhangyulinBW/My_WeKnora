@@ -24,7 +24,7 @@ WeKnora Agent 引擎（`sessionService.AgentQA`）或结构化搜索草稿生成
 | `validation.go` | 搜索条件的机器规则硬校验（字段/操作符/枚举值） |
 | `agent_turn.go` | 普通问答意图：`handleAgentTurn` + `aiStreamTranslator`（事件总线 → SSE 翻译）、元数据/上下文组装 |
 | `approval.go` | 签核意图：`handleApprovalMessage` + `approvalDraftTranslator`（模型输出解析为「正文+草案」envelope，结构卡控后合并为单条 `approval_draft` 事件；draftId/revision/status 由代码组装） |
-| `approval_types.go` | 流程签审协议类型：itemData 五数组结构、签审配置/清单/草案表单、激活卡片绑定解析 |
+| `approval_types.go` | 流程签审协议类型：itemData 五数组结构、签审配置/清单/草案表单、任务卡片绑定解析 |
 | `approval_validation.go` | 签核机器规则：结构卡控（绑定/pathId/勾选集合）、保存与完成条件判定（§6.2/§6.3，含保存默认动作） |
 | `approval_context.go` | processApproval 动态字段同步：`approvalTaskIndex`/`itemData` 的整体替换/省略沿用/`[]` 清空语义，落库为 `role="approval_context"` 消息 |
 | `attachments.go` | 消息内联附件：图片/文件解码、配额与类型校验、落存储、VLM 降级描述 |
@@ -87,18 +87,20 @@ handleMessage
   （`approval_context.go`），跨请求与重启后仍可回读；normal 流程在 processApproval
   会话同样回填最新值并注入元数据。
 - approval 智能体经 AgentQA 执行，最终答案解析为 `{"message", "drafts"}` JSON：
-  正文说明 + 至多一份草案（绑定 + 完整 form）。`draftId`/`revision`/`status` 由
-  后端组装（同一 editing 草案优化沿用 draftId 且 revision+1，新实例 revision 1），
-  模型只产出正文与 form。
-- 结构卡控（`approval_validation.go`）：绑定必须匹配激活卡片、pathId ∈ paths、
-  checkedTaskIds ⊆ tasks 无重复；违约先纠正重试一次，仍违约以 `error` 事件
+  正文说明 + 0..N 份草案（每份按活动+指派绑定一个已添加任务，携带完整 form）。
+  `draftId`/`revision`/`status` 由后端逐笔组装（各任务的 editing 草案优化沿用
+  draftId 且 revision+1，新任务新实例 revision 1），模型只产出正文与 form。
+- 结构卡控（`approval_validation.go`）：绑定必须匹配某个已添加任务（活动+指派，
+  同一任务最多一份草案）、pathId ∈ 该任务 paths、checkedTaskIds ⊆ 该任务 tasks
+  无重复；违约先纠正重试一次，仍违约以 `error` 事件
   （`code: APPROVAL_DRAFT_ERROR`）终止。
 - 终止事件为单条 `approval_draft`（`message` 承载正文、`approvalDrafts` 承载草案、
   `suggestions` 携带本轮推荐问题），其后不追加 `answer_done`；`drafts` 为空表示
   纯正文回答（普通咨询/澄清）。消息省略 `page` 时，意图分类与门控回退最近一次
   start 同步的页面。
-- 保存/完成条件（文档 3 §6.2/§6.3）由 `computeApprovalReadiness` 确定性判定并注入
-  提示词元数据（`inputFormReadiness`），正文措辞由提示词决定。
+- 保存/完成条件（文档 3 §6.2/§6.3）由 `computeApprovalReadiness` 逐笔确定性
+  判定并注入提示词元数据（`inputFormReadiness` 数组，每条携带活动+指派绑定），
+  正文措辞由提示词决定。
 - 系统提示词与意图提示词增补文案见 `APPROVAL_PROMPT.md`。
 
 ## 如何新增一种意图

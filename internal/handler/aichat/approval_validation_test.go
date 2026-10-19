@@ -34,38 +34,66 @@ func approvalTestBinding() *ApprovalTaskBinding {
 	return &ApprovalTaskBinding{ActivityID: "ACT-1", AssignmentID: "ASG-1", ItemID: "ITEM-1", ItemKeyedName: "WF-2026-001"}
 }
 
+// approvalTestTaskSet 构造任务输入事实集合；不传参数表示没有已添加任务。
+func approvalTestTaskSet(contexts ...*approvalTaskContext) *approvalTaskSet {
+	set := &approvalTaskSet{index: map[approvalBindingKey]*approvalTaskContext{}}
+	for _, c := range contexts {
+		key := approvalBindingKey{activityID: c.binding.ActivityID, assignmentID: c.binding.AssignmentID}
+		set.tasks = append(set.tasks, c)
+		set.index[key] = c
+	}
+	return set
+}
+
+// approvalTestTask2 构造第二个任务（不同活动+指派、意见非必填），
+// 与 ACT-1 共用同一套动作/清单 ID，验证配置按任务隔离判定。
+func approvalTestTask2() *approvalTaskContext {
+	cfg2 := approvalTestConfig(`"0"`)
+	cfg2.ActivityID = "ACT-2"
+	cfg2.AssignmentID = "ASG-2"
+	return &approvalTaskContext{
+		binding: ApprovalTaskBinding{ActivityID: "ACT-2", AssignmentID: "ASG-2", ItemID: "ITEM-2", ItemKeyedName: "WF-2026-002"},
+		cfg:     cfg2,
+	}
+}
+
 func strPtr(s string) *string { return &s }
 
 func TestValidateApprovalDrafts(t *testing.T) {
 	binding := approvalTestBinding()
 	cfg := approvalTestConfig(`"1"`)
 	validForm := &ApprovalForm{PathID: strPtr("P_APPROVE"), Comments: "已核实", CheckedTaskIDs: []string{"T_1", "T_3"}}
+	single := approvalTestTaskSet(&approvalTaskContext{binding: *binding, cfg: cfg})
+	multi := approvalTestTaskSet(&approvalTaskContext{binding: *binding, cfg: cfg}, approvalTestTask2())
 
 	cases := []struct {
 		name     string
 		drafts   []approvalModelDraft
-		binding  *ApprovalTaskBinding
-		cfg      *ApprovalConfigEntry
+		tasks    *approvalTaskSet
 		issues   int    // 期望违约条数
 		contains string // 至少包含的违约关键字
 	}{
-		{"valid", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm}}, binding, cfg, 0, ""},
-		{"null pathId allowed", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: &ApprovalForm{}}}, binding, cfg, 0, ""},
-		{"unknown pathId", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: &ApprovalForm{PathID: strPtr("P_GHOST")}}}, binding, cfg, 1, "pathId"},
-		{"unknown task id", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: &ApprovalForm{CheckedTaskIDs: []string{"T_1", "T_GHOST"}}}}, binding, cfg, 1, "清单条目"},
-		{"binding mismatch", []approvalModelDraft{{ActivityID: "ACT-9", AssignmentID: "ASG-9", Form: validForm}}, binding, cfg, 1, "不一致"},
-		{"no active task", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm}}, nil, cfg, 1, "没有激活任务"},
-		{"no matching config", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm}}, binding, nil, 1, "签审上下文"},
-		{"missing form", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1"}}, binding, cfg, 1, "form"},
-		{"multiple drafts rejected", []approvalModelDraft{
+		{"valid", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm}}, single, 0, ""},
+		{"null pathId allowed", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: &ApprovalForm{}}}, single, 0, ""},
+		{"multi task drafts allowed", []approvalModelDraft{
+			{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm},
+			{ActivityID: "ACT-2", AssignmentID: "ASG-2", Form: &ApprovalForm{}},
+		}, multi, 0, ""},
+		{"unknown pathId", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: &ApprovalForm{PathID: strPtr("P_GHOST")}}}, single, 1, "pathId"},
+		{"unknown task id", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: &ApprovalForm{CheckedTaskIDs: []string{"T_1", "T_GHOST"}}}}, single, 1, "清单条目"},
+		{"binding mismatch", []approvalModelDraft{{ActivityID: "ACT-9", AssignmentID: "ASG-9", Form: validForm}}, single, 1, "不属于本次已添加"},
+		{"no added task", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm}}, approvalTestTaskSet(), 1, "没有已添加"},
+		{"no matching config", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm}}, approvalTestTaskSet(&approvalTaskContext{binding: *binding}), 1, "签审上下文"},
+		{"missing form", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1"}}, single, 1, "form"},
+		{"duplicate binding per task rejected", []approvalModelDraft{
 			{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm},
 			{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm},
-		}, binding, cfg, 1, "最多一份"},
-		{"empty drafts always ok", nil, nil, nil, 0, ""},
+		}, single, 1, "同一任务最多一份"},
+		{"empty drafts always ok", nil, nil, 0, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			issues := validateApprovalDrafts(c.drafts, c.binding, c.cfg)
+			issues := validateApprovalDrafts(c.drafts, c.tasks)
 			if len(issues) != c.issues {
 				t.Fatalf("issues = %v (%d), want %d", issues, len(issues), c.issues)
 			}
@@ -216,27 +244,73 @@ func TestAssembleApprovalDraft(t *testing.T) {
 	})
 }
 
+// TestAssembleApprovalDraftsMultiTask 验证多笔组装：每份草案按活动+指派
+// 匹配自己的任务，各自沿用或新建实例，互不串版本。
+func TestAssembleApprovalDraftsMultiTask(t *testing.T) {
+	t1 := &approvalTaskContext{binding: *approvalTestBinding(), cfg: approvalTestConfig(`"1"`)}
+	t2 := approvalTestTask2()
+	t2.inputDraft = &ApprovalDraft{DraftID: "draft-2", Revision: 4, Status: ApprovalStatusEditing, ActivityID: "ACT-2", AssignmentID: "ASG-2"}
+
+	drafts := assembleApprovalDrafts([]approvalModelDraft{
+		{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: &ApprovalForm{Comments: "a"}},
+		{ActivityID: "ACT-2", AssignmentID: "ASG-2", Form: &ApprovalForm{Comments: "b"}},
+		{ActivityID: "ACT-9", AssignmentID: "ASG-9", Form: &ApprovalForm{Comments: "x"}}, // 防御性跳过
+	}, approvalTestTaskSet(t1, t2))
+
+	if len(drafts) != 2 {
+		t.Fatalf("drafts = %+v, want 2", drafts)
+	}
+	if drafts[0].ActivityID != "ACT-1" || drafts[0].Revision != 1 || drafts[0].DraftID == "" {
+		t.Fatalf("task1 must be a new instance: %+v", drafts[0])
+	}
+	if drafts[1].DraftID != "draft-2" || drafts[1].Revision != 5 {
+		t.Fatalf("task2 must continue its own instance: %+v", drafts[1])
+	}
+}
+
+// TestBuildApprovalMetadataMultiTask 验证元数据注入的是数组字段，且逐笔
+// 判定只覆盖有配置的任务（无配置任务仍在 activeTasks/editingDrafts 中）。
+func TestBuildApprovalMetadataMultiTask(t *testing.T) {
+	t1 := &approvalTaskContext{binding: *approvalTestBinding(), cfg: approvalTestConfig(`"1"`)}
+	t2 := approvalTestTask2()
+	t2.cfg = nil // 该笔签审数据未取得：仍列出任务，但不注入表单判定
+	t2.inputDraft = &ApprovalDraft{
+		DraftID: "d2", Revision: 1, Status: ApprovalStatusEditing,
+		ActivityID: "ACT-2", AssignmentID: "ASG-2", Form: &ApprovalForm{Comments: "x"},
+	}
+
+	meta := buildApprovalMetadata(nil, nil, nil, approvalTestTaskSet(t1, t2))
+	s := string(meta)
+	for _, key := range []string{`"activeTasks"`, `"editingDrafts"`, `"inputFormReadiness"`, `"activityId":"ACT-1"`, `"activityId":"ACT-2"`, `"itemKeyedName":"WF-2026-001"`} {
+		if !strings.Contains(s, key) {
+			t.Fatalf("metadata missing %s: %s", key, s)
+		}
+	}
+	if strings.Count(s, `"saveReady"`) != 1 {
+		t.Fatalf("readiness should cover only the task with config: %s", s)
+	}
+}
+
 func TestApprovalOutputProblems(t *testing.T) {
-	binding := approvalTestBinding()
-	cfg := approvalTestConfig(`"1"`)
-	if problems := approvalOutputProblems(nil, errFake(), binding, cfg); len(problems) != 1 {
+	set := approvalTestTaskSet(&approvalTaskContext{binding: *approvalTestBinding(), cfg: approvalTestConfig(`"1"`)})
+	if problems := approvalOutputProblems(nil, errFake(), set); len(problems) != 1 {
 		t.Fatalf("parse error problems = %v", problems)
 	}
-	if problems := approvalOutputProblems(&approvalModelOutput{Message: "  "}, nil, binding, cfg); len(problems) != 1 {
+	if problems := approvalOutputProblems(&approvalModelOutput{Message: "  "}, nil, set); len(problems) != 1 {
 		t.Fatalf("empty message problems = %v", problems)
 	}
 	bad := &approvalModelOutput{
 		Message: "正文",
 		Drafts:  []approvalModelDraft{{ActivityID: "X", AssignmentID: "Y", Form: &ApprovalForm{}}},
 	}
-	if problems := approvalOutputProblems(bad, nil, binding, cfg); len(problems) != 1 {
+	if problems := approvalOutputProblems(bad, nil, set); len(problems) != 1 {
 		t.Fatalf("binding mismatch problems = %v", problems)
 	}
 	ok := &approvalModelOutput{Message: "正文", Drafts: []approvalModelDraft{{
 		ActivityID: "ACT-1", AssignmentID: "ASG-1",
 		Form: &ApprovalForm{PathID: strPtr("P_APPROVE"), Comments: "x", CheckedTaskIDs: []string{"T_1"}},
 	}}}
-	if problems := approvalOutputProblems(ok, nil, binding, cfg); len(problems) != 0 {
+	if problems := approvalOutputProblems(ok, nil, set); len(problems) != 0 {
 		t.Fatalf("valid output problems = %v", problems)
 	}
 }

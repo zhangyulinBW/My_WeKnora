@@ -1,7 +1,8 @@
 package aichat
 
 // 本文件定义 processApproval（流程签审）页面的协议类型：itemData 五数组结构、
-// 签审配置/清单/草案表单，以及从激活卡片提取任务绑定的解析助手。
+// 签审配置/清单/草案表单，以及从任务卡片提取绑定、按活动+指派匹配配置与
+// 草案的解析助手。
 // masterItem/approvalItem 等原始记录保持 RawMessage 原样透传给模型（含
 // @aras.* 属性与空值，不做摘要）；仅参与绑定与校验的 approvalConfig /
 // approvalDrafts 使用强类型。字段语义见流程签审协议文档（文档 2 §3、文档 3 §3）。
@@ -27,7 +28,8 @@ const (
 const AIErrorCodeApprovalDraft = "APPROVAL_DRAFT_ERROR"
 
 // ApprovalData 是 processApproval 页 itemData 载荷的五数组结构。
-// 首版 masterItem 长度为 0（未激活任务）或 1（当前激活卡片）。
+// masterItem 是用户明确添加的待签核任务卡片，0、1 或多笔，按活动+指派去重；
+// 左侧当前浏览卡片不等于已添加集合。
 type ApprovalData struct {
 	MasterItem      []json.RawMessage     `json:"masterItem"`
 	AdditionalItems []json.RawMessage     `json:"additionalItems"`
@@ -128,14 +130,14 @@ func approvalFlagEnabled(raw json.RawMessage) bool {
 	}
 }
 
-// ApprovalTaskBinding 是从激活卡片提取的任务绑定标识。任务以
+// ApprovalTaskBinding 是从任务卡片提取的任务绑定标识。任务以
 // activityId + assignmentId 唯一绑定（数组下标不参与绑定）；itemId 只用于
-// 配对业务物件，不能单独定位某次签审。
+// 配对业务物件，不能单独定位某次签审。JSON 标签用于注入提示词元数据。
 type ApprovalTaskBinding struct {
-	ActivityID    string
-	AssignmentID  string
-	ItemID        string
-	ItemKeyedName string
+	ActivityID    string `json:"activityId"`
+	AssignmentID  string `json:"assignmentId"`
+	ItemID        string `json:"itemId"`
+	ItemKeyedName string `json:"itemKeyedName"`
 }
 
 // parseMasterItemBinding 从原始卡片对象提取绑定标识。卡片为 Aras 风格原始
@@ -179,7 +181,8 @@ func (d *ApprovalData) matchConfig(b ApprovalTaskBinding) *ApprovalConfigEntry {
 }
 
 // editingDraft 返回输入草案中处于 editing 状态、且绑定到指定任务的草案。
-// 首版最多一份可编辑草案；命中时其 form 是本轮人工编辑的完整事实。
+// 每个任务最多一份可编辑草案；命中时其 form 是该任务本轮人工编辑的完整事实，
+// 各笔独立互不影响。
 func (d *ApprovalData) editingDraft(b ApprovalTaskBinding) *ApprovalDraft {
 	for i := range d.ApprovalDrafts {
 		dr := &d.ApprovalDrafts[i]
