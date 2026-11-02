@@ -42842,6 +42842,10 @@
                     "description": "user text (message only)",
                     "type": "string"
                 },
+                "model_id": {
+                    "description": "ModelID 是本次请求指定的对话模型 ID（来自 GET /api/v1/models 中\ntype 为 KnowledgeQA 的模型）。空值时不指定，回退到 ai_chat.model_id\n配置，再回退到智能体自身模型。仅作用于普通对话（normal）路径。",
+                    "type": "string"
+                },
                 "page": {
                     "description": "page the user is on",
                     "allOf": [

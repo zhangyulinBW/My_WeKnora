@@ -33,6 +33,11 @@ type AIChatRequest struct {
 	// 仅在该页面类型下使用，其他页面不携带。
 	ApprovalTaskIndex json.RawMessage `json:"approvalTaskIndex,omitempty"`
 
+	// ModelID 是本次请求指定的对话模型 ID（来自 GET /api/v1/models 中
+	// type 为 KnowledgeQA 的模型）。空值时不指定，回退到 ai_chat.model_id
+	// 配置，再回退到智能体自身模型。仅作用于普通对话（normal）路径。
+	ModelID string `json:"model_id,omitempty"`
+
 	// 以下字段由服务端在入口处理后携带，不来自请求 JSON，也不会回发。
 	// processedAttachments / processedImages 是已落存储的附件与图片（随用户消息持久化），
 	// imageURLs 是可直接喂给视觉模型的数据 URI，imageDescription 是非视觉模型下的

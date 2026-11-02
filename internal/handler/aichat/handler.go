@@ -18,6 +18,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/handler/session"
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -275,29 +276,73 @@ func (h *AIChatHandler) resolveRecommendAgent(ctx context.Context) (*types.Custo
 	return h.resolveAgent(ctx)
 }
 
-// applyModelOverride 返回一份应用了 ai_chat.model_id 覆盖的智能体副本。
-// 覆盖只作用于本次请求（不写回 custom_agents 表）；未配置覆盖值、或覆盖值与
-// 智能体自身模型相同时，原样返回入参指针。
+// applyModelOverride 返回一份应用了请求/配置模型覆盖的智能体副本。
+// 优先级：请求体 model_id（须为 KnowledgeQA 类型）> ai_chat.model_id 配置
+// > 智能体自身 model_id。覆盖只作用于本次请求（不写回 custom_agents 表）；
+// 未指定覆盖值、或最终模型与智能体自身模型相同时，原样返回入参指针。
 //
 // 必须覆盖 Config.ModelID 而非只在 QARequest 上带 SummaryModelID：
 // resolveChatModelID 会先校验智能体自身的 model_id 有效，智能体那个若失效
 // 则在读到 SummaryModelID 之前就已报错。
-func (h *AIChatHandler) applyModelOverride(agent *types.CustomAgent) *types.CustomAgent {
+func (h *AIChatHandler) applyModelOverride(
+	ctx context.Context,
+	req *AIChatRequest,
+	agent *types.CustomAgent,
+) *types.CustomAgent {
 	if agent == nil {
 		return nil
 	}
-	if h.config == nil || h.config.AIChat == nil {
-		return agent
-	}
-	override := strings.TrimSpace(h.config.AIChat.ModelID)
-	if override == "" || override == strings.TrimSpace(agent.Config.ModelID) {
+	modelID := h.resolveModelID(ctx, req, agent)
+	if modelID == "" || modelID == strings.TrimSpace(agent.Config.ModelID) {
 		return agent
 	}
 	// Config 是值类型字段，浅拷贝即可获得独立的 ModelID；其中的切片仍与原对象
 	// 共享，但此处只覆写一个字符串字段，不会写穿。
 	clone := *agent
-	clone.Config.ModelID = override
+	clone.Config.ModelID = modelID
 	return &clone
+}
+
+// resolveModelID 计算本次请求最终使用的对话模型 ID，优先级从高到低：
+//  1. 请求体 model_id——须通过 GET /api/v1/models 校验为 KnowledgeQA 类型，
+//     否则记日志并回退（前端从列表选择，非法值视为未指定，不中断请求）；
+//  2. ai_chat.model_id 配置；
+//  3. 智能体自身 model_id。
+func (h *AIChatHandler) resolveModelID(
+	ctx context.Context,
+	req *AIChatRequest,
+	agent *types.CustomAgent,
+) string {
+	if req != nil {
+		if mid := strings.TrimSpace(req.ModelID); mid != "" {
+			if h.isKnowledgeQAModel(ctx, mid) {
+				return mid
+			}
+			logger.Warnf(ctx, "AI chat requested model_id %q is not a usable KnowledgeQA model; falling back", mid)
+		}
+	}
+	if h.config != nil && h.config.AIChat != nil {
+		if mid := strings.TrimSpace(h.config.AIChat.ModelID); mid != "" {
+			return mid
+		}
+	}
+	if agent != nil {
+		return strings.TrimSpace(agent.Config.ModelID)
+	}
+	return ""
+}
+
+// isKnowledgeQAModel 校验 model_id 是否为当前空间可用的对话模型（KnowledgeQA）。
+// modelService 不可用时放行，交由下游 GetChatModel 兜底报错。
+func (h *AIChatHandler) isKnowledgeQAModel(ctx context.Context, modelID string) bool {
+	if h.modelService == nil {
+		return true
+	}
+	m, err := h.modelService.GetModelByID(ctx, modelID)
+	if err != nil || m == nil {
+		return false
+	}
+	return m.Type == types.ModelTypeKnowledgeQA
 }
 
 // getOrCreateSession 将不透明的 conversationId 映射到 WeKnora 会话，

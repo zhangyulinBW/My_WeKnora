@@ -103,7 +103,7 @@ func (h *AIChatHandler) processImages(
 
 	// 对话模型不支持视觉时图片无法直传，改用 VLM 生成文字描述
 	//（AgentQA 只在 ImageDescription 非空时拼接降级内容）。
-	if !h.chatModelSupportsVision(ctx, agent) {
+	if !h.chatModelSupportsVision(ctx, req, agent) {
 		if captions := h.analyzeImages(ctx, agent, decoded, req.Message); len(captions) > 0 {
 			for i, caption := range captions {
 				if caption != "" && i < len(images) {
@@ -204,11 +204,11 @@ func (h *AIChatHandler) processAttachments(
 
 // chatModelSupportsVision 查询智能体对话模型的视觉能力；查询失败按不支持
 // 处理，让 VLM 降级路径兜底而不是静默丢图。
-func (h *AIChatHandler) chatModelSupportsVision(ctx context.Context, agent *types.CustomAgent) bool {
+func (h *AIChatHandler) chatModelSupportsVision(ctx context.Context, req *AIChatRequest, agent *types.CustomAgent) bool {
 	if agent == nil || h.modelService == nil {
 		return false
 	}
-	modelID := h.applyModelOverride(agent).Config.ModelID
+	modelID := h.applyModelOverride(ctx, req, agent).Config.ModelID
 	if modelID == "" {
 		return false
 	}

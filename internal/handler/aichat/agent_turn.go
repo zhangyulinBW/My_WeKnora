@@ -24,7 +24,7 @@ import (
 // handleAgentTurn 将用户消息送入真正的智能体引擎（AgentQA），
 // 将每个智能体步骤（思考/工具调用/工具结果/引用/回答）以 AIEvent 流式输出。
 // 助手消息预先创建，并在智能体完成后标记完成，从而持久化多轮历史和 AgentSteps。
-// 对话模型遵循 ai_chat.model_id > 智能体自身 model_id 的优先级，与搜索草稿一致。
+// 对话模型遵循请求体 model_id > ai_chat.model_id > 智能体自身 model_id 的优先级。
 func (h *AIChatHandler) handleAgentTurn(
 	ctx context.Context,
 	c *gin.Context,
@@ -34,7 +34,7 @@ func (h *AIChatHandler) handleAgentTurn(
 ) {
 	// 覆盖后的副本同时驱动 AgentQA 的模型解析与助手消息落库的 ModelID，
 	// 两者必须是同一个值，否则日志/账单记的模型与实际调用的对不上。
-	agent = h.applyModelOverride(agent)
+	agent = h.applyModelOverride(ctx, req, agent)
 
 	session, err := h.getOrCreateSession(ctx, req.ConversationID, tenantID)
 	if err != nil || session == nil {
