@@ -70,13 +70,13 @@ func TestAgentFromInlineConfig(t *testing.T) {
 	t.Run("explicit id honored", func(t *testing.T) {
 		h := &AIChatHandler{config: &config.Config{AIChat: &config.AIChatConfig{
 			Agent: &config.AIChatAgentConfig{
-				ID:                 "ai-chat-main",
+				ID: "ai-chat-main",
 				CustomAgentConfig: types.CustomAgentConfig{
-					AgentMode:      types.AgentModeSmartReasoning,
-					SystemPrompt:   "prompt",
-					ModelID:        "model-1",
+					AgentMode:       types.AgentModeSmartReasoning,
+					SystemPrompt:    "prompt",
+					ModelID:         "model-1",
 					KBSelectionMode: "none",
-					AllowedTools:   []string{"knowledge_search"},
+					AllowedTools:    []string{"knowledge_search"},
 				},
 			},
 		}}}

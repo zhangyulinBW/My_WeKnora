@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	htmltomd "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -80,7 +79,8 @@ func (c *Connector) pickerSpaces(ctx context.Context, client *client, cfg config
 // never becomes a map key retained in process memory or appears in diagnostics.
 func pickerSpaceCacheKey(cfg config) string {
 	fingerprint := sha256.Sum256([]byte(cfg.secret))
-	return cfg.edition + "\x00" + cfg.baseURL + "\x00" + cfg.username + "\x00" + fmt.Sprintf("%x", fingerprint)
+	return cfg.edition + "\x00" + cfg.baseURL + "\x00" + cfg.username + "\x00" +
+		fmt.Sprintf("%t:%x", cfg.usePAT, fingerprint)
 }
 
 // Type returns the connector type identifier.
@@ -600,7 +600,7 @@ func markdownItem(
 	// docparser image pipeline can persist them and rewrite to resource:// URLs.
 	// Best-effort: a failed image keeps its original src and never fails the page.
 	html = newAssetResolver(client).Resolve(ctx, html)
-	markdown, err := htmltomd.ConvertString(html)
+	markdown, err := convertPageHTML(html)
 	if err != nil {
 		return types.FetchedItem{}, err
 	}

@@ -61,6 +61,7 @@ var ToolCapabilityRequirements = map[string]ToolRequirement{
 	"thinking":          {},
 	"todo_write":        {},
 	"record_admin_info": {},
+	"ask_user":          {},
 
 	// ---- RAG / chunk retrieval (need at least one chunk-indexed KB) ----
 	"search_knowledge":      {AnyOf: []KBCapability{CapVector, CapKeyword}, ConsumesFiles: true},

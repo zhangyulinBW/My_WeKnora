@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
 // uploadEnvelopeSlack is the multipart framing allowed on top of the file
@@ -17,6 +19,40 @@ const uploadEnvelopeSlack = 1 << 20
 // bodies for skill endpoints. The zip is fetched server-side under
 // GetMaxSkillBundleSize; this only needs to hold a locator URL.
 const skillSourceJSONMaxBytes = 64 << 10
+
+// knowledgeBaseJSONMaxBytes caps a knowledge-base definition body.
+//
+// A definition carries scalars, model ids and prompt instructions, whose
+// per-field limits are already enforced by ValidateKnowledgeBasePromptInstructions;
+// the largest legal body is a few hundred KiB. Without a cap the handler
+// buffered whatever arrived: the Logger middleware only retains 10 KiB, but it
+// still reads up to 10 KiB+1 and then hands the rest of the stream to this
+// handler, so an authenticated POST could make one request occupy as much
+// memory as the process will surrender.
+const knowledgeBaseJSONMaxBytes = 1 << 20
+
+// hybridSearchJSONMaxBytes caps a hybrid-search body.
+//
+// The body is a query, filters and an optional precomputed `query_embedding`.
+// That vector is the only large field: an 8192-dimension float32 array is about
+// 160 KiB of JSON, so 1 MiB leaves room for the widest embedding model plus a
+// generous filter list while still bounding what one request can allocate.
+// HybridSearch is reachable by any Viewer of the knowledge base, so the cap
+// applies to a much broader audience than the knowledge-base lifecycle routes,
+// which need manage_kbs.
+const hybridSearchJSONMaxBytes = 1 << 20
+
+// faqJSONMaxBytes caps a FAQ batch upsert body.
+//
+// entries has no count limit of its own: UpsertEntries binds the payload,
+// validates it, and only then starts the import, so ShouldBindJSON buffers the
+// whole array first. A batch is the JSON equivalent of the CSV import, which is
+// bounded by GetMaxFileSize() (50 MiB by default), so the cap follows that
+// limit plus a MiB of JSON framing instead of inventing a second budget. It is
+// read per request, so an operator who raises MAX_FILE_SIZE_MB raises this too.
+func faqJSONMaxBytes() int64 {
+	return secutils.GetMaxFileSize() + uploadEnvelopeSlack
+}
 
 // limitUploadBody caps the request body before anything parses it.
 //

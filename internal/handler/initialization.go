@@ -143,9 +143,10 @@ type KBModelConfigRequest struct {
 
 	// 问题生成配置
 	QuestionGeneration struct {
-		Enabled            bool   `json:"enabled"`
-		QuestionCount      int    `json:"questionCount"`
-		CustomInstructions string `json:"customInstructions"`
+		ModelID            *string `json:"modelId,omitempty"`
+		Enabled            bool    `json:"enabled"`
+		QuestionCount      int     `json:"questionCount"`
+		CustomInstructions string  `json:"customInstructions"`
 	} `json:"questionGeneration"`
 }
 
@@ -231,7 +232,7 @@ type InitializationRequest struct {
 // @Produce      json
 // @Param        kbId     path      string               true  "知识库ID"
 // @Param        request  body      KBModelConfigRequest true  "配置请求"
-// @Success      200      {object}  map[string]interface{}  "更新成功"
+// @Success      200      {object}  handler.MessageResponse  "更新成功"
 // @Failure      400      {object}  errors.AppError         "请求参数错误"
 // @Failure      404      {object}  errors.AppError         "知识库不存在"
 // @Security     Bearer
@@ -256,6 +257,14 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 		return
 	}
 	ownWorkspace, err := kbSettingsAccess(c, kb)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	questionModelID, err := h.resolveQuestionGenerationModel(
+		ctx, req.QuestionGeneration.ModelID, kb.QuestionGenerationConfig,
+	)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -417,7 +426,7 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 		return
 	}
 
-	// 更新问题生成配置
+	// 更新问题生成配置。检索是否使用问句由查询时的开关决定，保存设置不改索引。
 	if req.QuestionGeneration.Enabled {
 		questionCount := req.QuestionGeneration.QuestionCount
 		if questionCount <= 0 {
@@ -427,12 +436,14 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 			questionCount = 10
 		}
 		kb.QuestionGenerationConfig = &types.QuestionGenerationConfig{
+			ModelID:            questionModelID,
 			Enabled:            true,
 			QuestionCount:      questionCount,
 			CustomInstructions: strings.TrimSpace(req.QuestionGeneration.CustomInstructions),
 		}
 	} else {
 		kb.QuestionGenerationConfig = &types.QuestionGenerationConfig{
+			ModelID:            questionModelID,
 			Enabled:            false,
 			CustomInstructions: strings.TrimSpace(req.QuestionGeneration.CustomInstructions),
 		}
@@ -1279,7 +1290,7 @@ func (h *InitializationHandler) DownloadOllamaModel(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        taskId  path      string  true  "任务ID"
-// @Success      200     {object}  map[string]interface{}  "下载进度"
+// @Success      200     {object}  handler.DataResponse{data=handler.DownloadTask}  "下载进度"
 // @Failure      404     {object}  errors.AppError         "任务不存在"
 // @Security     Bearer
 // @Security     ApiKeyAuth
@@ -1313,7 +1324,7 @@ func (h *InitializationHandler) GetDownloadProgress(c *gin.Context) {
 // @Tags         初始化
 // @Accept       json
 // @Produce      json
-// @Success      200  {object}  map[string]interface{}  "任务列表"
+// @Success      200  {object}  handler.DataResponse{data=[]handler.DownloadTask}  "任务列表"
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /initialization/ollama/download/tasks [get]
@@ -1742,6 +1753,7 @@ func (h *InitializationHandler) buildConfigResponse(ctx context.Context, models 
 		config["questionGeneration"] = map[string]interface{}{
 			"enabled":            kb.QuestionGenerationConfig.Enabled,
 			"questionCount":      kb.QuestionGenerationConfig.QuestionCount,
+			"modelId":            kb.QuestionGenerationConfig.ModelID,
 			"customInstructions": kb.QuestionGenerationConfig.CustomInstructions,
 		}
 	} else {
@@ -2289,6 +2301,14 @@ func (h *InitializationHandler) CheckASRModel(c *gin.Context) {
 		case strings.Contains(errMsg, "401") || strings.Contains(errMsg, "Unauthorized") || strings.Contains(errMsg, "authentication"):
 			available = false
 			message = fmt.Sprintf("认证失败，请检查API Key：%s", errMsg)
+		case strings.Contains(errMsg, "403") || strings.Contains(errMsg, "Forbidden"):
+			// Also what proxies and endpoint-security agents answer when they
+			// block the request, so the endpoint was never actually reached.
+			available = false
+			message = fmt.Sprintf("访问被拒绝，请检查API Key权限或网络代理/安全软件拦截：%s", errMsg)
+		case strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "context deadline exceeded"):
+			available = false
+			message = fmt.Sprintf("连接超时，请检查网络连接：%s", errMsg)
 		case strings.Contains(errMsg, "404") || strings.Contains(errMsg, "Not Found"):
 			available = false
 			message = fmt.Sprintf("API端点不存在，请检查Base URL：%s", errMsg)
@@ -2587,7 +2607,7 @@ type TextRelationExtractionResponse struct {
 // @Accept       json
 // @Produce      json
 // @Param        request  body      TextRelationExtractionRequest  true  "提取请求"
-// @Success      200      {object}  map[string]interface{}         "提取结果"
+// @Success      200      {object}  handler.DataResponse{data=handler.TextRelationExtractionResponse}         "提取结果"
 // @Failure      400      {object}  errors.AppError                "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
@@ -2688,7 +2708,7 @@ type FabriTextResponse struct {
 // @Accept       json
 // @Produce      json
 // @Param        request  body      FabriTextRequest  true  "生成请求"
-// @Success      200      {object}  map[string]interface{}  "生成的文本"
+// @Success      200      {object}  handler.DataResponse{data=handler.FabriTextResponse}  "生成的文本"
 // @Failure      400      {object}  errors.AppError         "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
@@ -2765,7 +2785,7 @@ var tagOptions = []string{
 // @Tags         初始化
 // @Accept       json
 // @Produce      json
-// @Success      200  {object}  map[string]interface{}  "生成的标签"
+// @Success      200  {object}  handler.DataResponse{data=handler.FabriTagResponse}  "生成的标签"
 // @Router       /initialization/extract/fabri-tag [post]
 func (h *InitializationHandler) FabriTag(c *gin.Context) {
 	tagRandom := RandomSelect(tagOptions, rand.Intn(len(tagOptions)-1)+1)

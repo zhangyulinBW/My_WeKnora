@@ -81,13 +81,11 @@ RUN --mount=type=cache,target=/go/pkg/mod bash ./scripts/copy-licenses.sh /licen
 ARG VERSION_ARG
 ARG COMMIT_ID_ARG
 ARG BUILD_TIME_ARG
-ARG GO_VERSION_ARG
 
 # Set build-time variables
 ENV VERSION=${VERSION_ARG}
 ENV COMMIT_ID=${COMMIT_ID_ARG}
 ENV BUILD_TIME=${BUILD_TIME_ARG}
-ENV GO_VERSION=${GO_VERSION_ARG}
 
 # Link the anydoc parser engine (office docs converted in-process, no
 # Python docreader). Default on so Hub / compose images ship a working
@@ -112,8 +110,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         ./scripts/build-anydoc-lib.sh; \
     fi
 
-# Build the application with version info
+# Build the application with version info. Mount the Go build cache as well as
+# the module cache: `COPY . .` invalidates this layer on every source change,
+# and without the mount each rebuild regenerates the whole compile cache inside
+# the layer (~2.7 GB), which occupies disk locally and is uploaded to the CI
+# layer cache. Mounted, the cache lives outside the layer and repeated builds
+# reuse compiled objects instead of recompiling from scratch. Read the Go
+# version in this builder so host machines without Go still report it correctly.
 RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    export GO_VERSION="$(go version)"; \
     if [ "$WITH_ANYDOC" = "1" ]; then \
         make build-prod GO_BUILD_TAGS=anydoc; \
     else \
@@ -162,7 +168,7 @@ RUN if [ -n "$APK_MIRROR_ARG" ]; then \
         python3 python3-pip python3-dev libffi-dev libssl-dev \
         nodejs npm \
         gosu \
-        ffmpeg && \
+        ffmpeg qpdf && \
     python3 -m pip install --break-system-packages --upgrade pip setuptools wheel && \
     mkdir -p /home/appuser/.local/bin && \
     (curl -m 60 -LsSf https://astral.sh/uv/install.sh -o /tmp/uv-install.sh && \
