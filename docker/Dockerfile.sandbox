@@ -30,16 +30,19 @@
 ARG TARGETPLATFORM
 
 # Stage 1: Get Node.js binaries
-FROM --platform=${TARGETPLATFORM:-linux/amd64} node:22-slim AS node-base
+# 国内镜像加速：原镜像 node:22-slim（docker.io 直连不可达，加 DaoCloud 前缀）
+FROM --platform=${TARGETPLATFORM:-linux/amd64} docker.m.daocloud.io/library/node:22-slim AS node-base
 
-FROM --platform=${TARGETPLATFORM:-linux/amd64} ghcr.io/astral-sh/uv:0.12.4 AS uv-base
+# 国内镜像加速：原镜像 ghcr.io/astral-sh/uv:0.12.4（ghcr.io 直连不可达，走南京大学代理）
+FROM --platform=${TARGETPLATFORM:-linux/amd64} ghcr.nju.edu.cn/astral-sh/uv:0.12.4 AS uv-base
 
 # Stage 2: Runtime image
 #
 # 3.12 is the floor because skill sources commonly use PEP 701 nested quotes
 # in f-strings (f"x={d["k"]}"). Install-time ast.parse runs this interpreter;
 # 3.11 rejects that syntax and the whole skill install fails.
-FROM --platform=${TARGETPLATFORM:-linux/amd64} python:3.12-slim AS runtime
+# 国内镜像加速：原镜像 python:3.12-slim，加 DaoCloud 前缀
+FROM --platform=${TARGETPLATFORM:-linux/amd64} docker.m.daocloud.io/library/python:3.12-slim AS runtime
 
 # Fail the build when the rootfs is not the platform being built. No default:
 # BuildKit sets TARGETARCH per platform; the legacy builder leaves it empty.
@@ -63,6 +66,8 @@ COPY --from=uv-base /uv /usr/local/bin/uv
 RUN ln -s /usr/local/bin/uv /usr/local/bin/uvx
 
 # Node package manager: pnpm
+# 国内镜像加速：npm 走 npmmirror（registry.npmjs.org 国内不可达/缓慢）
+ENV npm_config_registry=https://registry.npmmirror.com
 RUN npm install -g pnpm
 
 # Install minimal CLI tools (bash/grep/sed/coreutils/findutils already in slim
@@ -125,7 +130,8 @@ USER root
 # Built for amd64 and arm64: cubesandbox-base ships both, and Cube runs on
 # x86_64 (PVM or bare-metal KVM) and on arm64 bare-metal KVM. PVM itself is
 # x86_64-only, so an arm64 Cube host needs native KVM.
-FROM --platform=${TARGETPLATFORM:-linux/amd64} ghcr.io/tencentcloud/cubesandbox-base:2026.16 AS cube-base
+# 国内镜像加速：原镜像 ghcr.io/tencentcloud/cubesandbox-base:2026.16，走南京大学代理
+FROM --platform=${TARGETPLATFORM:-linux/amd64} ghcr.nju.edu.cn/tencentcloud/cubesandbox-base:2026.16 AS cube-base
 
 FROM runtime AS cube
 
