@@ -81,3 +81,8 @@ skills/
 .build-cache/duckdb/*
 !.build-cache/duckdb/.gitkeep
 WeKnora_Agent机制分析.md
+
+# 镜像同步部署产物（zip 含 .env，勿提交勿外传）
+weknora-vm-setup.zip
+weknora-vm-setup.tar.gz
+scripts/acr-images.txt
