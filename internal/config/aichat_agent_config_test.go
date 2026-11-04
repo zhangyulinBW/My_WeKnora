@@ -106,7 +106,7 @@ func TestResolveAIChatAgentPromptRefs(t *testing.T) {
 		},
 		PromptTemplates: &PromptTemplatesConfig{
 			AgentSystemPrompt: []PromptTemplate{{ID: "tpl-sys", Content: "SYS content"}},
-			ContextTemplate:  []PromptTemplate{{ID: "tpl-ctx", Content: "CTX content"}},
+			ContextTemplate:   []PromptTemplate{{ID: "tpl-ctx", Content: "CTX content"}},
 		},
 	}
 	agent := cfg.AIChat.Agent
@@ -145,4 +145,23 @@ func TestResolveAIChatAgentPromptRefs(t *testing.T) {
 	// 未配置内联定义 / 模板时为安全 no-op。
 	resolveAIChatAgentPromptRefs(&Config{})
 	resolveAIChatAgentPromptRefs(&Config{AIChat: &AIChatConfig{}})
+}
+
+// TestAIChatApprovalSearchConfigParses 验证签核任务筛选的两个配置项能从
+// config.yaml 正确解析（agent ID 与开关）。
+func TestAIChatApprovalSearchConfigParses(t *testing.T) {
+	cfg := unmarshalViaViper(t, `
+ai_chat:
+  approval_search_agent_id: "c8f67e74-9d5e-4ad5-babd-7518fb39248f"
+  approval_search_enabled: true
+`)
+	if cfg.AIChat == nil {
+		t.Fatal("ai_chat section missing")
+	}
+	if cfg.AIChat.ApprovalSearchAgentID != "c8f67e74-9d5e-4ad5-babd-7518fb39248f" {
+		t.Fatalf("approval_search_agent_id = %q", cfg.AIChat.ApprovalSearchAgentID)
+	}
+	if !cfg.AIChat.ApprovalSearchEnabled {
+		t.Fatal("approval_search_enabled = false, want true")
+	}
 }

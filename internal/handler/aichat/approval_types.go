@@ -107,15 +107,37 @@ func (f *ApprovalForm) normalize() *ApprovalForm {
 	return f
 }
 
+// ApprovalAssessment 是模型对单笔签核任务的 AI 评估，随草案返回给前端展示。
+// 它不参与保存/完成条件判定，也不构成审批授权或最终结论；recommendation
+// 是机器可读建议，summary 是一句话结论，reasons 是判断依据与缺口。
+type ApprovalAssessment struct {
+	Recommendation string `json:"recommendation"`
+	Summary        string `json:"summary"`
+	Reasons        string `json:"reasons"`
+}
+
+// normalize 去除三个文本字段的首尾空白，返回自身便于链式调用。
+func (a *ApprovalAssessment) normalize() *ApprovalAssessment {
+	if a == nil {
+		return nil
+	}
+	a.Recommendation = strings.ToLower(strings.TrimSpace(a.Recommendation))
+	a.Summary = strings.TrimSpace(a.Summary)
+	a.Reasons = strings.TrimSpace(a.Reasons)
+	return a
+}
+
 // ApprovalDraft 是一份草案实例。draftId/revision/status 由后端组装，
-// 模型不产出；编辑态携带完整 form，结束态 form 为 null。
+// 模型不产出；编辑态携带完整 form，结束态 form 为 null。AIassessment 是
+// 模型产出的智慧签核评估，随草案展示，不参与保存/完成判定。
 type ApprovalDraft struct {
-	DraftID      string        `json:"draftId"`
-	Revision     int           `json:"revision"`
-	ActivityID   string        `json:"activityId"`
-	AssignmentID string        `json:"assignmentId"`
-	Status       string        `json:"status"`
-	Form         *ApprovalForm `json:"form"`
+	DraftID      string              `json:"draftId"`
+	Revision     int                 `json:"revision"`
+	ActivityID   string              `json:"activityId"`
+	AssignmentID string              `json:"assignmentId"`
+	Status       string              `json:"status"`
+	AIAssessment *ApprovalAssessment `json:"AIassessment,omitempty"`
+	Form         *ApprovalForm       `json:"form"`
 }
 
 // approvalFlagEnabled 按值等于 1 判定任务自带标识是否启用。请求中可能是

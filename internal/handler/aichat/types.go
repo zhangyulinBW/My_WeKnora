@@ -34,8 +34,9 @@ type AIChatRequest struct {
 	ApprovalTaskIndex json.RawMessage `json:"approvalTaskIndex,omitempty"`
 
 	// ModelID 是本次请求指定的对话模型 ID（来自 GET /api/v1/models 中
-	// type 为 KnowledgeQA 的模型）。空值时不指定，回退到 ai_chat.model_id
-	// 配置，再回退到智能体自身模型。仅作用于普通对话（normal）路径。
+	// type 为 KnowledgeQA 的模型）。空值时不指定，回退到各路径自己的
+	// 智能体/配置模型。作用于普通对话（normal）与签核任务筛选
+	// （approval_search）路径。
 	ModelID string `json:"model_id,omitempty"`
 
 	// 以下字段由服务端在入口处理后携带，不来自请求 JSON，也不会回发。
@@ -186,12 +187,16 @@ type AIEvent struct {
 	SearchBody     json.RawMessage        `json:"searchBody,omitempty"`
 	NeedConfirm    *bool                  `json:"needConfirm,omitempty"`
 	Unmatched      []AIUnmatched          `json:"unmatchedConditions,omitempty"`
-	// Code 是错误类别的机器可读标识（如 APPROVAL_DRAFT_ERROR），
-	// 供前端按类别处理错误；非错误事件不携带。
+	// Code 是错误类别的机器可读标识（如 APPROVAL_DRAFT_ERROR /
+	// APPROVAL_TASK_ERROR），供前端按类别处理错误；非错误事件不携带。
 	Code string `json:"code,omitempty"`
 	// ApprovalDrafts 是 approval_draft 事件的载荷：可编辑签审草案数组。
 	// 与 search_draft 携带 Conditions 的方式一致，请求侧数据不回显。
 	ApprovalDrafts []*ApprovalDraft `json:"approvalDrafts,omitempty"`
+	// SelectedTasks 是 approval_task_selection 事件的载荷：模型筛选出的
+	// 任务绑定数组，只包含 activityId + assignmentId；前端按绑定在本地
+	// 任务索引中定位任务，不在事件里回传完整索引条目。
+	SelectedTasks []ApprovalTaskRef `json:"selectedTasks,omitempty"`
 }
 
 // AIUnmatched describes a condition fragment that could not be safely mapped.
@@ -209,21 +214,22 @@ type AISuggestionItem struct {
 
 // AI event `type` values.
 const (
-	AIEventAnswerChunk       = "answer_chunk"
-	AIEventAnswerDone        = "answer_done"
-	AIEventArtifacts         = "artifacts"   // skill-generated files attached after the turn
-	AIEventThinking          = "thinking"    // agent reasoning step
-	AIEventToolCall          = "tool_call"   // agent tool invocation
-	AIEventToolResult        = "tool_result" // agent tool result
-	AIEventAdminInfo         = "admin_info"  // record_admin_info record: content=detail, data={category,tool_call_id}; replaces this tool's generic tool_call/tool_result frames
-	AIEventReferences        = "references"  // knowledge references
-	AIEventReflection        = "reflection"  // agent reflection step
-	AIEventNeedSearchContext = "need_search_context"
-	AIEventSearchDraft       = "search_draft"
-	AIEventNeedClarification = "need_clarification"
-	AIEventApprovalDraft     = "approval_draft" // 签审轮终止事件：message 承载正文说明，approvalDrafts 承载草案，suggestions 携带本轮推荐问题；其后不追加 answer_done
-	AIEventSuggestions       = "suggestions"
-	AIEventError             = "error"
+	AIEventAnswerChunk           = "answer_chunk"
+	AIEventAnswerDone            = "answer_done"
+	AIEventArtifacts             = "artifacts"   // skill-generated files attached after the turn
+	AIEventThinking              = "thinking"    // agent reasoning step
+	AIEventToolCall              = "tool_call"   // agent tool invocation
+	AIEventToolResult            = "tool_result" // agent tool result
+	AIEventAdminInfo             = "admin_info"  // record_admin_info record: content=detail, data={category,tool_call_id}; replaces this tool's generic tool_call/tool_result frames
+	AIEventReferences            = "references"  // knowledge references
+	AIEventReflection            = "reflection"  // agent reflection step
+	AIEventNeedSearchContext     = "need_search_context"
+	AIEventSearchDraft           = "search_draft"
+	AIEventNeedClarification     = "need_clarification"
+	AIEventApprovalDraft         = "approval_draft"          // 签审轮终止事件：message 承载正文说明，approvalDrafts 承载草案（含 AIassessment），suggestions 携带本轮推荐问题；其后不追加 answer_done
+	AIEventApprovalTaskSelection = "approval_task_selection" // 签核任务筛选终止事件：message 承载正文说明，selectedTasks 承载任务绑定（activityId + assignmentId），suggestions 携带本轮推荐问题；其后不追加 answer_done
+	AIEventSuggestions           = "suggestions"
+	AIEventError                 = "error"
 )
 
 // AI request `type` values.

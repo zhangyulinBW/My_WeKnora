@@ -6,7 +6,10 @@ package aichat
 //   - computeApprovalReadiness：保存/完成条件的确定性判定（§6.2/§6.3）。
 //     结果作为事实注入提示词元数据，正文措辞仍完全由提示词决定。
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // containsPathID 报告 pathId 是否为本任务的真实动作 ID。
 func containsPathID(paths []ApprovalPath, pathID string) bool {
@@ -39,10 +42,10 @@ func containsString(list []string, s string) bool {
 
 // validateApprovalDrafts 对模型产出的草案做结构卡控（文档 3 §6.1）：
 // 每份草案的绑定（activityId + assignmentId）必须与某个已添加任务一致且
-// 同一任务最多一份；必须存在该任务匹配的签审上下文；pathId 必须属于该任务
-// paths 或为 null；checkedTaskIds 必须是该任务全部清单 ID 的子集（去重由
-// normalize 处理）。返回违约说明，空切片表示通过。不能为解决结构错误编造
-// 任务 ID 或选项。
+// 同一任务最多一份；必须存在该任务匹配的签审上下文；必须携带 AIassessment
+// 且 recommendation/summary/reasons 非空；pathId 必须属于该任务 paths 或为
+// null；checkedTaskIds 必须是该任务全部清单 ID 的子集（去重由 normalize
+// 处理）。返回违约说明，空切片表示通过。不能为解决结构错误编造任务 ID 或选项。
 func validateApprovalDrafts(drafts []approvalModelDraft, tasks *approvalTaskSet) []string {
 	var issues []string
 	if len(drafts) == 0 {
@@ -71,6 +74,21 @@ func validateApprovalDrafts(drafts []approvalModelDraft, tasks *approvalTaskSet)
 		if d.Form == nil {
 			issues = append(issues, fmt.Sprintf("drafts[%d]：缺少完整 form", i))
 			continue
+		}
+		// 智慧签核评估：每份草案都必须携带，三个字段都非空；它只用于前端
+		// 展示，不参与保存/完成判定，因此只校验结构，不校验业务结论。
+		if d.AIAssessment == nil {
+			issues = append(issues, fmt.Sprintf("drafts[%d]：缺少 AIassessment（智慧签核评估）", i))
+		} else {
+			if strings.TrimSpace(d.AIAssessment.Recommendation) == "" {
+				issues = append(issues, fmt.Sprintf("drafts[%d].AIassessment.recommendation：不能为空", i))
+			}
+			if strings.TrimSpace(d.AIAssessment.Summary) == "" {
+				issues = append(issues, fmt.Sprintf("drafts[%d].AIassessment.summary：不能为空", i))
+			}
+			if strings.TrimSpace(d.AIAssessment.Reasons) == "" {
+				issues = append(issues, fmt.Sprintf("drafts[%d].AIassessment.reasons：不能为空", i))
+			}
 		}
 		if d.Form.PathID != nil && !containsPathID(task.cfg.Paths, *d.Form.PathID) {
 			issues = append(issues, fmt.Sprintf("drafts[%d].form.pathId：%q 不是本任务的真实动作 ID", i, *d.Form.PathID))

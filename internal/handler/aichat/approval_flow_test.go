@@ -113,6 +113,7 @@ func runApprovalFlow(t *testing.T, mutate func(req *AIChatRequest), finalAnswer 
 func TestApprovalFlowEndToEndWithRealPayload(t *testing.T) {
 	final := `{"message":"正在处理 ECO-000003 的確認送出节点。按你说明表单已填写完成，拟选择確認送出并勾选清单，请核对下方草案。",` +
 		`"drafts":[{"activityId":"90A5FEA6080A43CABADFF7BF76C417EA","assignmentId":"27D0EF7E805A445A9C1581833700ABEB",` +
+		approvalAssessmentJSON +
 		`"form":{"pathId":"9402D951D1B64F0EABD0FBA7754E9563","comments":"表单已填写完整，确认送出。","checkedTaskIds":["CF55C5DD589C4C98835733DC23CCD7D9"]}}]}`
 
 	body, qaReq, msgSvc := runApprovalFlow(t, nil, final)
@@ -159,6 +160,10 @@ func TestApprovalFlowEndToEndWithRealPayload(t *testing.T) {
 	if d.DraftID == "" || d.Revision != 1 || d.Status != ApprovalStatusEditing {
 		t.Fatalf("assembled identifiers = %+v", d)
 	}
+	if d.AIAssessment == nil || d.AIAssessment.Recommendation != "proceed" ||
+		d.AIAssessment.Summary == "" || d.AIAssessment.Reasons == "" {
+		t.Fatalf("AIassessment not delivered with the draft: %+v", d.AIAssessment)
+	}
 
 	// 落库消息：approval_context 同步、用户消息、助手消息。
 	roles := map[string]int{}
@@ -172,7 +177,9 @@ func TestApprovalFlowEndToEndWithRealPayload(t *testing.T) {
 
 func TestApprovalFlowOmitsCarriedFieldsStillWorks(t *testing.T) {
 	// 第二轮消息：省略动态字段（沿用已同步值），并回传 editing 草案要求优化。
-	final := `{"message":"已按你的修改简化意见。","drafts":[{"activityId":"90A5FEA6080A43CABADFF7BF76C417EA","assignmentId":"27D0EF7E805A445A9C1581833700ABEB","form":{"pathId":"9402D951D1B64F0EABD0FBA7754E9563","comments":"简化后的意见","checkedTaskIds":["CF55C5DD589C4C98835733DC23CCD7D9"]}}]}`
+	final := `{"message":"已按你的修改简化意见。","drafts":[{"activityId":"90A5FEA6080A43CABADFF7BF76C417EA","assignmentId":"27D0EF7E805A445A9C1581833700ABEB",` +
+		approvalAssessmentJSON +
+		`"form":{"pathId":"9402D951D1B64F0EABD0FBA7754E9563","comments":"简化后的意见","checkedTaskIds":["CF55C5DD589C4C98835733DC23CCD7D9"]}}]}`
 	body, qaReq, _ := runApprovalFlow(t, func(req *AIChatRequest) {
 		req.Message = "把意见写简洁一些"
 		req.ApprovalTaskIndex = nil // 省略：元数据仍应含索引（沿用同步值需要存量数据，此处验证请求字段为空时流程不失败）

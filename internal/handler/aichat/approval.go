@@ -2,8 +2,8 @@ package aichat
 
 // 本文件实现签核意图（approval）的草案生成流程，与搜索草稿流程
 // （search.go / search_agent.go）同构：approval 智能体经 AgentQA 执行，
-// 最终答案不向客户端流式输出，而是解析为「正文说明 + 草案」JSON，
-// 结构卡控后合并为一条 approval_draft 事件（其后不追加 answer_done）。
+// 最终答案不向客户端流式输出，而是解析为「正文说明 + 草案（含 AIassessment）」
+// JSON，结构卡控后合并为一条 approval_draft 事件（其后不追加 answer_done）。
 // draftId/revision/status/任务绑定由后端代码组装与校验，模型只产出
 // 正文与 form，不信任模型输出的任何标识。生成规则（协议文档 3）由
 // approval 智能体的系统提示词承载，参考全文见 APPROVAL_PROMPT.md。
@@ -34,12 +34,14 @@ type approvalModelOutput struct {
 	Drafts  []approvalModelDraft `json:"drafts"`
 }
 
-// approvalModelDraft 是模型产出的一份草案：绑定标识 + 完整 form。
-// 绑定必须与某个已添加任务一致（validateApprovalDrafts 卡控）。
+// approvalModelDraft 是模型产出的一份草案：绑定标识 + 智慧签核评估 + 完整
+// form。绑定必须与某个已添加任务一致（validateApprovalDrafts 卡控）；
+// AIassessment 由模型基于当前任务数据生成，后端只做结构校验与透传。
 type approvalModelDraft struct {
-	ActivityID   string        `json:"activityId"`
-	AssignmentID string        `json:"assignmentId"`
-	Form         *ApprovalForm `json:"form"`
+	ActivityID   string              `json:"activityId"`
+	AssignmentID string              `json:"assignmentId"`
+	AIAssessment *ApprovalAssessment `json:"AIassessment"`
+	Form         *ApprovalForm       `json:"form"`
 }
 
 // parseApprovalOutput 提取并解析模型输出的 JSON envelope（复用搜索流的
@@ -61,6 +63,7 @@ func assembleApprovalDraft(modelDraft approvalModelDraft, binding ApprovalTaskBi
 		ActivityID:   binding.ActivityID,
 		AssignmentID: binding.AssignmentID,
 		Status:       ApprovalStatusEditing,
+		AIAssessment: modelDraft.AIAssessment.normalize(),
 		Form:         modelDraft.Form.normalize(),
 	}
 	if inputDraft != nil && inputDraft.DraftID != "" {

@@ -132,7 +132,8 @@ func TestApprovalTranslatorEmitsSingleDraftEvent(t *testing.T) {
 	bus, recorder, msgSvc := newApprovalTestTranslator(t, deps, false)
 
 	envelope := `{"message":"正在处理 WF-2026-001 的部门签审。意见已预填，请核对。","drafts":[` +
-		`{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1","T_3","T_1"]}}]}`
+		`{"activityId":"ACT-1","assignmentId":"ASG-1",` + approvalAssessmentJSON +
+		`"form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1","T_3","T_1"]}}]}`
 	emitComplete(t, bus, envelope)
 
 	frames := parseSSEFrames(t, recorder.Body.String())
@@ -152,6 +153,10 @@ func TestApprovalTranslatorEmitsSingleDraftEvent(t *testing.T) {
 	}
 	if d.ActivityID != "ACT-1" || d.AssignmentID != "ASG-1" {
 		t.Fatalf("draft binding = %+v", d)
+	}
+	if d.AIAssessment == nil || d.AIAssessment.Recommendation != "proceed" ||
+		d.AIAssessment.Summary == "" || d.AIAssessment.Reasons == "" {
+		t.Fatalf("AIassessment = %+v", d.AIAssessment)
 	}
 	if len(d.Form.CheckedTaskIDs) != 2 || d.Form.CheckedTaskIDs[0] != "T_1" {
 		t.Fatalf("checkedTaskIds not deduped: %v", d.Form.CheckedTaskIDs)
@@ -186,7 +191,8 @@ func TestApprovalTranslatorContinuesEditingInstance(t *testing.T) {
 	}
 	bus, recorder, _ := newApprovalTestTranslator(t, deps, false)
 
-	emitComplete(t, bus, `{"message":"已按你的修改简化意见。","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_APPROVE","comments":"新意见","checkedTaskIds":["T_1","T_3"]}}]}`)
+	emitComplete(t, bus, `{"message":"已按你的修改简化意见。","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1",`+
+		approvalAssessmentJSON+`"form":{"pathId":"P_APPROVE","comments":"新意见","checkedTaskIds":["T_1","T_3"]}}]}`)
 
 	frames := parseSSEFrames(t, recorder.Body.String())
 	if len(frames) != 1 || frames[0].Type != AIEventApprovalDraft {
@@ -216,8 +222,10 @@ func TestApprovalTranslatorMultiTaskDrafts(t *testing.T) {
 	bus, recorder, _ := newApprovalTestTranslator(t, deps, false)
 
 	envelope := `{"message":"已分别整理两笔草案，请逐笔核对。","drafts":[` +
-		`{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1","T_3"]}},` +
-		`{"activityId":"ACT-2","assignmentId":"ASG-2","form":{"pathId":"P_APPROVE","comments":"","checkedTaskIds":[]}}]}`
+		`{"activityId":"ACT-1","assignmentId":"ASG-1",` + approvalAssessmentJSON +
+		`"form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1","T_3"]}},` +
+		`{"activityId":"ACT-2","assignmentId":"ASG-2",` + approvalAssessmentJSON +
+		`"form":{"pathId":"P_APPROVE","comments":"","checkedTaskIds":[]}}]}`
 	emitComplete(t, bus, envelope)
 
 	frames := parseSSEFrames(t, recorder.Body.String())
@@ -227,6 +235,11 @@ func TestApprovalTranslatorMultiTaskDrafts(t *testing.T) {
 	drafts := frames[0].ApprovalDrafts
 	if len(drafts) != 2 {
 		t.Fatalf("approvalDrafts = %+v, want 2", drafts)
+	}
+	for _, d := range drafts {
+		if d.AIAssessment == nil || d.AIAssessment.Recommendation == "" {
+			t.Fatalf("draft %s/%s missing AIassessment: %+v", d.ActivityID, d.AssignmentID, d.AIAssessment)
+		}
 	}
 	if drafts[0].ActivityID != "ACT-1" || drafts[0].AssignmentID != "ASG-1" || drafts[0].Revision != 1 || drafts[0].DraftID == "" {
 		t.Fatalf("first draft must be a new ACT-1 instance: %+v", drafts[0])
@@ -257,7 +270,8 @@ func TestApprovalTranslatorContractViolationEmitsCodedError(t *testing.T) {
 	// 绝不发出绑错任务或含无效 ID 的草案。
 	bus, recorder, _ := newApprovalTestTranslator(t, deps, true)
 
-	emitComplete(t, bus, `{"message":"正文","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_GHOST","checkedTaskIds":["T_GHOST"]}}]}`)
+	emitComplete(t, bus, `{"message":"正文","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1",`+
+		approvalAssessmentJSON+`"form":{"pathId":"P_GHOST","checkedTaskIds":["T_GHOST"]}}]}`)
 
 	frames := parseSSEFrames(t, recorder.Body.String())
 	if len(frames) != 1 || frames[0].Type != AIEventError {
@@ -313,7 +327,8 @@ func TestApprovalTranslatorAttachesSuggestions(t *testing.T) {
 	bus := event.NewEventBus()
 	translator.subscribe(bus)
 
-	emitComplete(t, bus, `{"message":"正在处理 ECO-000003。","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1"]}}]}`)
+	emitComplete(t, bus, `{"message":"正在处理 ECO-000003。","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1",`+
+		approvalAssessmentJSON+`"form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1"]}}]}`)
 
 	frames := parseSSEFrames(t, recorder.Body.String())
 	if len(frames) != 1 || frames[0].Type != AIEventApprovalDraft {

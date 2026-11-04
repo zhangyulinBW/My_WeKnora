@@ -165,6 +165,15 @@ ai_chat:
   #   model_id: "c108a7a9-2f09-4399-ad61-9e90fb6f9ce5"
   #   kb_selection_mode: "none"
   #   allowed_tools: []
+  # 签核任务筛选智能体 ID（其 system_prompt 承载 approval_search 意图的任务
+  # 筛选规则，参考全文见 internal/handler/aichat/APPROVAL_SEARCH_PROMPT.md）；
+  # 留空则回退到 agent_id
+  approval_search_agent_id: "c8f67e74-9d5e-4ad5-babd-7518fb39248f"
+  # 签核任务筛选开关：true 且页面为 processApproval 时，查找/列出签核任务的
+  # 请求返回 approval_tasks 事件（按条件匹配的任务列表）；否则回退流式问答。
+  # 意图智能体的提示词需同步增加 approval_search 输出类别（增补文案见
+  # APPROVAL_SEARCH_PROMPT.md）。
+  approval_search_enabled: true
 
 # record_admin_info 内置工具（管理员信息记录通道）。智能体在 allowed_tools 勾选后，
 # 模型把内部细节（执行过的 SQL、文档 ID、系统字段名、schema 摘要、失败重试）通过

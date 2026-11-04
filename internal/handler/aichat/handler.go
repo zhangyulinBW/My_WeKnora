@@ -96,10 +96,12 @@ func NewAIChatHandler(
 		intents: newIntentRegistry(),
 		actions: make(map[string]*pendingAction),
 	}
-	// 意图注册：normal 作为默认/回退意图最先注册，search、approval 其次。
+	// 意图注册：normal 作为默认/回退意图最先注册，search、approval、
+	// approval_search 其次。
 	h.intents.register(&normalIntentHandler{h: h})
 	h.intents.register(&searchIntentHandler{h: h})
 	h.intents.register(&approvalIntentHandler{h: h})
+	h.intents.register(&approvalSearchIntentHandler{h: h})
 	return h
 }
 
@@ -206,6 +208,20 @@ func (h *AIChatHandler) resolveApprovalAgent(ctx context.Context) (*types.Custom
 			}
 			return agent, nil
 		}
+	}
+	return h.resolveAgent(ctx)
+}
+
+// resolveApprovalSearchAgent 加载用于签核任务筛选的智能体（其系统提示词
+// 承载 approval_search 意图的筛选规则）。解析顺序：
+// ai_chat.approval_search_agent_id（custom_agents 表）-> 主智能体。
+func (h *AIChatHandler) resolveApprovalSearchAgent(ctx context.Context) (*types.CustomAgent, error) {
+	if h.config != nil && h.config.AIChat != nil && h.config.AIChat.ApprovalSearchAgentID != "" {
+		agent, err := h.customAgentService.GetAgentByID(ctx, h.config.AIChat.ApprovalSearchAgentID)
+		if err != nil || agent == nil {
+			return nil, fmt.Errorf("approval search agent %s not found", h.config.AIChat.ApprovalSearchAgentID)
+		}
+		return agent, nil
 	}
 	return h.resolveAgent(ctx)
 }
