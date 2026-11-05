@@ -15,15 +15,19 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-// approvalSearchSessionService 伪造会话服务：返回固定会话。
+// approvalSearchSessionService 伪造会话服务：返回固定会话，并把 AgentQA
+// 替换为「发一条 thinking + 完成事件」的假引擎，同时捕获注入的 QARequest。
 type approvalSearchSessionService struct {
 	interfaces.SessionService
 	session *types.Session
+	final   string
+	qaReq   *types.QARequest
 }
 
 func (f *approvalSearchSessionService) GetSessionByID(_ context.Context, _ uint64, _ string) (*types.Session, error) {
@@ -34,10 +38,25 @@ func (f *approvalSearchSessionService) CreateSession(_ context.Context, s *types
 	return s, nil
 }
 
+func (f *approvalSearchSessionService) AgentQA(ctx context.Context, req *types.QARequest, bus *event.EventBus) error {
+	f.qaReq = req
+	if err := bus.EmitAndWait(ctx, event.Event{
+		Type: event.EventAgentThought,
+		Data: event.AgentThoughtData{Content: "正在筛选任务…", Iteration: 1},
+	}); err != nil {
+		return err
+	}
+	return bus.EmitAndWait(ctx, event.Event{
+		Type: event.EventAgentComplete,
+		Data: event.AgentCompleteData{FinalAnswer: f.final},
+	})
+}
+
 // approvalSearchMessageService 记录落库消息；最近消息返回空（无存量同步值）。
 type approvalSearchMessageService struct {
 	interfaces.MessageService
 	created []*types.Message
+	updated []*types.Message
 }
 
 func (f *approvalSearchMessageService) CreateMessage(_ context.Context, m *types.Message) (*types.Message, error) {
@@ -46,6 +65,11 @@ func (f *approvalSearchMessageService) CreateMessage(_ context.Context, m *types
 	}
 	f.created = append(f.created, m)
 	return m, nil
+}
+
+func (f *approvalSearchMessageService) UpdateMessage(_ context.Context, m *types.Message) error {
+	f.updated = append(f.updated, m)
+	return nil
 }
 
 func (f *approvalSearchMessageService) GetRecentMessagesBySession(_ context.Context, _ string, _ int) ([]*types.Message, error) {
@@ -116,13 +140,14 @@ func (m *sequenceChatModel) GetModelName() string { return "sequence" }
 func (m *sequenceChatModel) GetModelID() string   { return "sequence" }
 
 // runApprovalSearchFlow 用前端的真实请求体（type 改为 message）驱动任务筛选
-// 全流程，返回 SSE 响应体、模型调用记录、落库消息与模型服务（用于断言
-// 请求体 model_id 是否生效）。
+// 全流程。responses[0] 是 AgentQA 的最终答案，responses[1:] 留给纠正重试的
+// 裸模型调用。返回 SSE 响应体、重试模型调用记录、落库消息、假会话服务
+// （含注入的 QARequest）与模型服务。
 func runApprovalSearchFlow(
 	t *testing.T,
 	mutate func(req *AIChatRequest),
 	responses ...string,
-) (string, *sequenceChatModel, *approvalSearchMessageService, *approvalSearchModelService) {
+) (string, *sequenceChatModel, *approvalSearchMessageService, *approvalSearchSessionService, *approvalSearchModelService) {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/approval_request.json")
 	if err != nil {
@@ -150,7 +175,15 @@ func runApprovalSearchFlow(
 			SystemPrompt: "你是签核任务筛选助手。",
 		},
 	}
-	model := &sequenceChatModel{responses: responses}
+	final := ""
+	if len(responses) > 0 {
+		final = responses[0]
+	}
+	var repairResponses []string
+	if len(responses) > 1 {
+		repairResponses = responses[1:]
+	}
+	model := &sequenceChatModel{responses: repairResponses}
 	msgSvc := &approvalSearchMessageService{}
 	modelSvc := &approvalSearchModelService{
 		model: model,
@@ -158,21 +191,23 @@ func runApprovalSearchFlow(
 			"request-model": {ID: "request-model", Type: types.ModelTypeKnowledgeQA},
 		},
 	}
+	sessSvc := &approvalSearchSessionService{
+		session: &types.Session{ID: req.ConversationID, TenantID: 1},
+		final:   final,
+	}
 	h := &AIChatHandler{
 		config: &config.Config{AIChat: &config.AIChatConfig{
 			ApprovalSearchAgentID: "approval-search-agent-id",
 			ApprovalSearchEnabled: true,
 			ModelID:               "config-fallback-model",
 		}},
-		sessionService: &approvalSearchSessionService{
-			session: &types.Session{ID: req.ConversationID, TenantID: 1},
-		},
+		sessionService:     sessSvc,
 		messageService:     msgSvc,
 		customAgentService: &approvalSearchAgentService{id: "approval-search-agent-id", agent: agent},
 		modelService:       modelSvc,
 	}
 	h.handleApprovalSearchMessage(context.Background(), c, &req, nil, 1)
-	return recorder.Body.String(), model, msgSvc, modelSvc
+	return recorder.Body.String(), model, msgSvc, sessSvc, modelSvc
 }
 
 func TestShouldApprovalSearch(t *testing.T) {
@@ -285,32 +320,35 @@ func TestApprovalSearchFlowEndToEnd(t *testing.T) {
 		`{"activityId":"121B8513739B490083A13CB31C9032DB","assignmentId":"C13557AC5B89402C87C3E82D793ACE0F"}]}`
 
 	// 复现前端的「提交 ECO 所有任务」请求：只带 approvalTaskIndex，不带 itemData。
-	body, model, msgSvc, _ := runApprovalSearchFlow(t, func(req *AIChatRequest) {
+	body, _, msgSvc, sessSvc, _ := runApprovalSearchFlow(t, func(req *AIChatRequest) {
 		req.Message = "帮我提交ECO的所有任务"
 		req.ItemData = nil
 	}, final)
 
-	if len(model.calls) != 1 {
-		t.Fatalf("model calls = %d, want 1", len(model.calls))
+	if sessSvc.qaReq == nil {
+		t.Fatal("AgentQA was not invoked")
 	}
-	if len(model.calls[0]) != 2 || model.calls[0][0].Content != "你是签核任务筛选助手。" {
-		t.Fatalf("unexpected model messages: %+v", model.calls[0])
+	if sessSvc.qaReq.Query != "帮我提交ECO的所有任务" {
+		t.Fatalf("QA query = %q", sessSvc.qaReq.Query)
 	}
-	userContent := model.calls[0][1].Content
+	meta := string(sessSvc.qaReq.Metadata)
 	for _, want := range []string{
 		"approvalTaskIndex", "90A5FEA6080A43CABADFF7BF76C417EA",
 		"dateContext", "defaultTaskStatus",
 	} {
-		if !strings.Contains(userContent, want) {
-			t.Fatalf("user context missing %q: %s", want, userContent)
+		if !strings.Contains(meta, want) {
+			t.Fatalf("QARequest.Metadata missing %q: %s", want, meta)
 		}
 	}
 
 	frames := parseSSEFrames(t, body)
-	if len(frames) != 1 {
-		t.Fatalf("frames = %d, want exactly 1 approval_task_selection: %+v", len(frames), frames)
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want thinking + approval_task_selection: %+v", len(frames), frames)
 	}
-	ev := frames[0]
+	if frames[0].Type != AIEventThinking || frames[0].Content != "正在筛选任务…" {
+		t.Fatalf("first frame should be the streamed thinking event: %+v", frames[0])
+	}
+	ev := frames[1]
 	if ev.Type != AIEventApprovalTaskSelection || ev.Message != "找到两笔符合条件的待签核任务。" {
 		t.Fatalf("event = %+v", ev)
 	}
@@ -330,6 +368,9 @@ func TestApprovalSearchFlowEndToEnd(t *testing.T) {
 	}
 	if roles[approvalContextRole] != 1 || roles["user"] != 1 || roles["assistant"] != 1 {
 		t.Fatalf("persisted roles = %v", roles)
+	}
+	if len(msgSvc.updated) != 1 {
+		t.Fatalf("assistant message updates = %d, want 1", len(msgSvc.updated))
 	}
 	for _, m := range msgSvc.created {
 		if m.Role == "assistant" {
@@ -352,20 +393,20 @@ func TestApprovalSearchModelIDSelection(t *testing.T) {
 		`{"activityId":"121B8513739B490083A13CB31C9032DB","assignmentId":"C13557AC5B89402C87C3E82D793ACE0F"}]}`
 
 	t.Run("request model wins", func(t *testing.T) {
-		_, _, _, modelSvc := runApprovalSearchFlow(t, func(req *AIChatRequest) {
+		_, _, _, sessSvc, _ := runApprovalSearchFlow(t, func(req *AIChatRequest) {
 			req.ModelID = "request-model"
 		}, final)
-		if modelSvc.gotModelID != "request-model" {
-			t.Fatalf("model used = %q, want request-model", modelSvc.gotModelID)
+		if sessSvc.qaReq == nil || sessSvc.qaReq.CustomAgent.Config.ModelID != "request-model" {
+			t.Fatalf("agent model = %+v, want request-model", sessSvc.qaReq)
 		}
 	})
 
 	t.Run("invalid request model falls back to agent model", func(t *testing.T) {
-		_, _, _, modelSvc := runApprovalSearchFlow(t, func(req *AIChatRequest) {
+		_, _, _, sessSvc, _ := runApprovalSearchFlow(t, func(req *AIChatRequest) {
 			req.ModelID = "unknown-model"
 		}, final)
-		if modelSvc.gotModelID != "model-approval-search" {
-			t.Fatalf("model used = %q, want agent model fallback", modelSvc.gotModelID)
+		if sessSvc.qaReq == nil || sessSvc.qaReq.CustomAgent.Config.ModelID != "model-approval-search" {
+			t.Fatalf("agent model = %+v, want agent model fallback", sessSvc.qaReq)
 		}
 	})
 }
@@ -375,51 +416,63 @@ func TestApprovalSearchFlowRepairsInvalidTaskRef(t *testing.T) {
 	valid := `{"message":"已找到 1 条。","tasks":[` +
 		`{"activityId":"90A5FEA6080A43CABADFF7BF76C417EA","assignmentId":"27D0EF7E805A445A9C1581833700ABEB"}]}`
 
-	body, model, _, _ := runApprovalSearchFlow(t, nil, invalid, valid)
+	body, model, _, _, _ := runApprovalSearchFlow(t, nil, invalid, valid)
 
-	if len(model.calls) != 2 {
-		t.Fatalf("model calls = %d, want 2 (initial + repair)", len(model.calls))
+	if len(model.calls) != 1 {
+		t.Fatalf("model calls = %d, want 1 repair call", len(model.calls))
 	}
-	if len(model.calls[1]) != 4 {
-		t.Fatalf("repair messages = %d, want 4", len(model.calls[1]))
+	if len(model.calls[0]) != 4 {
+		t.Fatalf("repair messages = %d, want 4", len(model.calls[0]))
 	}
-	if !strings.Contains(model.calls[1][3].Content, "不在 approvalTaskIndex 中") {
-		t.Fatalf("repair prompt missing problem: %s", model.calls[1][3].Content)
+	if !strings.Contains(model.calls[0][3].Content, "不在 approvalTaskIndex 中") {
+		t.Fatalf("repair prompt missing problem: %s", model.calls[0][3].Content)
 	}
 
 	frames := parseSSEFrames(t, body)
-	if len(frames) != 1 || frames[0].Type != AIEventApprovalTaskSelection {
-		t.Fatalf("frames = %+v", frames)
+	var terminal *AIEvent
+	for i := range frames {
+		if frames[i].Type == AIEventApprovalTaskSelection {
+			terminal = &frames[i]
+		}
 	}
-	if len(frames[0].SelectedTasks) != 1 {
-		t.Fatalf("selectedTasks = %d, want 1", len(frames[0].SelectedTasks))
+	if terminal == nil {
+		t.Fatalf("no approval_task_selection frame: %+v", frames)
+	}
+	if len(terminal.SelectedTasks) != 1 {
+		t.Fatalf("selectedTasks = %d, want 1", len(terminal.SelectedTasks))
 	}
 }
 
 func TestApprovalSearchFlowRejectsInvalidTaskRefAfterRepair(t *testing.T) {
 	invalid := `{"message":"找到 1 条。","tasks":[{"activityId":"NOT-IN-INDEX","assignmentId":"NOPE"}]}`
 
-	body, model, _, _ := runApprovalSearchFlow(t, nil, invalid, invalid)
+	body, model, _, _, _ := runApprovalSearchFlow(t, nil, invalid, invalid)
 
-	if len(model.calls) != 2 {
-		t.Fatalf("model calls = %d, want 2", len(model.calls))
+	if len(model.calls) != 1 {
+		t.Fatalf("model calls = %d, want 1 repair call", len(model.calls))
 	}
 	frames := parseSSEFrames(t, body)
-	if len(frames) != 1 || frames[0].Type != AIEventError {
-		t.Fatalf("frames = %+v", frames)
+	var terminal *AIEvent
+	for i := range frames {
+		if frames[i].Type == AIEventError {
+			terminal = &frames[i]
+		}
 	}
-	if frames[0].Code != AIErrorCodeApprovalTask {
-		t.Fatalf("error code = %q, want %q", frames[0].Code, AIErrorCodeApprovalTask)
+	if terminal == nil {
+		t.Fatalf("no error frame: %+v", frames)
+	}
+	if terminal.Code != AIErrorCodeApprovalTask {
+		t.Fatalf("error code = %q, want %q", terminal.Code, AIErrorCodeApprovalTask)
 	}
 }
 
 func TestApprovalSearchFlowWithoutTaskIndex(t *testing.T) {
-	body, model, msgSvc, _ := runApprovalSearchFlow(t, func(req *AIChatRequest) {
+	body, _, msgSvc, sessSvc, _ := runApprovalSearchFlow(t, func(req *AIChatRequest) {
 		req.ApprovalTaskIndex = nil
 	}, `{"message":"should not be called","tasks":[]}`)
 
-	if len(model.calls) != 0 {
-		t.Fatalf("model should not be called without a task index, got %d calls", len(model.calls))
+	if sessSvc.qaReq != nil {
+		t.Fatalf("AgentQA should not be called without a task index: %+v", sessSvc.qaReq)
 	}
 	frames := parseSSEFrames(t, body)
 	if len(frames) != 1 || frames[0].Type != AIEventApprovalTaskSelection {

@@ -126,9 +126,12 @@ handleMessage
 - 请求携带 `approvalTaskIndex`（扁平任务索引）与 `itemData`；缺失时按
   `approval_context` 同步值回填。筛选范围以索引为准；`itemData` 不注入筛选
   上下文（其完整业务物件可能很大），只用于会话历史与推荐问题。
+- 与 normal / search 草稿流一样经 AgentQA 执行：思考、工具调用、工具结果等
+  进度事件实时流式输出，最终答案仅在本地累积；完成时再解析/校验并发出单条
+  `approval_task_selection`。
 - 专用 approval_search 智能体（`ai_chat.approval_search_agent_id`）在索引中
   按时间/类型/状态/单号/处理人等条件筛选；未指定状态时默认「未签审」。
-  模型只返回 `activityId` + `assignmentId` 绑定。
+  智能体最终答案只返回 `activityId` + `assignmentId` 绑定。
 - 后端校验绑定（重复去重、索引中不存在则纠正重试），只下发模型筛出的绑定；
   仍违约以 `error` 事件（`code: APPROVAL_TASK_ERROR`）终止。
 - 终止事件为单条 `approval_task_selection`（`message` 承载正文说明、

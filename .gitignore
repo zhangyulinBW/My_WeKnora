@@ -86,3 +86,6 @@ WeKnora_Agent机制分析.md
 weknora-vm-setup.zip
 weknora-vm-setup.tar.gz
 scripts/acr-images.txt
+
+# 数据备份产物（含 .env 副本与业务数据，勿提交）
+backup/

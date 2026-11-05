@@ -21,6 +21,9 @@
 
 ## 事件契约
 
+- 执行方式：与 normal / search 草稿流一致经 `AgentQA` 执行；思考、工具调用、
+  工具结果、引用等进度事件按 normal 流的 SSE 事件实时输出，最终答案只在本地
+  累积，完成时再解析校验。
 - 终止事件：单条 `approval_task_selection`，其后不追加 `answer_done`。
 - `message`：给用户的正文说明（筛选口径、命中数量、任务摘要）。
 - `selectedTasks`：模型筛选出的任务绑定数组，每项只含 `activityId` + `assignmentId`；前端按绑定在本地的 `approvalTaskIndex` 中定位任务，事件不回传完整索引条目。
