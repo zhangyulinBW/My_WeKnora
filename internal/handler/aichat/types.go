@@ -28,7 +28,14 @@ type AIChatRequest struct {
 	SearchFields   []AISearchField      `json:"searchFields,omitempty"` // searchable table headers (search_context only)
 	SearchBody     json.RawMessage      `json:"searchBody,omitempty"`   // current applied search state (for "what is being queried" questions)
 	ItemData       json.RawMessage      `json:"itemdata,omitempty"`     // 页面数据载荷：singleData 为单条记录，largeTable 等亦可携带表格数据；processApproval 页为五数组结构（json 反序列化大小写不敏感，前端发的 "itemData" 同样落入本字段）
-	ConditionRules *AIConditionRules    `json:"conditionRules,omitempty"`
+	// AdditionalItems 是与 itemdata 同级的额外资讯数据，不限制数组还是 JSON
+	// 对象，内容结构由前端决定、由 AI 自行分析。它是把补充资讯从 itemdata
+	// 中拆出来的独立通道：不携带时各流程行为与只发 itemdata 的历史方式完全
+	// 一致（json 反序列化大小写不敏感，前端发的 "AdditionalItems" 同样落入
+	// 本字段）。注意与 processApproval 页 itemData 五数组结构里的内层
+	// additionalItems 子键无关，两者互不影响。
+	AdditionalItems json.RawMessage   `json:"additionalItems,omitempty"`
+	ConditionRules  *AIConditionRules `json:"conditionRules,omitempty"`
 	// ApprovalTaskIndex 是 processApproval 页的扁平任务索引（整体替换语义）。
 	// 仅在该页面类型下使用，其他页面不携带。
 	ApprovalTaskIndex json.RawMessage `json:"approvalTaskIndex,omitempty"`

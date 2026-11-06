@@ -44,7 +44,7 @@ func (h *AIChatHandler) handleAgentTurn(
 
 	// 若本轮请求未携带页面/筛选数据，则回填 start 阶段持久化的基础数据，
 	// 保证后续 normal 对话仍能获得会话基础上下文（而非只依赖当轮请求）。
-	page, searchFields, searchBody, itemData := h.loadStartContext(ctx, session.ID)
+	page, searchFields, searchBody, itemData, additionalItems := h.loadStartContext(ctx, session.ID)
 	if req.Page == nil {
 		req.Page = page
 	}
@@ -57,18 +57,24 @@ func (h *AIChatHandler) handleAgentTurn(
 	if len(req.ItemData) == 0 {
 		req.ItemData = itemData
 	}
+	if len(req.AdditionalItems) == 0 {
+		req.AdditionalItems = additionalItems
+	}
 	// processApproval 会话：动态字段走独立同步通道（start 与历次 message 的
 	// 合并结果），其 itemData 比 start 时刻的快照新，优先回填；携带新值时
 	// 同步落库供后续轮次沿用。普通咨询据此拿到最新任务/草案数据。
 	if req.Page != nil && req.Page.PageType == PageTypeProcessApproval {
 		h.syncApprovalContext(ctx, session, req)
-		if len(req.ItemData) == 0 || len(req.ApprovalTaskIndex) == 0 {
+		if len(req.ItemData) == 0 || len(req.ApprovalTaskIndex) == 0 || len(req.AdditionalItems) == 0 {
 			if ac := h.loadApprovalContext(ctx, session.ID); ac != nil {
 				if len(req.ItemData) == 0 {
 					req.ItemData = ac.ItemData
 				}
 				if len(req.ApprovalTaskIndex) == 0 {
 					req.ApprovalTaskIndex = ac.ApprovalTaskIndex
+				}
+				if len(req.AdditionalItems) == 0 {
+					req.AdditionalItems = ac.AdditionalItems
 				}
 			}
 		}
@@ -515,7 +521,7 @@ func (t *aiStreamTranslator) subscribe(bus *event.EventBus) {
 			if final != "" {
 				conversation += "\n\n" + final
 			}
-			if suggestions, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.req.Page, t.req.SearchFields, t.req.SearchBody, t.req.ItemData, conversation); serr == nil && len(suggestions) > 0 {
+			if suggestions, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.req.Page, t.req.SearchFields, t.req.SearchBody, t.req.ItemData, t.req.AdditionalItems, conversation); serr == nil && len(suggestions) > 0 {
 				t.writeSuggestions(suggestions)
 			}
 		}
@@ -550,6 +556,11 @@ func buildAIMetadata(req *AIChatRequest) types.JSON {
 	}
 	if len(req.ItemData) > 0 {
 		ctxObj["itemdata"] = req.ItemData
+	}
+	// 额外资讯：与 itemdata 同级的补充数据（数组或 JSON），由 AI 自行分析，
+	// 不携带时不注入，保持与历史请求一致的行为。
+	if len(req.AdditionalItems) > 0 {
+		ctxObj["additionalItems"] = req.AdditionalItems
 	}
 	// processApproval 页：任务索引帮助普通咨询理解用户提及的单号/节点/分组。
 	if len(req.ApprovalTaskIndex) > 0 {

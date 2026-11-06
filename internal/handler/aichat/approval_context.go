@@ -17,11 +17,15 @@ import (
 // approvalContextRole 是会话消息表中签核上下文同步消息的角色标识。
 const approvalContextRole = "approval_context"
 
-// approvalContext 是落库的同步载荷。存储前已完成合并，读取时两字段
+// approvalContext 是落库的同步载荷。存储前已完成合并，读取时各字段
 // 总是代表当前最新同步值；字段为空表示该字段从未同步过。
 type approvalContext struct {
 	ApprovalTaskIndex json.RawMessage `json:"approvalTaskIndex,omitempty"`
 	ItemData          json.RawMessage `json:"itemData,omitempty"`
+	// AdditionalItems 是请求顶层与 itemData 同级的额外资讯（数组或 JSON），
+	// 同样按整体替换语义同步；与 itemData 五数组结构里的内层 additionalItems
+	// 子键无关。
+	AdditionalItems json.RawMessage `json:"additionalItems,omitempty"`
 }
 
 // rawPayloadPresent 报告请求中的动态字段是否真的携带了载荷：
@@ -39,8 +43,8 @@ func (h *AIChatHandler) syncApprovalContext(ctx context.Context, session *types.
 	if session == nil {
 		return
 	}
-	// 两字段都未携带时不产生新消息，避免每轮对话重复追加相同状态。
-	if !rawPayloadPresent(req.ApprovalTaskIndex) && !rawPayloadPresent(req.ItemData) {
+	// 各字段都未携带时不产生新消息，避免每轮对话重复追加相同状态。
+	if !rawPayloadPresent(req.ApprovalTaskIndex) && !rawPayloadPresent(req.ItemData) && !rawPayloadPresent(req.AdditionalItems) {
 		return
 	}
 	merged := mergeApprovalContext(h.loadApprovalContext(ctx, session.ID), req)
@@ -65,6 +69,7 @@ func mergeApprovalContext(old *approvalContext, req *AIChatRequest) approvalCont
 	merged := approvalContext{
 		ApprovalTaskIndex: req.ApprovalTaskIndex,
 		ItemData:          req.ItemData,
+		AdditionalItems:   req.AdditionalItems,
 	}
 	if old != nil {
 		if !rawPayloadPresent(merged.ApprovalTaskIndex) {
@@ -72,6 +77,9 @@ func mergeApprovalContext(old *approvalContext, req *AIChatRequest) approvalCont
 		}
 		if !rawPayloadPresent(merged.ItemData) {
 			merged.ItemData = old.ItemData
+		}
+		if !rawPayloadPresent(merged.AdditionalItems) {
+			merged.AdditionalItems = old.AdditionalItems
 		}
 	}
 	return merged

@@ -33,12 +33,13 @@ func (h *AIChatHandler) handleStart(
 
 	// 将数据作为本次会话的基础数据持久化。
 	// itemdata 不限于 singleData（largeTable 也可携带表格数据），必须一并落库，
-	// 否则后续轮次会丢失。
+	// 否则后续轮次会丢失；additionalItems（额外资讯）同理随 start 一并落库。
 	if payload, err := json.Marshal(map[string]interface{}{
-		"page":         req.Page,
-		"searchBody":   req.SearchBody,
-		"searchFields": req.SearchFields,
-		"itemdata":     req.ItemData,
+		"page":            req.Page,
+		"searchBody":      req.SearchBody,
+		"searchFields":    req.SearchFields,
+		"itemdata":        req.ItemData,
+		"additionalItems": req.AdditionalItems,
 	}); err == nil {
 		_, _ = h.messageService.CreateMessage(ctx, &types.Message{
 			SessionID:   session.ID,
@@ -60,7 +61,7 @@ func (h *AIChatHandler) handleStart(
 		return
 	}
 
-	questions, err := h.generateRecommendQuestions(ctx, recommendAgent, req.Page, req.SearchFields, req.SearchBody, req.ItemData, "")
+	questions, err := h.generateRecommendQuestions(ctx, recommendAgent, req.Page, req.SearchFields, req.SearchBody, req.ItemData, req.AdditionalItems, "")
 	if err != nil {
 		h.writeEvent(c, h.errorEvent(req, "failed to generate recommendations: "+err.Error()))
 		return
@@ -82,6 +83,7 @@ func (h *AIChatHandler) generateRecommendQuestions(
 	searchFields []AISearchField,
 	searchBody json.RawMessage,
 	itemData json.RawMessage,
+	additionalItems json.RawMessage,
 	conversation string,
 ) ([]AISuggestionItem, error) {
 	modelID := recommendAgent.Config.ModelID
@@ -93,7 +95,7 @@ func (h *AIChatHandler) generateRecommendQuestions(
 		return nil, err
 	}
 
-	user := "会话基础数据：\n" + formatStartData(page, searchFields, searchBody, itemData)
+	user := "会话基础数据：\n" + formatStartData(page, searchFields, searchBody, itemData, additionalItems)
 	if strings.TrimSpace(conversation) != "" {
 		user += "\n\n当前对话内容：\n" + conversation
 	}
@@ -137,7 +139,7 @@ func parseRecommendQuestions(content string) ([]AISuggestionItem, error) {
 
 // formatStartData 将 start 数据上下文渲染为可读的文本描述，
 // 以便推荐生成器基于此生成问题。
-func formatStartData(page *AIPageContext, searchFields []AISearchField, searchBody json.RawMessage, itemData json.RawMessage) string {
+func formatStartData(page *AIPageContext, searchFields []AISearchField, searchBody json.RawMessage, itemData json.RawMessage, additionalItems json.RawMessage) string {
 	var sb strings.Builder
 	if page != nil {
 		sb.WriteString("页面类型：" + page.PageType)
@@ -175,6 +177,12 @@ func formatStartData(page *AIPageContext, searchFields []AISearchField, searchBo
 	if len(itemData) > 0 {
 		sb.WriteString("单条数据：")
 		sb.WriteString(string(itemData))
+		sb.WriteString("\n")
+	}
+	// 额外资讯：与 itemdata 同级的补充数据（数组或 JSON），一并交给推荐模型。
+	if len(additionalItems) > 0 {
+		sb.WriteString("额外资讯：")
+		sb.WriteString(string(additionalItems))
 		sb.WriteString("\n")
 	}
 	return strings.TrimSpace(sb.String())

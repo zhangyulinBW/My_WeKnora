@@ -310,7 +310,7 @@ func TestBuildApprovalMetadataMultiTask(t *testing.T) {
 		ActivityID: "ACT-2", AssignmentID: "ASG-2", Form: &ApprovalForm{Comments: "x"},
 	}
 
-	meta := buildApprovalMetadata(nil, nil, nil, approvalTestTaskSet(t1, t2))
+	meta := buildApprovalMetadata(nil, nil, nil, nil, approvalTestTaskSet(t1, t2))
 	s := string(meta)
 	for _, key := range []string{`"activeTasks"`, `"editingDrafts"`, `"inputFormReadiness"`, `"activityId":"ACT-1"`, `"activityId":"ACT-2"`, `"itemKeyedName":"WF-2026-001"`} {
 		if !strings.Contains(s, key) {

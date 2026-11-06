@@ -188,24 +188,29 @@ func repairApprovalTaskSearchOutput(
 }
 
 // buildApprovalTaskSearchMetadata 组装任务筛选的结构化上下文：页面、完整
-// 任务索引与日期基准。筛选规则与输出契约由 approval_search 智能体的
+// 任务索引、额外资讯与日期基准。筛选规则与输出契约由 approval_search 智能体的
 // system_prompt 定义，代码只注入数据事实。
 //
 // 这里刻意不注入 itemData：它的 approvalItem 是完整业务物件记录，可能非常
 // 大，而任务筛选只需要索引里的绑定/单号/状态/日期字段；masterItem 的去重
-// 由前端按 activityId+assignmentId 处理，不需要交给模型判断。
+// 由前端按 activityId+assignmentId 处理，不需要交给模型判断。与之不同，
+// additionalItems 是前端主动挑选的额外资讯（数组或 JSON），体量由前端控制，
+// 可携带筛选所需的补充口径，因此随上下文注入。
 func buildApprovalTaskSearchMetadata(
 	page *AIPageContext,
 	approvalTaskIndex json.RawMessage,
+	additionalItems json.RawMessage,
 ) types.JSON {
 	payload := struct {
 		Page              *AIPageContext  `json:"page,omitempty"`
 		ApprovalTaskIndex json.RawMessage `json:"approvalTaskIndex,omitempty"`
+		AdditionalItems   json.RawMessage `json:"additionalItems,omitempty"`
 		DateContext       AIDateContext   `json:"dateContext"`
 		DefaultTaskStatus string          `json:"defaultTaskStatus"`
 	}{
 		Page:              page,
 		ApprovalTaskIndex: approvalTaskIndex,
+		AdditionalItems:   additionalItems,
 		DateContext: AIDateContext{
 			CurrentDate:       time.Now().Format("2006-01-02"),
 			Timezone:          time.Local.String(),
@@ -295,14 +300,15 @@ func (h *AIChatHandler) applyApprovalSearchModel(
 // approvalTaskSelectionDeps 汇聚任务筛选完成路径所需的依赖：纠正重试所需的
 // 智能体与提示词材料，以及绑定校验所需的任务索引。
 type approvalTaskSelectionDeps struct {
-	h        *AIChatHandler
-	agent    *types.CustomAgent // 已应用请求 model_id 覆盖的筛选智能体
-	message  string             // 用户原始请求（纠正重试的提示词材料）
-	metadata types.JSON         // 主路径注入的结构化上下文（重试复用）
-	lang     string
-	page     *AIPageContext
-	itemData json.RawMessage // 推荐问题上下文
-	entries  []approvalTaskIndexEntry
+	h               *AIChatHandler
+	agent           *types.CustomAgent // 已应用请求 model_id 覆盖的筛选智能体
+	message         string             // 用户原始请求（纠正重试的提示词材料）
+	metadata        types.JSON         // 主路径注入的结构化上下文（重试复用）
+	lang            string
+	page            *AIPageContext
+	itemData        json.RawMessage // 推荐问题上下文
+	additionalItems json.RawMessage // 额外资讯（推荐问题上下文）
+	entries         []approvalTaskIndexEntry
 }
 
 // repair 在模型输出违反契约时，把原提示词、违约输出与违约说明一并回传
@@ -435,7 +441,7 @@ func (t *approvalTaskSelectionTranslator) subscribe(bus *event.EventBus) {
 			if strings.TrimSpace(result.Message) != "" {
 				conversation += "\n\n" + result.Message
 			}
-			if s, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.deps.page, nil, nil, t.deps.itemData, conversation); serr == nil {
+			if s, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.deps.page, nil, nil, t.deps.itemData, t.deps.additionalItems, conversation); serr == nil {
 				suggestions = s
 			}
 		}
@@ -504,7 +510,7 @@ func (h *AIChatHandler) handleApprovalSearchMessage(
 
 	// 动态字段同步（整体替换语义）：携带新值时合并落库，省略时沿用旧值。
 	h.syncApprovalContext(ctx, session, req)
-	if len(req.ItemData) == 0 || len(req.ApprovalTaskIndex) == 0 {
+	if len(req.ItemData) == 0 || len(req.ApprovalTaskIndex) == 0 || len(req.AdditionalItems) == 0 {
 		if ac := h.loadApprovalContext(ctx, session.ID); ac != nil {
 			if len(req.ItemData) == 0 {
 				req.ItemData = ac.ItemData
@@ -512,11 +518,14 @@ func (h *AIChatHandler) handleApprovalSearchMessage(
 			if len(req.ApprovalTaskIndex) == 0 {
 				req.ApprovalTaskIndex = ac.ApprovalTaskIndex
 			}
+			if len(req.AdditionalItems) == 0 {
+				req.AdditionalItems = ac.AdditionalItems
+			}
 		}
 	}
 	page := req.Page
 	if page == nil {
-		if p, _, _, _ := h.loadStartContext(ctx, session.ID); p != nil {
+		if p, _, _, _, _ := h.loadStartContext(ctx, session.ID); p != nil {
 			page = p
 			req.Page = p
 		}
@@ -560,7 +569,7 @@ func (h *AIChatHandler) handleApprovalSearchMessage(
 	// 完成后再解析最终答案、校验绑定并发出单条终止事件。
 	searchAgent = h.applyApprovalSearchModel(ctx, req, searchAgent)
 
-	metadata := buildApprovalTaskSearchMetadata(page, req.ApprovalTaskIndex)
+	metadata := buildApprovalTaskSearchMetadata(page, req.ApprovalTaskIndex, req.AdditionalItems)
 	lang := detectReplyLanguage(req.Message)
 
 	// 预创建助手消息：智能体步骤与最终正文落库，后续轮次可基于历史继续。
@@ -594,14 +603,15 @@ func (h *AIChatHandler) handleApprovalSearchMessage(
 	done := make(chan struct{})
 	base := newAIStreamTranslator(h, c, req, assistantMsg, session.TenantID, done)
 	translator := newApprovalTaskSelectionTranslator(base, &approvalTaskSelectionDeps{
-		h:        h,
-		agent:    searchAgent,
-		message:  req.Message,
-		metadata: metadata,
-		lang:     lang,
-		page:     page,
-		itemData: req.ItemData,
-		entries:  entries,
+		h:               h,
+		agent:           searchAgent,
+		message:         req.Message,
+		metadata:        metadata,
+		lang:            lang,
+		page:            page,
+		itemData:        req.ItemData,
+		additionalItems: req.AdditionalItems,
+		entries:         entries,
 	})
 	translator.subscribe(bus)
 

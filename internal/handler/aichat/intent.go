@@ -138,7 +138,7 @@ func (h *AIChatHandler) handleMessage(
 	// 保证 processApproval 会话的 approval 判定不因省略 page 而失效。
 	if req.Page == nil {
 		if session, err := h.getOrCreateSession(ctx, req.ConversationID, tenantID); err == nil && session != nil {
-			if p, _, _, _ := h.loadStartContext(ctx, session.ID); p != nil {
+			if p, _, _, _, _ := h.loadStartContext(ctx, session.ID); p != nil {
 				req.Page = p
 			}
 		}
@@ -231,7 +231,7 @@ func (h *AIChatHandler) gatePage(ctx context.Context, req *AIChatRequest, tenant
 		return req.Page
 	}
 	if session, err := h.getOrCreateSession(ctx, req.ConversationID, tenantID); err == nil && session != nil {
-		if p, _, _, _ := h.loadStartContext(ctx, session.ID); p != nil {
+		if p, _, _, _, _ := h.loadStartContext(ctx, session.ID); p != nil {
 			return p
 		}
 	}

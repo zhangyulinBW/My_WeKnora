@@ -28,7 +28,7 @@ WeKnora Agent 引擎（`sessionService.AgentQA`）或结构化搜索草稿生成
 | `approval_search.go` | 签核任务筛选意图：解析 `approvalTaskIndex`，调用 approval_search 智能体筛选任务，绑定校验后合并为单条 `approval_task_selection` 事件（`selectedTasks` 只含 activityId + assignmentId） |
 | `approval_types.go` | 流程签审协议类型：itemData 五数组结构、签审配置/清单/草案表单、任务卡片绑定解析 |
 | `approval_validation.go` | 签核机器规则：结构卡控（绑定/pathId/勾选集合）、保存与完成条件判定（§6.2/§6.3，含保存默认动作） |
-| `approval_context.go` | processApproval 动态字段同步：`approvalTaskIndex`/`itemData` 的整体替换/省略沿用/`[]` 清空语义，落库为 `role="approval_context"` 消息 |
+| `approval_context.go` | processApproval 动态字段同步：`approvalTaskIndex`/`itemData`/`additionalItems` 的整体替换/省略沿用/`[]` 清空语义，落库为 `role="approval_context"` 消息 |
 | `attachments.go` | 消息内联附件：图片/文件解码、配额与类型校验、落存储、VLM 降级描述 |
 | `artifact_reference.go` | 沙箱产物引用处理（session 包同名文件的私有镜像，需保持同步）：`sandbox:` 引用重写、引用解析、合并/去重、公开视图 |
 | `start.go` | `start` 阶段：建立会话、持久化基础数据、生成推荐问题 |
@@ -87,7 +87,8 @@ handleMessage
 流程与搜索草稿同构（`approval.go`）：
 
 - 请求携带 `approvalTaskIndex`（扁平任务索引）与 `itemData`（五数组：masterItem /
-  approvalConfig / approvalItem / additionalItems / approvalDrafts）。两字段按
+  approvalConfig / approvalItem / additionalItems / approvalDrafts）；顶层 `additionalItems`
+  （额外资讯）同样参与同步。各字段按
   「出现整体替换、省略沿用、`[]` 清空」语义落库为 `role="approval_context"` 消息
   （`approval_context.go`），跨请求与重启后仍可回读；normal 流程在 processApproval
   会话同样回填最新值并注入元数据。
@@ -124,7 +125,8 @@ handleMessage
 流程（`approval_search.go`）：
 
 - 请求携带 `approvalTaskIndex`（扁平任务索引）与 `itemData`；缺失时按
-  `approval_context` 同步值回填。筛选范围以索引为准；`itemData` 不注入筛选
+  `approval_context` 同步值回填（顶层 `additionalItems` 额外资讯同样回填并注入
+  筛选上下文）。筛选范围以索引为准；`itemData` 不注入筛选
   上下文（其完整业务物件可能很大），只用于会话历史与推荐问题。
 - 与 normal / search 草稿流一样经 AgentQA 执行：思考、工具调用、工具结果等
   进度事件实时流式输出，最终答案仅在本地累积；完成时再解析/校验并发出单条
@@ -184,10 +186,18 @@ handleMessage
   `download_path`，下载走 `/api/v1/sessions/{session_id}/messages/{message_id}/artifacts/{index}/download`，
   鉴权与本接口一致）、`final_content`（重写后的完整答案，可替换已流式的占位文本）、
   `session_id` 与 `assistant_message_id`。本轮无产物时不推送该事件。
-- **上下文流转**：`start` 阶段把 `page` / `searchFields` / `searchBody` / `itemdata` 持久化为
-  `role="start"` 消息；`message` / `search_context` 阶段通过 `loadStartContext` 回填。
+- **上下文流转**：`start` 阶段把 `page` / `searchFields` / `searchBody` / `itemdata` / `additionalItems`
+  持久化为 `role="start"` 消息；`message` / `search_context` 阶段通过 `loadStartContext` 回填。
   `itemdata` 不限于 `singleData` 页面（`largeTable` 也可携带表格数据），normal 问答与搜索
   草稿流程都会把它注入智能体上下文。
+- **额外资讯（additionalItems）**：请求顶层与 `itemdata` 同级的补充数据，不限制数组还是
+  JSON 对象，内容结构由前端决定、由 AI 自行分析。它是把补充资讯从 `itemdata` 中拆出来的
+  独立通道：normal / search / approval / approval_search 四条分派路径都会把它注入对应智能体
+  的结构化上下文（approval_search 的 itemData 因体量原因不注入，但 additionalItems 是前端
+  主动挑选的载荷，照常注入），并参与推荐问题生成；processApproval 会话同样按
+  「出现整体替换、省略沿用、`[]` 清空」语义走 `approval_context` 同步通道。不携带该字段时
+  各流程行为与只发 `itemdata` 的历史方式完全一致。注意与 processApproval 页 itemData 五数组
+  结构里的内层 `additionalItems` 子键无关。
 - **搜索两阶段**：`message` 识别为搜索意图、但 `start` 未提供 `searchFields` 时，返回
   `need_search_context` 并写入内存态 `h.actions`（`pendingAction`），等前端用 `search_context`
   阶段回传字段后再生成草稿。**该状态仅存内存，重启丢失。**
