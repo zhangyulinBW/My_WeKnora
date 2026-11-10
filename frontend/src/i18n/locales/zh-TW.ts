@@ -3719,6 +3719,8 @@ export default {
     description: '管理不同類型的 AI 模型，支持 Ollama 本地模型和遠程 API',
     copySuffix: ' 副本',
     builtinTag: '內建',
+    modelId: '模型ID',
+    copyId: '複製模型ID',
     confirmDelete: '確定刪除模型「{name}」嗎？',
     usage: {
       title: '模型無法刪除',

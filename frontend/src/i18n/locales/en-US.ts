@@ -5936,6 +5936,8 @@ export default {
         viewGuide: 'View Built-in Models Guide'
       },
       builtinTag: 'Built-in',
+      modelId: 'Model ID',
+      copyId: 'Copy model ID',
       confirmDelete: 'Delete model "{name}"?',
       usage: {
         title: 'Model cannot be deleted',
