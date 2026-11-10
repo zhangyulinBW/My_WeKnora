@@ -204,6 +204,21 @@ type AIEvent struct {
 	// 任务绑定数组，只包含 activityId + assignmentId；前端按绑定在本地
 	// 任务索引中定位任务，不在事件里回传完整索引条目。
 	SelectedTasks []ApprovalTaskRef `json:"selectedTasks,omitempty"`
+	// Previews 是 skill 意图 answer_done 事件携带的会话产物预览（内联完整
+	// 内容）。每项 id 对应答案正文里的锚点 #ai-preview-<id>，前端点击锚点时
+	// 用对应 preview 的 data 直接渲染（如 iframe srcdoc）。无会话产物时该
+	// 字段缺省，answer_done 行为与历史一致。
+	Previews []AIPreview `json:"previews,omitempty"`
+}
+
+// AIPreview 是 answer_done 事件中一个会话产物的内联预览。
+type AIPreview struct {
+	// ID 是预览标识（如 "file-1"），与答案正文里的锚点 #ai-preview-<ID> 一一对应。
+	ID string `json:"id"`
+	// Type 是预览类型，本期只有 "html"；字段保留以扩展 markdown/图片等。
+	Type string `json:"type"`
+	// Data 是产物的完整内容（type=html 时为完整 HTML 文档）。
+	Data string `json:"data"`
 }
 
 // AIUnmatched describes a condition fragment that could not be safely mapped.

@@ -32,6 +32,7 @@ const (
 	IntentSearch         Intent = "search"
 	IntentApproval       Intent = "approval"
 	IntentApprovalSearch Intent = "approval_search"
+	IntentSkill          Intent = "skill"
 )
 
 // intentHandler 是某个意图的处理逻辑。
@@ -124,6 +125,21 @@ func (a *approvalSearchIntentHandler) Handle(
 	a.h.handleApprovalSearchMessage(ctx, c, req, agent, tenantID)
 }
 
+// skillIntentHandler 是技能执行意图的适配器，委托给 AIChatHandler.handleSkillTurn。
+type skillIntentHandler struct{ h *AIChatHandler }
+
+func (s *skillIntentHandler) Intent() Intent { return IntentSkill }
+
+func (s *skillIntentHandler) Handle(
+	ctx context.Context,
+	c *gin.Context,
+	req *AIChatRequest,
+	agent *types.CustomAgent,
+	tenantID uint64,
+) {
+	s.h.handleSkillTurn(ctx, c, req, agent, tenantID)
+}
+
 // handleMessage 通过意图分析智能体对消息进行分类、持久化意图，
 // 然后经意图注册表分发到对应的处理逻辑。
 func (h *AIChatHandler) handleMessage(
@@ -144,8 +160,9 @@ func (h *AIChatHandler) handleMessage(
 		}
 	}
 
-	// 携带附件/图片的消息直接走 normal：结构化搜索面向表格筛选，附件内容
+	// 携带附件/图片的消息默认走 normal：结构化搜索面向表格筛选，附件内容
 	// 对条件生成没有意义；且「仅附件无文本」的消息也无法做意图分类。
+	// 唯一例外是下方的 skill 兜底：Excel 附件 + 转换诉求会覆盖为 skill。
 	intent := IntentNormal
 	if !req.hasUploads {
 		var err error
@@ -154,6 +171,14 @@ func (h *AIChatHandler) handleMessage(
 			logger.Warnf(ctx, "AI chat intent classification failed, defaulting to normal: %v", err)
 			intent = IntentNormal
 		}
+	}
+
+	// 技能意图兜底：带 Excel 附件且消息含转换诉求（网页/HTML/静态页等）时，
+	// 确定性判为 skill，绕过意图模型分类（附件消息默认走 normal，见上）。
+	// 该守卫不受页面类型限制，仅在 skill 开关开启时生效。
+	if h.shouldSkill(ctx, req, tenantID) && looksLikeSkillRequest(req) {
+		logger.Infof(ctx, "AI chat intent forced to skill (xlsx attachment + conversion keywords): %s", req.Message)
+		intent = IntentSkill
 	}
 
 	// 提示词契约里「统计/图表/汇总」等分析类请求归 normal（产物是统计结果或
@@ -271,6 +296,13 @@ func (h *AIChatHandler) shouldApprovalSearch(ctx context.Context, req *AIChatReq
 	return page != nil && page.PageType == PageTypeProcessApproval
 }
 
+// shouldSkill 判断当前请求是否可走技能执行流程：仅当 config 开启 skill 开关时
+// 返回 true。skill 意图不受页面类型限制（Excel 转网页可能发生在任意页面），
+// 是否真正命中由 looksLikeSkillRequest 的附件+关键词判定。
+func (h *AIChatHandler) shouldSkill(ctx context.Context, req *AIChatRequest, tenantID uint64) bool {
+	return h.config != nil && h.config.AIChat != nil && h.config.AIChat.SkillEnabled
+}
+
 // classifyIntent 使用意图分析智能体的系统提示词 + 模型（来自 ai_chat.intent_agent_id）
 // 返回类型化的 Intent。若意图智能体未声明自身模型，则回退到 ai_chat.model_id，
 // 再回退到主智能体的模型。
@@ -320,6 +352,8 @@ func (h *AIChatHandler) classifyIntent(
 		return IntentApproval, nil
 	case string(IntentApprovalSearch):
 		return IntentApprovalSearch, nil
+	case string(IntentSkill):
+		return IntentSkill, nil
 	default:
 		return IntentNormal, nil
 	}
@@ -413,6 +447,61 @@ func looksLikeApprovalActionRequest(message string) bool {
 		}
 	}
 	return false
+}
+
+// skillConversionKeywords 是「xlsx → 网页」转换诉求的特征词。用于附件消息的
+// 确定性兜底：附件含 Excel 且消息命中这些词时判为 skill。列表刻意保守，只收
+// 无歧义的转换诉求，避免把「帮我看下这个表」「汇总一下」等误判成转换。
+var skillConversionKeywords = []string{
+	"网页", "html", "静态页", "静态页面", "做成页面", "转成页面",
+	"转成网页", "做成网页", "网页版", "网页报表", "html报表",
+	"生成页面", "生成网页", "转html", "转成html", "做成html",
+}
+
+// excelFileExtensions 是会被视为 Excel 工作簿的附件扩展名（小写，含点）。
+var excelFileExtensions = []string{".xlsx", ".xls", ".xlsm"}
+
+// isExcelFile 判断文件名是否为 Excel 工作簿（不区分大小写）。
+func isExcelFile(name string) bool {
+	lower := strings.ToLower(name)
+	for _, ext := range excelFileExtensions {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeSkillConversion 判断消息是否为「xlsx → 网页」转换诉求。
+func looksLikeSkillConversion(message string) bool {
+	lower := strings.ToLower(message)
+	for _, kw := range skillConversionKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeSkillRequest 判断请求是否为技能执行请求：携带 Excel 附件且消息含
+// 转换诉求。附件名取自原始请求（raw 附件信息在 handleMessage 阶段仍在，见
+// attachments.go 的 processUploads 不清理 req.Attachments），不依赖已落存储的
+// processedAttachments。
+func looksLikeSkillRequest(req *AIChatRequest) bool {
+	if req == nil || !req.hasInlineUploads() {
+		return false
+	}
+	hasExcel := false
+	for _, a := range req.Attachments {
+		if isExcelFile(a.FileName) {
+			hasExcel = true
+			break
+		}
+	}
+	if !hasExcel {
+		return false
+	}
+	return looksLikeSkillConversion(req.Message)
 }
 
 // persistIntent 将分类得到的意图作为专用的 "intent" 消息存入消息表。

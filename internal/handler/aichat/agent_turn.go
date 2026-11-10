@@ -205,17 +205,21 @@ func (t *aiStreamTranslator) close() {
 	t.closeOnce.Do(func() { close(t.done) })
 }
 
-// finalizeArtifacts 复刻官方 /agent-chat 完成路径中的产物处理：排空会话沙箱
-// 输出目录、解析答案引用的文件名、把 sandbox: 引用重写为稳定句柄、把产物
-// 列表附到助手消息，并向客户端推送 artifacts 事件。返回（可能重写过的）
-// 最终回答文本。
+// collectAndRewriteArtifacts 复刻官方 /agent-chat 完成路径中的产物处理：排空
+// 会话沙箱输出目录、解析答案引用的文件名、把 sandbox: 引用重写为稳定句柄、把
+// 产物列表附到助手消息（不推送事件）。返回本轮产物列表、（可能重写过的）最终
+// 回答文本，以及是否有产物。事件推送由调用方决定（normal 流发 artifacts 事件，
+// skill 流还要先内联 previews 再发 answer_done）。
 //
 // 全程 best-effort：collector 未接入、会话未绑定沙箱或本轮没有产物时，
-// 原文返回且不推送事件，不打断完成路径。
-func (t *aiStreamTranslator) finalizeArtifacts(ctx context.Context, final string) string {
+// 原文返回且 hasAttached=false，不打断完成路径。
+func (t *aiStreamTranslator) collectAndRewriteArtifacts(
+	ctx context.Context,
+	final string,
+) (types.MessageArtifacts, string, bool) {
 	collector := t.h.artifactCollector
 	if collector == nil || t.asstMsg.SessionID == "" {
-		return final
+		return nil, final, false
 	}
 	// 客户端可能在回答结束后立即断开；回收需脱离请求生命周期继续执行，
 	// 与 Web 端的 WithoutCancel 一致。租户显式注入，避免事件总线上下文
@@ -251,7 +255,16 @@ func (t *aiStreamTranslator) finalizeArtifacts(ctx context.Context, final string
 		collector.BindArtifactsToMessage(collectCtx, t.asstMsg.ID, previous)
 		final = types.ClarifyArtifactVersions(final, attached, previous,
 			types.LanguageFromContextOrDefault(ctx))
+		return attached, final, true
+	}
+	return nil, final, false
+}
 
+// finalizeArtifacts 是 normal 流的产物处理入口：收集产物、重写引用，并在有
+// 产物时推送 artifacts 事件。
+func (t *aiStreamTranslator) finalizeArtifacts(ctx context.Context, final string) string {
+	attached, final, hasAttached := t.collectAndRewriteArtifacts(ctx, final)
+	if hasAttached {
 		t.writeArtifacts(attached, final)
 	}
 	return final

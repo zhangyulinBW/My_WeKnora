@@ -141,6 +141,20 @@ type AIChatConfig struct {
 	// processApproval page), task-lookup requests return an approval_tasks
 	// event; otherwise they fall back to normal streaming Q&A.
 	ApprovalSearchEnabled bool `yaml:"approval_search_enabled" json:"approval_search_enabled"`
+	// SkillAgentID is the custom agent that executes skills for the skill intent
+	// (e.g. xlsx → static HTML page). Its system prompt carries the skill-run
+	// contract documented in internal/handler/aichat/SKILL_PROMPT.md. Empty
+	// falls back to the inline Skill definition below, then AgentID.
+	SkillAgentID string `yaml:"skill_agent_id" json:"skill_agent_id"`
+	// SkillEnabled controls whether the skill intent is active. When true (and a
+	// suitable skill agent is resolvable), xlsx-conversion requests run through a
+	// dedicated skill agent and stream answer_chunk + an answer_done carrying
+	// inline previews; otherwise they fall back to normal streaming Q&A. Unlike
+	// search/approval, skill is not gated on page type.
+	SkillEnabled bool `yaml:"skill_enabled" json:"skill_enabled"`
+	// Skill inline-defines the agent used by the skill intent directly in
+	// config.yaml. When non-nil it takes precedence over SkillAgentID.
+	Skill *AIChatAgentConfig `yaml:"skill" json:"skill,omitempty"`
 	// Agent inline-defines the agent used by the normal intent (regular Q&A)
 	// directly in config.yaml, without a pre-created custom_agents DB row.
 	// When non-nil it takes precedence over AgentID.
