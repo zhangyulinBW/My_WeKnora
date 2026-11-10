@@ -177,7 +177,7 @@ ai_chat:
   # 技能执行智能体 ID（其 system_prompt 承载 skill 意图的技能运行契约，
   # 参考全文见 internal/handler/aichat/SKILL_PROMPT.md）；留空则回退到下方
   # skill: 内联定义，再回退到 agent_id。
-  skill_agent_id: "212fb409-a454-4240-8112-0884cd131f83"
+  skill_agent_id: "88626038-bc45-4cac-b6ef-bf2c613b82ab"
   # 技能执行开关：true 时，携带 Excel 附件且消息含转换诉求（网页/HTML/静态页）
   # 的请求走 skill 流程（answer_chunk + 携带 previews 的 answer_done）；否则
   # 回退流式问答。skill 不受页面类型限制。
