@@ -201,6 +201,16 @@ handleMessage
 - **搜索两阶段**：`message` 识别为搜索意图、但 `start` 未提供 `searchFields` 时，返回
   `need_search_context` 并写入内存态 `h.actions`（`pendingAction`），等前端用 `search_context`
   阶段回传字段后再生成草稿。**该状态仅存内存，重启丢失。**
+- **结构化载荷落库（`ai_chat_payload`）**：`search_draft` / `approval_draft` /
+  `approval_task_selection` 三种终止事件在成功发出的同时，把与事件同构的载荷（`intent` +
+  `eventType` + `conditions`/`searchBody` / `approvalDrafts` / `selectedTasks` / `suggestions`）
+  随助手消息写入 messages 表的 `ai_chat_payload` JSONB 列（迁移 `000136` / sqlite `000052`）。
+  官方历史接口 `GET /api/v1/messages/{session_id}/load` 因此能返回结构化 JSON，前端刷新恢复
+  会话时按 `eventType` 判别即可复用实时流的渲染逻辑。注意：该列**不进入 LLM 上下文**
+  （历史构建器只读 Content），也不写入 Content——approval / approval_search 的 Content 仍只存
+  正文纯文本（防止 normal 意图模仿 JSON），search 意图的 Content 仍存 envelope JSON（refinement
+  依赖）。契约违约与错误轮次不写载荷；`selectedTasks` 只含 activityId + assignmentId，回放时
+  找不到对应任务需容错。载荷类型与序列化见 `types.go` 的 `AIChatEventPayload`。
 - **模型优先级**：`ai_chat.model_id`（配置）> 智能体自身 `model_id`，见 `applyModelOverride`。
 - **主智能体解析顺序**：`ai_chat.agent` 内联定义（config.yaml 直接定义，无需建库）
   → `ai_chat.agent_id`（custom_agents 表）→ 环境变量 `WEKNORA_AI_AGENT_ID`

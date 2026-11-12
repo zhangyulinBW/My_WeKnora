@@ -234,6 +234,47 @@ type AISuggestionItem struct {
 	Text string `json:"text"`
 }
 
+// AIChatEventPayload 是 ai_chat 终止事件的结构化载荷落库形态（messages
+// 表 ai_chat_payload 列）。字段名与 AIEvent 的 SSE json tag 保持一致，
+// 前端从官方历史接口（GET /messages/{session_id}/load）读回时按 eventType
+// 判别，复用与实时流相同的渲染逻辑。
+//
+// 只在成功发出终止事件时写入；契约违约与错误轮次不写（nil）。该列不进入
+// LLM 上下文（历史构建器只读 Content），也不写入 Content，因此不影响
+// approval/approval_search「只存正文纯文本防止 normal 意图模仿 JSON」的设计；
+// search 意图的 Content 维持存 envelope JSON 不变（refinement 依赖）。
+type AIChatEventPayload struct {
+	// Intent 是产生该事件的意图标识（search / approval / approval_search）。
+	Intent string `json:"intent"`
+	// EventType 是对应的 SSE 终止事件类型（如 search_draft）。
+	EventType string `json:"eventType"`
+	// Conditions / SearchBody 是 search 意图经硬校验后的条件草稿。
+	Conditions []AICondition   `json:"conditions,omitempty"`
+	SearchBody json.RawMessage `json:"searchBody,omitempty"`
+	// ApprovalDrafts 是 approval 意图后端组装后的签审草案（含 draftId/
+	// revision/status），自包含完整表单，可独立回放。
+	ApprovalDrafts []*ApprovalDraft `json:"approvalDrafts,omitempty"`
+	// SelectedTasks 是 approval_search 意图筛选出的任务绑定（activityId +
+	// assignmentId）。回放时前端按绑定在本地任务索引中定位，找不到需容错。
+	SelectedTasks []ApprovalTaskRef `json:"selectedTasks,omitempty"`
+	// Suggestions 是本轮推荐问题，与终止事件携带的一致。
+	Suggestions []AISuggestionItem `json:"suggestions,omitempty"`
+}
+
+// marshalAIChatEventPayload 把终止事件载荷序列化为可落库的 types.JSON。
+// 载荷缺失（nil/无事件类型）或序列化失败都返回 nil——载荷落库是历史回放
+// 的增强能力，任何失败都不允许阻断回复流。
+func marshalAIChatEventPayload(p *AIChatEventPayload) types.JSON {
+	if p == nil || p.EventType == "" {
+		return nil
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil
+	}
+	return types.JSON(b)
+}
+
 // AI event `type` values.
 const (
 	AIEventAnswerChunk           = "answer_chunk"

@@ -446,6 +446,19 @@ func (t *approvalTaskSelectionTranslator) subscribe(bus *event.EventBus) {
 			}
 		}
 
+		// 终止事件结构化载荷落库：selectedTasks 只含任务绑定，Content 保持
+		// 正文纯文本不变，载荷供官方历史接口回放任务选择卡片。绑定校验失败
+		// 的轮次在上方的违约分支提前返回，不会留下不可用载荷。
+		t.asstMsg.AIStructuredPayload = marshalAIChatEventPayload(&AIChatEventPayload{
+			Intent:        string(IntentApprovalSearch),
+			EventType:     AIEventApprovalTaskSelection,
+			SelectedTasks: selectedTasks,
+			Suggestions:   suggestions,
+		})
+		if err := t.h.messageService.UpdateMessage(updateCtx, t.asstMsg); err != nil {
+			logger.Warnf(ctx, "failed to persist ai chat payload for message %s: %v", t.asstMsg.ID, err)
+		}
+
 		// 单条 approval_task_selection 终止事件：正文说明复用 message，任务绑定
 		// 在 selectedTasks（只含 activityId + assignmentId），推荐问题在
 		// suggestions；其后不追加 answer_done，也不回显模型输出 envelope。

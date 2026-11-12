@@ -166,9 +166,10 @@ func TestApprovalTranslatorEmitsSingleDraftEvent(t *testing.T) {
 	}
 
 	// 助手消息历史只存正文纯文本：envelope JSON 仅在事件交付，避免 normal
-	// 意图模仿历史格式把普通回答输出成 JSON 文本。
-	if len(msgSvc.updated) != 1 {
-		t.Fatalf("assistant message updates = %d", len(msgSvc.updated))
+	// 意图模仿历史格式把普通回答输出成 JSON 文本。结构化载荷在第二次更新
+	// 中独立落库（ai_chat_payload 列），不触碰 Content。
+	if len(msgSvc.updated) != 2 {
+		t.Fatalf("assistant message updates = %d, want content then payload", len(msgSvc.updated))
 	}
 	content := msgSvc.updated[0].Content
 	if content != ev.Message {
@@ -179,6 +180,23 @@ func TestApprovalTranslatorEmitsSingleDraftEvent(t *testing.T) {
 	}
 	if !msgSvc.updated[0].IsCompleted {
 		t.Fatal("assistant message should be marked completed")
+	}
+
+	var payload AIChatEventPayload
+	if err := json.Unmarshal(msgSvc.updated[1].AIStructuredPayload, &payload); err != nil {
+		t.Fatalf("decode ai chat payload: %v (raw: %s)", err, msgSvc.updated[1].AIStructuredPayload)
+	}
+	if payload.Intent != string(IntentApproval) || payload.EventType != AIEventApprovalDraft {
+		t.Fatalf("payload intent/eventType = %s/%s", payload.Intent, payload.EventType)
+	}
+	if len(payload.ApprovalDrafts) != 1 || payload.ApprovalDrafts[0].DraftID != d.DraftID {
+		t.Fatalf("payload drafts = %+v, want the assembled draft", payload.ApprovalDrafts)
+	}
+	if len(payload.Suggestions) != 0 {
+		t.Fatalf("payload suggestions = %+v, want none", payload.Suggestions)
+	}
+	if msgSvc.updated[1].Content != ev.Message {
+		t.Fatalf("payload update must keep content, got %q", msgSvc.updated[1].Content)
 	}
 }
 
@@ -287,13 +305,18 @@ func TestApprovalTranslatorContractViolationEmitsCodedError(t *testing.T) {
 
 func TestApprovalTranslatorInvalidJSONEmitsCodedError(t *testing.T) {
 	deps := approvalTestDeps()
-	bus, recorder, _ := newApprovalTestTranslator(t, deps, true)
+	bus, recorder, msgSvc := newApprovalTestTranslator(t, deps, true)
 
 	emitComplete(t, bus, "抱歉，我无法生成 JSON。")
 
 	frames := parseSSEFrames(t, recorder.Body.String())
 	if len(frames) != 1 || frames[0].Type != AIEventError || frames[0].Code != AIErrorCodeApprovalDraft {
 		t.Fatalf("frames = %+v", frames)
+	}
+	// 违约轮次只保留正文（原始输出）落库，不写结构化载荷。
+	if len(msgSvc.updated) != 1 || msgSvc.updated[0].AIStructuredPayload != nil {
+		t.Fatalf("violation turn must not persist a payload: updates=%d payload=%s",
+			len(msgSvc.updated), msgSvc.updated[0].AIStructuredPayload)
 	}
 }
 
@@ -336,6 +359,18 @@ func TestApprovalTranslatorAttachesSuggestions(t *testing.T) {
 	}
 	if len(frames[0].Suggestions) != 2 || !strings.Contains(frames[0].Suggestions[0].Text, "完成签核") {
 		t.Fatalf("suggestions = %+v", frames[0].Suggestions)
+	}
+
+	// 载荷与事件同构：推荐问题一并落库，历史回放可恢复。
+	if len(msgSvc.updated) != 2 {
+		t.Fatalf("assistant message updates = %d, want content then payload", len(msgSvc.updated))
+	}
+	var payload AIChatEventPayload
+	if err := json.Unmarshal(msgSvc.updated[1].AIStructuredPayload, &payload); err != nil {
+		t.Fatalf("decode ai chat payload: %v", err)
+	}
+	if len(payload.Suggestions) != 2 || payload.Suggestions[0].ID != frames[0].Suggestions[0].ID {
+		t.Fatalf("payload suggestions = %+v", payload.Suggestions)
 	}
 }
 

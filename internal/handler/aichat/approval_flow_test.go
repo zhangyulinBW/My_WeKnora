@@ -50,6 +50,7 @@ func (f *approvalFlowSessionService) AgentQA(ctx context.Context, req *types.QAR
 type approvalFlowMessageService struct {
 	interfaces.MessageService
 	created []*types.Message
+	updated []*types.Message
 }
 
 func (f *approvalFlowMessageService) CreateMessage(_ context.Context, m *types.Message) (*types.Message, error) {
@@ -60,7 +61,8 @@ func (f *approvalFlowMessageService) CreateMessage(_ context.Context, m *types.M
 	return m, nil
 }
 
-func (f *approvalFlowMessageService) UpdateMessage(_ context.Context, _ *types.Message) error {
+func (f *approvalFlowMessageService) UpdateMessage(_ context.Context, m *types.Message) error {
+	f.updated = append(f.updated, m)
 	return nil
 }
 
@@ -172,6 +174,25 @@ func TestApprovalFlowEndToEndWithRealPayload(t *testing.T) {
 	}
 	if roles[approvalContextRole] != 1 || roles["user"] != 1 || roles["assistant"] != 1 {
 		t.Fatalf("persisted roles = %v", roles)
+	}
+
+	// 结构化载荷落库：第二次助手消息更新携带与事件同构的草案 JSON；
+	// Content 全程保持正文纯文本。
+	if len(msgSvc.updated) != 2 {
+		t.Fatalf("assistant message updates = %d, want content then payload", len(msgSvc.updated))
+	}
+	var payload AIChatEventPayload
+	if err := json.Unmarshal(msgSvc.updated[1].AIStructuredPayload, &payload); err != nil {
+		t.Fatalf("decode ai chat payload: %v (raw: %s)", err, msgSvc.updated[1].AIStructuredPayload)
+	}
+	if payload.Intent != string(IntentApproval) || payload.EventType != AIEventApprovalDraft {
+		t.Fatalf("payload intent/eventType = %s/%s", payload.Intent, payload.EventType)
+	}
+	if len(payload.ApprovalDrafts) != 1 || payload.ApprovalDrafts[0].DraftID != d.DraftID {
+		t.Fatalf("payload drafts = %+v, want the assembled draft", payload.ApprovalDrafts)
+	}
+	if strings.Contains(msgSvc.updated[1].Content, "approvalDrafts") {
+		t.Fatalf("payload update must keep plain content: %s", msgSvc.updated[1].Content)
 	}
 }
 

@@ -369,8 +369,8 @@ func TestApprovalSearchFlowEndToEnd(t *testing.T) {
 	if roles[approvalContextRole] != 1 || roles["user"] != 1 || roles["assistant"] != 1 {
 		t.Fatalf("persisted roles = %v", roles)
 	}
-	if len(msgSvc.updated) != 1 {
-		t.Fatalf("assistant message updates = %d, want 1", len(msgSvc.updated))
+	if len(msgSvc.updated) != 2 {
+		t.Fatalf("assistant message updates = %d, want content then payload", len(msgSvc.updated))
 	}
 	for _, m := range msgSvc.created {
 		if m.Role == "assistant" {
@@ -384,6 +384,21 @@ func TestApprovalSearchFlowEndToEnd(t *testing.T) {
 				t.Fatal("assistant message should be completed")
 			}
 		}
+	}
+
+	// 结构化载荷落库：任务绑定与事件同构，Content 不被改写。
+	var payload AIChatEventPayload
+	if err := json.Unmarshal(msgSvc.updated[1].AIStructuredPayload, &payload); err != nil {
+		t.Fatalf("decode ai chat payload: %v (raw: %s)", err, msgSvc.updated[1].AIStructuredPayload)
+	}
+	if payload.Intent != string(IntentApprovalSearch) || payload.EventType != AIEventApprovalTaskSelection {
+		t.Fatalf("payload intent/eventType = %s/%s", payload.Intent, payload.EventType)
+	}
+	if len(payload.SelectedTasks) != 2 || payload.SelectedTasks[0].ActivityID != "90A5FEA6080A43CABADFF7BF76C417EA" {
+		t.Fatalf("payload selectedTasks = %+v", payload.SelectedTasks)
+	}
+	if strings.Contains(msgSvc.updated[1].Content, "selectedTasks") {
+		t.Fatalf("payload update must keep plain content: %s", msgSvc.updated[1].Content)
 	}
 }
 
@@ -446,7 +461,7 @@ func TestApprovalSearchFlowRepairsInvalidTaskRef(t *testing.T) {
 func TestApprovalSearchFlowRejectsInvalidTaskRefAfterRepair(t *testing.T) {
 	invalid := `{"message":"找到 1 条。","tasks":[{"activityId":"NOT-IN-INDEX","assignmentId":"NOPE"}]}`
 
-	body, model, _, _, _ := runApprovalSearchFlow(t, nil, invalid, invalid)
+	body, model, msgSvc, _, _ := runApprovalSearchFlow(t, nil, invalid, invalid)
 
 	if len(model.calls) != 1 {
 		t.Fatalf("model calls = %d, want 1 repair call", len(model.calls))
@@ -463,6 +478,11 @@ func TestApprovalSearchFlowRejectsInvalidTaskRefAfterRepair(t *testing.T) {
 	}
 	if terminal.Code != AIErrorCodeApprovalTask {
 		t.Fatalf("error code = %q, want %q", terminal.Code, AIErrorCodeApprovalTask)
+	}
+	// 违约轮次只保留原始输出便于排查，不写结构化载荷。
+	if len(msgSvc.updated) != 1 || msgSvc.updated[0].AIStructuredPayload != nil {
+		t.Fatalf("violation turn must not persist a payload: updates=%d payload=%s",
+			len(msgSvc.updated), msgSvc.updated[0].AIStructuredPayload)
 	}
 }
 

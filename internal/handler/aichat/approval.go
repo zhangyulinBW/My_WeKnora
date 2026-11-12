@@ -541,6 +541,19 @@ func (t *approvalDraftTranslator) subscribe(bus *event.EventBus) {
 			}
 		}
 
+		// 终止事件结构化载荷落库：草案 JSON 只在这里持久化（Content 保持
+		// 正文纯文本不变），供官方历史接口回放草案卡片。放在契约校验与草案
+		// 组装之后，违约/错误轮次不会留下不可用草案的载荷。
+		t.asstMsg.AIStructuredPayload = marshalAIChatEventPayload(&AIChatEventPayload{
+			Intent:         string(IntentApproval),
+			EventType:      AIEventApprovalDraft,
+			ApprovalDrafts: drafts,
+			Suggestions:    suggestions,
+		})
+		if err := t.h.messageService.UpdateMessage(updateCtx, t.asstMsg); err != nil {
+			logger.Warnf(ctx, "failed to persist ai chat payload for message %s: %v", t.asstMsg.ID, err)
+		}
+
 		// 单条 approval_draft 终止事件：正文说明复用 message 字段，草案在
 		// approvalDrafts 数组，推荐问题在 suggestions（与 search_draft 携带
 		// Conditions/Suggestions 的方式一致，不追加 answer_done，也不回显

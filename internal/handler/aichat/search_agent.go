@@ -188,6 +188,20 @@ func (t *searchDraftTranslator) subscribe(bus *event.EventBus) {
 			}
 		}
 
+		// 终止事件结构化载荷落库（含推荐问题），内容与 search_draft 事件
+		// 一致，供官方历史接口回放条件卡片。这里在首次落库后再补一次更新，
+		// 保证契约违约/澄清等提前返回路径不会携带不可用草稿的载荷。
+		t.asstMsg.AIStructuredPayload = marshalAIChatEventPayload(&AIChatEventPayload{
+			Intent:      string(IntentSearch),
+			EventType:   AIEventSearchDraft,
+			Conditions:  result.Conditions,
+			SearchBody:  result.SearchBody,
+			Suggestions: suggestions,
+		})
+		if err := t.h.messageService.UpdateMessage(updateCtx, t.asstMsg); err != nil {
+			logger.Warnf(ctx, "failed to persist ai chat payload for message %s: %v", t.asstMsg.ID, err)
+		}
+
 		needConfirm := true
 		if t.c.Request.Context().Err() != nil {
 			t.close()

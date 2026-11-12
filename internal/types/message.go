@@ -550,6 +550,13 @@ type Message struct {
 	// spot. Persisted rather than only streamed so reopening a conversation
 	// still explains what the answer saw.
 	UsedMemories UsedMemories `json:"used_memories,omitempty" gorm:"type:jsonb;column:used_memories"`
+	// AIStructuredPayload 是 ai_chat 终止事件的结构化载荷（search_draft /
+	// approval_draft / approval_task_selection，含 conditions、searchBody、
+	// approvalDrafts、selectedTasks、suggestions），随助手消息在发出终止
+	// 事件的同时落库，供官方历史接口 GET /messages/{session_id}/load 回放
+	// 结构化卡片。历史构建器只读 Content，本列不会进入 LLM 上下文；nil 表示
+	// 该轮没有结构化载荷（普通问答、失败的轮次）。
+	AIStructuredPayload JSON `json:"ai_chat_payload,omitempty" gorm:"type:jsonb;column:ai_chat_payload"`
 	// SandboxCheckpoint is the git commit this assistant turn produced in the
 	// session sandbox's /workspace. Nil for user messages, for turns that ran
 	// without a sandbox, and for turns whose commit failed (best-effort — a
