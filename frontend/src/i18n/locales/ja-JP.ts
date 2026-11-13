@@ -6041,6 +6041,8 @@ export default {
         viewGuide: '組み込みモデルのガイドを見る'
       },
       builtinTag: '組み込み',
+      modelId: 'モデルID',
+      copyId: 'モデルIDをコピー',
       confirmDelete: 'モデル「{name}」を削除しますか？',
       usage: {
         title: 'モデルを削除できません',

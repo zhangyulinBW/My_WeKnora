@@ -24,15 +24,16 @@ import (
 // searchDraftDeps 汇聚搜索草稿完成路径所需的全部依赖：生成条件所依据的
 // 结构化上下文，以及输出契约违约时做纠正重试所需的智能体与提示词材料。
 type searchDraftDeps struct {
-	h            *AIChatHandler
-	agent        *types.CustomAgent // 已应用 ai_chat.model_id 覆盖的 search agent
-	message      string             // 用户原始请求（纠正重试的提示词材料）
-	page         *AIPageContext
-	searchFields []AISearchField
-	searchBody   json.RawMessage
-	itemData     json.RawMessage // 页面数据载荷，不限于 singleData（largeTable 可为表格数据）
-	rules        *AIConditionRules
-	lang         string
+	h               *AIChatHandler
+	agent           *types.CustomAgent // 已应用 ai_chat.model_id 覆盖的 search agent
+	message         string             // 用户原始请求（纠正重试的提示词材料）
+	page            *AIPageContext
+	searchFields    []AISearchField
+	searchBody      json.RawMessage
+	itemData        json.RawMessage // 页面数据载荷，不限于 singleData（largeTable 可为表格数据）
+	additionalItems json.RawMessage // 额外资讯（与 itemdata 同级的补充数据，数组或 JSON）
+	rules           *AIConditionRules
+	lang            string
 }
 
 // repair 在模型输出缺少必需的 message 字段时，把原提示词与违约输出一并
@@ -46,7 +47,7 @@ func (d *searchDraftDeps) repair(ctx context.Context, badOutput string) (*AISear
 	systemPrompt := types.RenderPromptPlaceholders(d.agent.Config.SystemPrompt, types.PlaceholderValues{
 		"language": d.lang,
 	})
-	userContent := buildSearchPrompt(d.message, d.page, d.searchFields, d.itemData, d.rules, d.lang)
+	userContent := buildSearchPrompt(d.message, d.page, d.searchFields, d.itemData, d.additionalItems, d.rules, d.lang)
 	resp, err := chatModel.Chat(ctx, []chat.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userContent},
@@ -182,9 +183,23 @@ func (t *searchDraftTranslator) subscribe(bus *event.EventBus) {
 		// 同时基于会话数据和查询生成推荐问题。
 		var suggestions []AISuggestionItem
 		if recommendAgent, rerr := t.h.resolveRecommendAgent(ctx); rerr == nil {
-			if s, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.deps.page, t.deps.searchFields, t.deps.searchBody, t.deps.itemData, t.deps.message); serr == nil {
+			if s, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.deps.page, t.deps.searchFields, t.deps.searchBody, t.deps.itemData, t.deps.additionalItems, t.deps.message); serr == nil {
 				suggestions = s
 			}
+		}
+
+		// 终止事件结构化载荷落库（含推荐问题），内容与 search_draft 事件
+		// 一致，供官方历史接口回放条件卡片。这里在首次落库后再补一次更新，
+		// 保证契约违约/澄清等提前返回路径不会携带不可用草稿的载荷。
+		t.asstMsg.AIStructuredPayload = marshalAIChatEventPayload(&AIChatEventPayload{
+			Intent:      string(IntentSearch),
+			EventType:   AIEventSearchDraft,
+			Conditions:  result.Conditions,
+			SearchBody:  result.SearchBody,
+			Suggestions: suggestions,
+		})
+		if err := t.h.messageService.UpdateMessage(updateCtx, t.asstMsg); err != nil {
+			logger.Warnf(ctx, "failed to persist ai chat payload for message %s: %v", t.asstMsg.ID, err)
 		}
 
 		needConfirm := true
@@ -226,7 +241,8 @@ func (t *searchDraftTranslator) subscribe(bus *event.EventBus) {
 // buildAIMetadata 注入方式一致）。任务指令与输出契约由 search agent 自己的
 // system_prompt 定义，代码不注入任务文案，避免与提示词形成双份契约。
 // itemdata 不限于 singleData（largeTable 也可携带表格数据），与 normal 流一致
-// 注入，供字段判断参考真实数据。
+// 注入，供字段判断参考真实数据；additionalItems（额外资讯，数组或 JSON）同级
+// 注入，供条件生成参考补充信息。
 // dateContext 优先取前端两阶段路径的 conditionRules；快捷路径（start 已带
 // searchFields）没有规则时由服务端用当前日期合成，search agent 的日期换算
 // 规则（以 dateContext.currentDate 为基准）因此始终可用。
@@ -235,19 +251,22 @@ func buildSearchMetadata(
 	searchFields []AISearchField,
 	searchBody json.RawMessage,
 	itemData json.RawMessage,
+	additionalItems json.RawMessage,
 	rules *AIConditionRules,
 ) types.JSON {
 	payload := struct {
-		Page         *AIPageContext  `json:"page,omitempty"`
-		SearchFields []AISearchField `json:"searchFields,omitempty"`
-		SearchBody   json.RawMessage `json:"searchBody,omitempty"`
-		ItemData     json.RawMessage `json:"itemdata,omitempty"`
-		DateContext  *AIDateContext  `json:"dateContext,omitempty"`
+		Page            *AIPageContext  `json:"page,omitempty"`
+		SearchFields    []AISearchField `json:"searchFields,omitempty"`
+		SearchBody      json.RawMessage `json:"searchBody,omitempty"`
+		ItemData        json.RawMessage `json:"itemdata,omitempty"`
+		AdditionalItems json.RawMessage `json:"additionalItems,omitempty"`
+		DateContext     *AIDateContext  `json:"dateContext,omitempty"`
 	}{
-		Page:         page,
-		SearchFields: searchFields,
-		SearchBody:   searchBody,
-		ItemData:     itemData,
+		Page:            page,
+		SearchFields:    searchFields,
+		SearchBody:      searchBody,
+		ItemData:        itemData,
+		AdditionalItems: additionalItems,
 	}
 	if rules != nil && rules.DateContext.CurrentDate != "" {
 		payload.DateContext = &rules.DateContext

@@ -10,6 +10,7 @@ package aichat
 // FileService，不走租户/智能体级 ImageStorageProvider 解析。
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -175,6 +176,21 @@ func (h *AIChatHandler) processAttachments(
 		}
 	}
 
+	// 附件要被 AgentQA 的沙箱 staging 复制进 /workspace/input，必须带
+	// temporary document ID：MessageAttachment.URL 是 json:"-" 不落库，staging
+	// 靠 attachment.ID 从 temporary_documents 表恢复存储 URL（见
+	// session_attachment_staging.go 的 resolveSessionAttachmentURLs）。仅在
+	// temporaryDocuments 注入时执行；未注入（如单测或降级场景）回退「附件不落
+	// 沙箱」的历史行为，不影响请求。
+	var stagingSessionID string
+	if h.temporaryDocuments != nil {
+		sess, err := h.getOrCreateSession(ctx, req.ConversationID, tenantID)
+		if err != nil || sess == nil {
+			return fmt.Errorf("create session for attachment staging: %w", err)
+		}
+		stagingSessionID = sess.ID
+	}
+
 	attachments := make(types.MessageAttachments, len(req.Attachments))
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(req.Attachments))
@@ -188,6 +204,22 @@ func (h *AIChatHandler) processAttachments(
 			if err != nil {
 				errChan <- fmt.Errorf("attachment %d processing failed: %w", idx+1, err)
 				return
+			}
+			// 为附件建立 temporary document 记录并回填 ID，使 staging 能恢复
+			// 存储 URL。重复存储/异步解析是方案 A 接受的代价（temporary
+			// document 有 TTL，由 CleanupExpired 回收）；失败不阻断请求，只降级
+			// 为「附件不落沙箱」的历史行为。
+			if h.temporaryDocuments != nil {
+				doc, docErr := h.temporaryDocuments.Create(
+					ctx, tenantID, stagingSessionID, processed.FileName, "", processed.FileSize,
+					bytes.NewReader(decoded[idx]), types.TemporaryDocumentCreateOptions{},
+				)
+				if docErr != nil {
+					logger.Warnf(ctx, "create temporary document for attachment %s failed: %v",
+						processed.FileName, docErr)
+				} else {
+					processed.ID = doc.ID
+				}
 			}
 			attachments[idx] = *processed
 		}(i, upload)

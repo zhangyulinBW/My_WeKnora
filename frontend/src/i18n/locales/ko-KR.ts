@@ -3812,6 +3812,8 @@ export default {
     description: '다양한 유형의 AI 모델을 관리합니다. Ollama 로컬 모델과 원격 API를 지원합니다',
     copySuffix: ' 사본',
     builtinTag: '기본제공',
+    modelId: '모델 ID',
+    copyId: '모델 ID 복사',
     confirmDelete: '모델 "{name}"을(를) 삭제하시겠습니까?',
     usage: {
       title: '모델을 삭제할 수 없습니다',

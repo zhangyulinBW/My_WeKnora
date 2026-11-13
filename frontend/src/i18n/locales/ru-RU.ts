@@ -3812,6 +3812,8 @@ export default {
     description: 'Управление типами AI‑моделей: локальные (Ollama) и удалённые API',
     copySuffix: ' копия',
     builtinTag: 'Встроенная',
+    modelId: 'ID модели',
+    copyId: 'Скопировать ID модели',
     confirmDelete: 'Удалить модель «{name}»?',
     usage: {
       title: 'Модель нельзя удалить',

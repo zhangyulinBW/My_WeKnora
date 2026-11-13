@@ -59,6 +59,20 @@ func approvalTestTask2() *approvalTaskContext {
 
 func strPtr(s string) *string { return &s }
 
+// approvalTestAssessment 构造一份合法的智慧签核评估，供草案结构校验与组装
+// 用例复用。
+func approvalTestAssessment() *ApprovalAssessment {
+	return &ApprovalAssessment{
+		Recommendation: "proceed",
+		Summary:        "资料齐备，建议继续送审。",
+		Reasons:        "已提供采购内容与金额资料，未发现明显缺项。",
+	}
+}
+
+// approvalAssessmentJSON 是同一份评估的 JSON 片段（带尾逗号），供测试
+// envelope 直接拼接在 form 之前。
+const approvalAssessmentJSON = `"AIassessment":{"recommendation":"proceed","summary":"资料齐备，建议继续送审。","reasons":"已提供采购内容与金额资料，未发现明显缺项。"},`
+
 func TestValidateApprovalDrafts(t *testing.T) {
 	binding := approvalTestBinding()
 	cfg := approvalTestConfig(`"1"`)
@@ -73,21 +87,23 @@ func TestValidateApprovalDrafts(t *testing.T) {
 		issues   int    // 期望违约条数
 		contains string // 至少包含的违约关键字
 	}{
-		{"valid", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm}}, single, 0, ""},
-		{"null pathId allowed", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: &ApprovalForm{}}}, single, 0, ""},
+		{"valid", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment(), Form: validForm}}, single, 0, ""},
+		{"null pathId allowed", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment(), Form: &ApprovalForm{}}}, single, 0, ""},
 		{"multi task drafts allowed", []approvalModelDraft{
-			{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm},
-			{ActivityID: "ACT-2", AssignmentID: "ASG-2", Form: &ApprovalForm{}},
+			{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment(), Form: validForm},
+			{ActivityID: "ACT-2", AssignmentID: "ASG-2", AIAssessment: approvalTestAssessment(), Form: &ApprovalForm{}},
 		}, multi, 0, ""},
-		{"unknown pathId", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: &ApprovalForm{PathID: strPtr("P_GHOST")}}}, single, 1, "pathId"},
-		{"unknown task id", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: &ApprovalForm{CheckedTaskIDs: []string{"T_1", "T_GHOST"}}}}, single, 1, "清单条目"},
-		{"binding mismatch", []approvalModelDraft{{ActivityID: "ACT-9", AssignmentID: "ASG-9", Form: validForm}}, single, 1, "不属于本次已添加"},
-		{"no added task", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm}}, approvalTestTaskSet(), 1, "没有已添加"},
-		{"no matching config", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm}}, approvalTestTaskSet(&approvalTaskContext{binding: *binding}), 1, "签审上下文"},
-		{"missing form", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1"}}, single, 1, "form"},
+		{"unknown pathId", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment(), Form: &ApprovalForm{PathID: strPtr("P_GHOST")}}}, single, 1, "pathId"},
+		{"unknown task id", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment(), Form: &ApprovalForm{CheckedTaskIDs: []string{"T_1", "T_GHOST"}}}}, single, 1, "清单条目"},
+		{"binding mismatch", []approvalModelDraft{{ActivityID: "ACT-9", AssignmentID: "ASG-9", AIAssessment: approvalTestAssessment(), Form: validForm}}, single, 1, "不属于本次已添加"},
+		{"no added task", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment(), Form: validForm}}, approvalTestTaskSet(), 1, "没有已添加"},
+		{"no matching config", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment(), Form: validForm}}, approvalTestTaskSet(&approvalTaskContext{binding: *binding}), 1, "签审上下文"},
+		{"missing form", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment()}}, single, 1, "form"},
+		{"missing AIassessment", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm}}, single, 1, "AIassessment"},
+		{"empty AIassessment fields", []approvalModelDraft{{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: &ApprovalAssessment{Recommendation: "proceed"}, Form: validForm}}, single, 2, "summary"},
 		{"duplicate binding per task rejected", []approvalModelDraft{
-			{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm},
-			{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: validForm},
+			{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment(), Form: validForm},
+			{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment(), Form: validForm},
 		}, single, 1, "同一任务最多一份"},
 		{"empty drafts always ok", nil, nil, 0, ""},
 	}
@@ -202,12 +218,15 @@ func TestParseApprovalOutput(t *testing.T) {
 		}
 	})
 	t.Run("fenced", func(t *testing.T) {
-		out, err := parseApprovalOutput("```json\n{\"message\":\"ok\",\"drafts\":[{\"activityId\":\"A\",\"assignmentId\":\"B\",\"form\":{\"pathId\":null,\"comments\":\"\",\"checkedTaskIds\":[]}}]}\n```")
+		out, err := parseApprovalOutput("```json\n{\"message\":\"ok\",\"drafts\":[{\"activityId\":\"A\",\"assignmentId\":\"B\",\"AIassessment\":{\"recommendation\":\"insufficient_information\",\"summary\":\"资料不足\",\"reasons\":\"缺少验收依据\"},\"form\":{\"pathId\":null,\"comments\":\"\",\"checkedTaskIds\":[]}}]}\n```")
 		if err != nil || len(out.Drafts) != 1 {
 			t.Fatalf("out=%+v err=%v", out, err)
 		}
 		if out.Drafts[0].Form == nil || out.Drafts[0].Form.PathID != nil || out.Drafts[0].Form.Comments != "" {
 			t.Fatalf("form = %+v", out.Drafts[0].Form)
+		}
+		if out.Drafts[0].AIAssessment == nil || out.Drafts[0].AIAssessment.Recommendation != "insufficient_information" {
+			t.Fatalf("AIassessment not parsed: %+v", out.Drafts[0].AIAssessment)
 		}
 	})
 	t.Run("invalid", func(t *testing.T) {
@@ -222,12 +241,21 @@ func TestAssembleApprovalDraft(t *testing.T) {
 	form := &ApprovalForm{PathID: strPtr("P_APPROVE"), Comments: "意见", CheckedTaskIDs: []string{"T_1", "T_1", "T_3"}}
 
 	t.Run("new instance", func(t *testing.T) {
-		d := assembleApprovalDraft(approvalModelDraft{Form: form}, binding, nil)
+		assessment := &ApprovalAssessment{
+			Recommendation: " PROCEED ",
+			Summary:        " 资料齐备 ",
+			Reasons:        " 已核实金额 ",
+		}
+		d := assembleApprovalDraft(approvalModelDraft{AIAssessment: assessment, Form: form}, binding, nil)
 		if d.Revision != 1 || d.DraftID == "" || d.Status != ApprovalStatusEditing {
 			t.Fatalf("draft = %+v", d)
 		}
 		if d.ActivityID != binding.ActivityID || d.AssignmentID != binding.AssignmentID {
 			t.Fatalf("binding not stamped: %+v", d)
+		}
+		if d.AIAssessment == nil || d.AIAssessment.Recommendation != "proceed" ||
+			d.AIAssessment.Summary != "资料齐备" || d.AIAssessment.Reasons != "已核实金额" {
+			t.Fatalf("AIassessment not normalized/copied: %+v", d.AIAssessment)
 		}
 		// 组装时去重并保证非 nil 空切片。
 		if len(d.Form.CheckedTaskIDs) != 2 {
@@ -237,9 +265,12 @@ func TestAssembleApprovalDraft(t *testing.T) {
 
 	t.Run("continues editing instance", func(t *testing.T) {
 		input := &ApprovalDraft{DraftID: "draft-uuid-1", Revision: 2, Status: ApprovalStatusEditing}
-		d := assembleApprovalDraft(approvalModelDraft{Form: form}, binding, input)
+		d := assembleApprovalDraft(approvalModelDraft{AIAssessment: approvalTestAssessment(), Form: form}, binding, input)
 		if d.DraftID != "draft-uuid-1" || d.Revision != 3 {
 			t.Fatalf("draft = %+v, want same id revision 3", d)
+		}
+		if d.AIAssessment == nil || d.AIAssessment.Recommendation != "proceed" {
+			t.Fatalf("AIassessment = %+v", d.AIAssessment)
 		}
 	})
 }
@@ -252,9 +283,9 @@ func TestAssembleApprovalDraftsMultiTask(t *testing.T) {
 	t2.inputDraft = &ApprovalDraft{DraftID: "draft-2", Revision: 4, Status: ApprovalStatusEditing, ActivityID: "ACT-2", AssignmentID: "ASG-2"}
 
 	drafts := assembleApprovalDrafts([]approvalModelDraft{
-		{ActivityID: "ACT-1", AssignmentID: "ASG-1", Form: &ApprovalForm{Comments: "a"}},
-		{ActivityID: "ACT-2", AssignmentID: "ASG-2", Form: &ApprovalForm{Comments: "b"}},
-		{ActivityID: "ACT-9", AssignmentID: "ASG-9", Form: &ApprovalForm{Comments: "x"}}, // 防御性跳过
+		{ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment(), Form: &ApprovalForm{Comments: "a"}},
+		{ActivityID: "ACT-2", AssignmentID: "ASG-2", AIAssessment: approvalTestAssessment(), Form: &ApprovalForm{Comments: "b"}},
+		{ActivityID: "ACT-9", AssignmentID: "ASG-9", AIAssessment: approvalTestAssessment(), Form: &ApprovalForm{Comments: "x"}}, // 防御性跳过
 	}, approvalTestTaskSet(t1, t2))
 
 	if len(drafts) != 2 {
@@ -279,7 +310,7 @@ func TestBuildApprovalMetadataMultiTask(t *testing.T) {
 		ActivityID: "ACT-2", AssignmentID: "ASG-2", Form: &ApprovalForm{Comments: "x"},
 	}
 
-	meta := buildApprovalMetadata(nil, nil, nil, approvalTestTaskSet(t1, t2))
+	meta := buildApprovalMetadata(nil, nil, nil, nil, approvalTestTaskSet(t1, t2))
 	s := string(meta)
 	for _, key := range []string{`"activeTasks"`, `"editingDrafts"`, `"inputFormReadiness"`, `"activityId":"ACT-1"`, `"activityId":"ACT-2"`, `"itemKeyedName":"WF-2026-001"`} {
 		if !strings.Contains(s, key) {
@@ -301,13 +332,13 @@ func TestApprovalOutputProblems(t *testing.T) {
 	}
 	bad := &approvalModelOutput{
 		Message: "正文",
-		Drafts:  []approvalModelDraft{{ActivityID: "X", AssignmentID: "Y", Form: &ApprovalForm{}}},
+		Drafts:  []approvalModelDraft{{ActivityID: "X", AssignmentID: "Y", AIAssessment: approvalTestAssessment(), Form: &ApprovalForm{}}},
 	}
 	if problems := approvalOutputProblems(bad, nil, set); len(problems) != 1 {
 		t.Fatalf("binding mismatch problems = %v", problems)
 	}
 	ok := &approvalModelOutput{Message: "正文", Drafts: []approvalModelDraft{{
-		ActivityID: "ACT-1", AssignmentID: "ASG-1",
+		ActivityID: "ACT-1", AssignmentID: "ASG-1", AIAssessment: approvalTestAssessment(),
 		Form: &ApprovalForm{PathID: strPtr("P_APPROVE"), Comments: "x", CheckedTaskIDs: []string{"T_1"}},
 	}}}
 	if problems := approvalOutputProblems(ok, nil, set); len(problems) != 0 {

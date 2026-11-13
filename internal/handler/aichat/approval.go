@@ -2,8 +2,8 @@ package aichat
 
 // 本文件实现签核意图（approval）的草案生成流程，与搜索草稿流程
 // （search.go / search_agent.go）同构：approval 智能体经 AgentQA 执行，
-// 最终答案不向客户端流式输出，而是解析为「正文说明 + 草案」JSON，
-// 结构卡控后合并为一条 approval_draft 事件（其后不追加 answer_done）。
+// 最终答案不向客户端流式输出，而是解析为「正文说明 + 草案（含 AIassessment）」
+// JSON，结构卡控后合并为一条 approval_draft 事件（其后不追加 answer_done）。
 // draftId/revision/status/任务绑定由后端代码组装与校验，模型只产出
 // 正文与 form，不信任模型输出的任何标识。生成规则（协议文档 3）由
 // approval 智能体的系统提示词承载，参考全文见 APPROVAL_PROMPT.md。
@@ -34,12 +34,14 @@ type approvalModelOutput struct {
 	Drafts  []approvalModelDraft `json:"drafts"`
 }
 
-// approvalModelDraft 是模型产出的一份草案：绑定标识 + 完整 form。
-// 绑定必须与某个已添加任务一致（validateApprovalDrafts 卡控）。
+// approvalModelDraft 是模型产出的一份草案：绑定标识 + 智慧签核评估 + 完整
+// form。绑定必须与某个已添加任务一致（validateApprovalDrafts 卡控）；
+// AIassessment 由模型基于当前任务数据生成，后端只做结构校验与透传。
 type approvalModelDraft struct {
-	ActivityID   string        `json:"activityId"`
-	AssignmentID string        `json:"assignmentId"`
-	Form         *ApprovalForm `json:"form"`
+	ActivityID   string              `json:"activityId"`
+	AssignmentID string              `json:"assignmentId"`
+	AIAssessment *ApprovalAssessment `json:"AIassessment"`
+	Form         *ApprovalForm       `json:"form"`
 }
 
 // parseApprovalOutput 提取并解析模型输出的 JSON envelope（复用搜索流的
@@ -61,6 +63,7 @@ func assembleApprovalDraft(modelDraft approvalModelDraft, binding ApprovalTaskBi
 		ActivityID:   binding.ActivityID,
 		AssignmentID: binding.AssignmentID,
 		Status:       ApprovalStatusEditing,
+		AIAssessment: modelDraft.AIAssessment.normalize(),
 		Form:         modelDraft.Form.normalize(),
 	}
 	if inputDraft != nil && inputDraft.DraftID != "" {
@@ -191,7 +194,7 @@ func (h *AIChatHandler) handleApprovalMessage(
 
 	// 动态字段同步（整体替换语义）：携带新值时合并落库，省略时沿用旧值。
 	h.syncApprovalContext(ctx, session, req)
-	if len(req.ItemData) == 0 || len(req.ApprovalTaskIndex) == 0 {
+	if len(req.ItemData) == 0 || len(req.ApprovalTaskIndex) == 0 || len(req.AdditionalItems) == 0 {
 		if ac := h.loadApprovalContext(ctx, session.ID); ac != nil {
 			if len(req.ItemData) == 0 {
 				req.ItemData = ac.ItemData
@@ -199,11 +202,14 @@ func (h *AIChatHandler) handleApprovalMessage(
 			if len(req.ApprovalTaskIndex) == 0 {
 				req.ApprovalTaskIndex = ac.ApprovalTaskIndex
 			}
+			if len(req.AdditionalItems) == 0 {
+				req.AdditionalItems = ac.AdditionalItems
+			}
 		}
 	}
 	page := req.Page
 	if page == nil {
-		if p, _, _, _ := h.loadStartContext(ctx, session.ID); p != nil {
+		if p, _, _, _, _ := h.loadStartContext(ctx, session.ID); p != nil {
 			page = p
 			req.Page = p
 		}
@@ -233,7 +239,7 @@ func (h *AIChatHandler) handleApprovalMessage(
 	// editing 草案（本轮人工编辑的完整事实）。输入表单的保存/完成条件逐笔
 	// 确定性判定后注入元数据。
 	tasks := buildApprovalTaskSet(data)
-	metadata := buildApprovalMetadata(page, req.ApprovalTaskIndex, req.ItemData, tasks)
+	metadata := buildApprovalMetadata(page, req.ApprovalTaskIndex, req.ItemData, req.AdditionalItems, tasks)
 
 	// 与搜索草稿流一致：优先使用 approval agent 自己配置的模型，
 	// ai_chat.model_id 只在其未声明模型时兜底（经 QARequest.SummaryModelID）。
@@ -278,14 +284,15 @@ func (h *AIChatHandler) handleApprovalMessage(
 	done := make(chan struct{})
 	base := newAIStreamTranslator(h, c, req, assistantMsg, session.TenantID, done)
 	translator := newApprovalDraftTranslator(base, &approvalDraftDeps{
-		h:        h,
-		agent:    approvalAgent,
-		message:  req.Message,
-		metadata: metadata,
-		lang:     detectReplyLanguage(req.Message),
-		page:     page,
-		itemData: req.ItemData,
-		tasks:    tasks,
+		h:               h,
+		agent:           approvalAgent,
+		message:         req.Message,
+		metadata:        metadata,
+		lang:            detectReplyLanguage(req.Message),
+		page:            page,
+		itemData:        req.ItemData,
+		additionalItems: req.AdditionalItems,
+		tasks:           tasks,
 	})
 	translator.subscribe(bus)
 
@@ -322,13 +329,15 @@ func cfgCurrentOrDraftForm(cfg *ApprovalConfigEntry, inputDraft *ApprovalDraft) 
 
 // buildApprovalMetadata 组装签核草案生成的结构化上下文（与 buildSearchMetadata
 // 注入方式一致）。代码只注入数据事实：页面、任务索引、itemData 原文（含草案
-// 结束标记）、全部已添加任务的绑定（activeTasks）、各自的 editing 草案
-// （editingDrafts）与输入表单的保存/完成条件逐笔判定（inputFormReadiness）；
-// 任务指令与输出契约完全由 approval agent 的系统提示词定义，避免双份契约。
+// 结束标记）、additionalItems（额外资讯，数组或 JSON，供草案评估参考）、全部
+// 已添加任务的绑定（activeTasks）、各自的 editing 草案（editingDrafts）与输入
+// 表单的保存/完成条件逐笔判定（inputFormReadiness）；任务指令与输出契约完全由
+// approval agent 的系统提示词定义，避免双份契约。
 func buildApprovalMetadata(
 	page *AIPageContext,
 	approvalTaskIndex json.RawMessage,
 	itemData json.RawMessage,
+	additionalItems json.RawMessage,
 	tasks *approvalTaskSet,
 ) types.JSON {
 	activeTasks := make([]*ApprovalTaskBinding, 0, len(tasks.tasks))
@@ -351,6 +360,7 @@ func buildApprovalMetadata(
 		Page               *AIPageContext           `json:"page,omitempty"`
 		ApprovalTaskIndex  json.RawMessage          `json:"approvalTaskIndex,omitempty"`
 		ItemData           json.RawMessage          `json:"itemData,omitempty"`
+		AdditionalItems    json.RawMessage          `json:"additionalItems,omitempty"`
 		ActiveTasks        []*ApprovalTaskBinding   `json:"activeTasks,omitempty"`
 		EditingDrafts      []*ApprovalDraft         `json:"editingDrafts,omitempty"`
 		InputFormReadiness []*approvalTaskReadiness `json:"inputFormReadiness,omitempty"`
@@ -358,6 +368,7 @@ func buildApprovalMetadata(
 		Page:               page,
 		ApprovalTaskIndex:  approvalTaskIndex,
 		ItemData:           itemData,
+		AdditionalItems:    additionalItems,
 		ActiveTasks:        activeTasks,
 		EditingDrafts:      editingDrafts,
 		InputFormReadiness: readiness,
@@ -369,14 +380,15 @@ func buildApprovalMetadata(
 // approvalDraftDeps 汇聚签核草案完成路径所需的依赖：纠正重试所需的智能体
 // 与提示词材料，以及组装/校验草案所需的全部已添加任务输入事实。
 type approvalDraftDeps struct {
-	h        *AIChatHandler
-	agent    *types.CustomAgent // approval 智能体（未应用全局模型覆盖）
-	message  string             // 用户原始请求
-	metadata types.JSON         // 主路径注入的结构化上下文（重试复用）
-	lang     string
-	page     *AIPageContext   // 页面（推荐问题生成上下文）
-	itemData json.RawMessage  // itemData 原文（推荐问题生成上下文）
-	tasks    *approvalTaskSet // 全部已添加任务的输入事实；空集合表示未添加任务
+	h               *AIChatHandler
+	agent           *types.CustomAgent // approval 智能体（未应用全局模型覆盖）
+	message         string             // 用户原始请求
+	metadata        types.JSON         // 主路径注入的结构化上下文（重试复用）
+	lang            string
+	page            *AIPageContext   // 页面（推荐问题生成上下文）
+	itemData        json.RawMessage  // itemData 原文（推荐问题生成上下文）
+	additionalItems json.RawMessage  // 额外资讯（推荐问题生成上下文）
+	tasks           *approvalTaskSet // 全部已添加任务的输入事实；空集合表示未添加任务
 }
 
 // repair 在模型输出违反输出契约（非 JSON、缺正文、草案结构违约）时，把
@@ -524,9 +536,22 @@ func (t *approvalDraftTranslator) subscribe(bus *event.EventBus) {
 		// 与搜索草稿一致：基于会话数据与本轮正文生成本轮推荐问题，随事件返回。
 		var suggestions []AISuggestionItem
 		if recommendAgent, rerr := t.h.resolveRecommendAgent(ctx); rerr == nil {
-			if s, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.deps.page, nil, nil, t.deps.itemData, result.Message); serr == nil {
+			if s, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.deps.page, nil, nil, t.deps.itemData, t.deps.additionalItems, result.Message); serr == nil {
 				suggestions = s
 			}
+		}
+
+		// 终止事件结构化载荷落库：草案 JSON 只在这里持久化（Content 保持
+		// 正文纯文本不变），供官方历史接口回放草案卡片。放在契约校验与草案
+		// 组装之后，违约/错误轮次不会留下不可用草案的载荷。
+		t.asstMsg.AIStructuredPayload = marshalAIChatEventPayload(&AIChatEventPayload{
+			Intent:         string(IntentApproval),
+			EventType:      AIEventApprovalDraft,
+			ApprovalDrafts: drafts,
+			Suggestions:    suggestions,
+		})
+		if err := t.h.messageService.UpdateMessage(updateCtx, t.asstMsg); err != nil {
+			logger.Warnf(ctx, "failed to persist ai chat payload for message %s: %v", t.asstMsg.ID, err)
 		}
 
 		// 单条 approval_draft 终止事件：正文说明复用 message 字段，草案在

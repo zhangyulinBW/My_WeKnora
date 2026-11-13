@@ -132,7 +132,8 @@ func TestApprovalTranslatorEmitsSingleDraftEvent(t *testing.T) {
 	bus, recorder, msgSvc := newApprovalTestTranslator(t, deps, false)
 
 	envelope := `{"message":"正在处理 WF-2026-001 的部门签审。意见已预填，请核对。","drafts":[` +
-		`{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1","T_3","T_1"]}}]}`
+		`{"activityId":"ACT-1","assignmentId":"ASG-1",` + approvalAssessmentJSON +
+		`"form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1","T_3","T_1"]}}]}`
 	emitComplete(t, bus, envelope)
 
 	frames := parseSSEFrames(t, recorder.Body.String())
@@ -153,6 +154,10 @@ func TestApprovalTranslatorEmitsSingleDraftEvent(t *testing.T) {
 	if d.ActivityID != "ACT-1" || d.AssignmentID != "ASG-1" {
 		t.Fatalf("draft binding = %+v", d)
 	}
+	if d.AIAssessment == nil || d.AIAssessment.Recommendation != "proceed" ||
+		d.AIAssessment.Summary == "" || d.AIAssessment.Reasons == "" {
+		t.Fatalf("AIassessment = %+v", d.AIAssessment)
+	}
 	if len(d.Form.CheckedTaskIDs) != 2 || d.Form.CheckedTaskIDs[0] != "T_1" {
 		t.Fatalf("checkedTaskIds not deduped: %v", d.Form.CheckedTaskIDs)
 	}
@@ -161,9 +166,10 @@ func TestApprovalTranslatorEmitsSingleDraftEvent(t *testing.T) {
 	}
 
 	// 助手消息历史只存正文纯文本：envelope JSON 仅在事件交付，避免 normal
-	// 意图模仿历史格式把普通回答输出成 JSON 文本。
-	if len(msgSvc.updated) != 1 {
-		t.Fatalf("assistant message updates = %d", len(msgSvc.updated))
+	// 意图模仿历史格式把普通回答输出成 JSON 文本。结构化载荷在第二次更新
+	// 中独立落库（ai_chat_payload 列），不触碰 Content。
+	if len(msgSvc.updated) != 2 {
+		t.Fatalf("assistant message updates = %d, want content then payload", len(msgSvc.updated))
 	}
 	content := msgSvc.updated[0].Content
 	if content != ev.Message {
@@ -174,6 +180,23 @@ func TestApprovalTranslatorEmitsSingleDraftEvent(t *testing.T) {
 	}
 	if !msgSvc.updated[0].IsCompleted {
 		t.Fatal("assistant message should be marked completed")
+	}
+
+	var payload AIChatEventPayload
+	if err := json.Unmarshal(msgSvc.updated[1].AIStructuredPayload, &payload); err != nil {
+		t.Fatalf("decode ai chat payload: %v (raw: %s)", err, msgSvc.updated[1].AIStructuredPayload)
+	}
+	if payload.Intent != string(IntentApproval) || payload.EventType != AIEventApprovalDraft {
+		t.Fatalf("payload intent/eventType = %s/%s", payload.Intent, payload.EventType)
+	}
+	if len(payload.ApprovalDrafts) != 1 || payload.ApprovalDrafts[0].DraftID != d.DraftID {
+		t.Fatalf("payload drafts = %+v, want the assembled draft", payload.ApprovalDrafts)
+	}
+	if len(payload.Suggestions) != 0 {
+		t.Fatalf("payload suggestions = %+v, want none", payload.Suggestions)
+	}
+	if msgSvc.updated[1].Content != ev.Message {
+		t.Fatalf("payload update must keep content, got %q", msgSvc.updated[1].Content)
 	}
 }
 
@@ -186,7 +209,8 @@ func TestApprovalTranslatorContinuesEditingInstance(t *testing.T) {
 	}
 	bus, recorder, _ := newApprovalTestTranslator(t, deps, false)
 
-	emitComplete(t, bus, `{"message":"已按你的修改简化意见。","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_APPROVE","comments":"新意见","checkedTaskIds":["T_1","T_3"]}}]}`)
+	emitComplete(t, bus, `{"message":"已按你的修改简化意见。","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1",`+
+		approvalAssessmentJSON+`"form":{"pathId":"P_APPROVE","comments":"新意见","checkedTaskIds":["T_1","T_3"]}}]}`)
 
 	frames := parseSSEFrames(t, recorder.Body.String())
 	if len(frames) != 1 || frames[0].Type != AIEventApprovalDraft {
@@ -216,8 +240,10 @@ func TestApprovalTranslatorMultiTaskDrafts(t *testing.T) {
 	bus, recorder, _ := newApprovalTestTranslator(t, deps, false)
 
 	envelope := `{"message":"已分别整理两笔草案，请逐笔核对。","drafts":[` +
-		`{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1","T_3"]}},` +
-		`{"activityId":"ACT-2","assignmentId":"ASG-2","form":{"pathId":"P_APPROVE","comments":"","checkedTaskIds":[]}}]}`
+		`{"activityId":"ACT-1","assignmentId":"ASG-1",` + approvalAssessmentJSON +
+		`"form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1","T_3"]}},` +
+		`{"activityId":"ACT-2","assignmentId":"ASG-2",` + approvalAssessmentJSON +
+		`"form":{"pathId":"P_APPROVE","comments":"","checkedTaskIds":[]}}]}`
 	emitComplete(t, bus, envelope)
 
 	frames := parseSSEFrames(t, recorder.Body.String())
@@ -227,6 +253,11 @@ func TestApprovalTranslatorMultiTaskDrafts(t *testing.T) {
 	drafts := frames[0].ApprovalDrafts
 	if len(drafts) != 2 {
 		t.Fatalf("approvalDrafts = %+v, want 2", drafts)
+	}
+	for _, d := range drafts {
+		if d.AIAssessment == nil || d.AIAssessment.Recommendation == "" {
+			t.Fatalf("draft %s/%s missing AIassessment: %+v", d.ActivityID, d.AssignmentID, d.AIAssessment)
+		}
 	}
 	if drafts[0].ActivityID != "ACT-1" || drafts[0].AssignmentID != "ASG-1" || drafts[0].Revision != 1 || drafts[0].DraftID == "" {
 		t.Fatalf("first draft must be a new ACT-1 instance: %+v", drafts[0])
@@ -257,7 +288,8 @@ func TestApprovalTranslatorContractViolationEmitsCodedError(t *testing.T) {
 	// 绝不发出绑错任务或含无效 ID 的草案。
 	bus, recorder, _ := newApprovalTestTranslator(t, deps, true)
 
-	emitComplete(t, bus, `{"message":"正文","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_GHOST","checkedTaskIds":["T_GHOST"]}}]}`)
+	emitComplete(t, bus, `{"message":"正文","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1",`+
+		approvalAssessmentJSON+`"form":{"pathId":"P_GHOST","checkedTaskIds":["T_GHOST"]}}]}`)
 
 	frames := parseSSEFrames(t, recorder.Body.String())
 	if len(frames) != 1 || frames[0].Type != AIEventError {
@@ -273,13 +305,18 @@ func TestApprovalTranslatorContractViolationEmitsCodedError(t *testing.T) {
 
 func TestApprovalTranslatorInvalidJSONEmitsCodedError(t *testing.T) {
 	deps := approvalTestDeps()
-	bus, recorder, _ := newApprovalTestTranslator(t, deps, true)
+	bus, recorder, msgSvc := newApprovalTestTranslator(t, deps, true)
 
 	emitComplete(t, bus, "抱歉，我无法生成 JSON。")
 
 	frames := parseSSEFrames(t, recorder.Body.String())
 	if len(frames) != 1 || frames[0].Type != AIEventError || frames[0].Code != AIErrorCodeApprovalDraft {
 		t.Fatalf("frames = %+v", frames)
+	}
+	// 违约轮次只保留正文（原始输出）落库，不写结构化载荷。
+	if len(msgSvc.updated) != 1 || msgSvc.updated[0].AIStructuredPayload != nil {
+		t.Fatalf("violation turn must not persist a payload: updates=%d payload=%s",
+			len(msgSvc.updated), msgSvc.updated[0].AIStructuredPayload)
 	}
 }
 
@@ -313,7 +350,8 @@ func TestApprovalTranslatorAttachesSuggestions(t *testing.T) {
 	bus := event.NewEventBus()
 	translator.subscribe(bus)
 
-	emitComplete(t, bus, `{"message":"正在处理 ECO-000003。","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1","form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1"]}}]}`)
+	emitComplete(t, bus, `{"message":"正在处理 ECO-000003。","drafts":[{"activityId":"ACT-1","assignmentId":"ASG-1",`+
+		approvalAssessmentJSON+`"form":{"pathId":"P_APPROVE","comments":"已核实","checkedTaskIds":["T_1"]}}]}`)
 
 	frames := parseSSEFrames(t, recorder.Body.String())
 	if len(frames) != 1 || frames[0].Type != AIEventApprovalDraft {
@@ -321,6 +359,18 @@ func TestApprovalTranslatorAttachesSuggestions(t *testing.T) {
 	}
 	if len(frames[0].Suggestions) != 2 || !strings.Contains(frames[0].Suggestions[0].Text, "完成签核") {
 		t.Fatalf("suggestions = %+v", frames[0].Suggestions)
+	}
+
+	// 载荷与事件同构：推荐问题一并落库，历史回放可恢复。
+	if len(msgSvc.updated) != 2 {
+		t.Fatalf("assistant message updates = %d, want content then payload", len(msgSvc.updated))
+	}
+	var payload AIChatEventPayload
+	if err := json.Unmarshal(msgSvc.updated[1].AIStructuredPayload, &payload); err != nil {
+		t.Fatalf("decode ai chat payload: %v", err)
+	}
+	if len(payload.Suggestions) != 2 || payload.Suggestions[0].ID != frames[0].Suggestions[0].ID {
+		t.Fatalf("payload suggestions = %+v", payload.Suggestions)
 	}
 }
 

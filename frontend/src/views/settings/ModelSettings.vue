@@ -165,6 +165,21 @@
                   </span>
                 </template>
               </p>
+              <div v-if="model.id" class="model-card__id" @click.stop>
+                <span class="model-card__id-label">{{ $t('modelSettings.modelId') }}</span>
+                <code class="model-card__id-value" :title="model.id">{{ model.id }}</code>
+                <t-button
+                  variant="text"
+                  shape="square"
+                  size="small"
+                  class="model-card__id-copy"
+                  :title="$t('modelSettings.copyId')"
+                  :aria-label="$t('modelSettings.copyId')"
+                  @click.stop="copyModelId(model.id)"
+                >
+                  <t-icon name="file-copy" />
+                </t-button>
+              </div>
             </div>
           </div>
           <button
@@ -343,6 +358,7 @@ import { useChatResourcesStore } from '@/stores/chatResources'
 import { useModelProvidersStore } from '@/stores/modelProviders'
 import { docsUrl } from '@/utils/docsUrl'
 import { matchesResourceQuery } from '@/utils/resourceListSearch'
+import { copyWithToast } from '@/utils/clipboard'
 import { useAssistantDataChange } from '@/utils/assistantDataChange'
 import {
   formatContextWindow,
@@ -526,6 +542,11 @@ const vendorLabel = (model: any): string => {
 const modelDisplayName = (model: any) => {
   const displayName = typeof model.displayName === 'string' ? model.displayName.trim() : ''
   return displayName || model.name
+}
+
+// 复制模型 ID（用于按 model_id 选择模型等场景）
+const copyModelId = (id: string) => {
+  void copyWithToast(id, 'common.copied')
 }
 
 useAssistantPageContext(() => {
@@ -1367,6 +1388,51 @@ useAssistantDataChange(() => { void loadModels() }, { areas: ['model'] })
 
 .model-card__ctx--default {
   color: var(--td-text-color-placeholder);
+}
+
+.model-card__id {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--app-text-xs);
+  line-height: 1.4;
+  color: var(--td-text-color-placeholder);
+}
+
+.model-card__id-label {
+  flex-shrink: 0;
+  color: var(--td-text-color-placeholder);
+  font-weight: 500;
+}
+
+.model-card__id-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--td-font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--td-text-color-secondary);
+}
+
+.model-card__id-copy {
+  flex-shrink: 0;
+  color: var(--td-text-color-placeholder);
+  opacity: 0;
+  transition: opacity var(--app-motion-fast) ease, color var(--app-motion-fast) ease;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--td-brand-color);
+    background: var(--td-bg-color-secondarycontainer);
+  }
+}
+
+.model-card:hover .model-card__id-copy,
+.model-card:focus-within .model-card__id-copy {
+  opacity: 1;
 }
 
 .model-card__actions {

@@ -44,7 +44,7 @@ func (h *AIChatHandler) handleAgentTurn(
 
 	// 若本轮请求未携带页面/筛选数据，则回填 start 阶段持久化的基础数据，
 	// 保证后续 normal 对话仍能获得会话基础上下文（而非只依赖当轮请求）。
-	page, searchFields, searchBody, itemData := h.loadStartContext(ctx, session.ID)
+	page, searchFields, searchBody, itemData, additionalItems := h.loadStartContext(ctx, session.ID)
 	if req.Page == nil {
 		req.Page = page
 	}
@@ -57,18 +57,24 @@ func (h *AIChatHandler) handleAgentTurn(
 	if len(req.ItemData) == 0 {
 		req.ItemData = itemData
 	}
+	if len(req.AdditionalItems) == 0 {
+		req.AdditionalItems = additionalItems
+	}
 	// processApproval 会话：动态字段走独立同步通道（start 与历次 message 的
 	// 合并结果），其 itemData 比 start 时刻的快照新，优先回填；携带新值时
 	// 同步落库供后续轮次沿用。普通咨询据此拿到最新任务/草案数据。
 	if req.Page != nil && req.Page.PageType == PageTypeProcessApproval {
 		h.syncApprovalContext(ctx, session, req)
-		if len(req.ItemData) == 0 || len(req.ApprovalTaskIndex) == 0 {
+		if len(req.ItemData) == 0 || len(req.ApprovalTaskIndex) == 0 || len(req.AdditionalItems) == 0 {
 			if ac := h.loadApprovalContext(ctx, session.ID); ac != nil {
 				if len(req.ItemData) == 0 {
 					req.ItemData = ac.ItemData
 				}
 				if len(req.ApprovalTaskIndex) == 0 {
 					req.ApprovalTaskIndex = ac.ApprovalTaskIndex
+				}
+				if len(req.AdditionalItems) == 0 {
+					req.AdditionalItems = ac.AdditionalItems
 				}
 			}
 		}
@@ -199,17 +205,21 @@ func (t *aiStreamTranslator) close() {
 	t.closeOnce.Do(func() { close(t.done) })
 }
 
-// finalizeArtifacts 复刻官方 /agent-chat 完成路径中的产物处理：排空会话沙箱
-// 输出目录、解析答案引用的文件名、把 sandbox: 引用重写为稳定句柄、把产物
-// 列表附到助手消息，并向客户端推送 artifacts 事件。返回（可能重写过的）
-// 最终回答文本。
+// collectAndRewriteArtifacts 复刻官方 /agent-chat 完成路径中的产物处理：排空
+// 会话沙箱输出目录、解析答案引用的文件名、把 sandbox: 引用重写为稳定句柄、把
+// 产物列表附到助手消息（不推送事件）。返回本轮产物列表、（可能重写过的）最终
+// 回答文本，以及是否有产物。事件推送由调用方决定（normal 流发 artifacts 事件，
+// skill 流还要先内联 previews 再发 answer_done）。
 //
 // 全程 best-effort：collector 未接入、会话未绑定沙箱或本轮没有产物时，
-// 原文返回且不推送事件，不打断完成路径。
-func (t *aiStreamTranslator) finalizeArtifacts(ctx context.Context, final string) string {
+// 原文返回且 hasAttached=false，不打断完成路径。
+func (t *aiStreamTranslator) collectAndRewriteArtifacts(
+	ctx context.Context,
+	final string,
+) (types.MessageArtifacts, string, bool) {
 	collector := t.h.artifactCollector
 	if collector == nil || t.asstMsg.SessionID == "" {
-		return final
+		return nil, final, false
 	}
 	// 客户端可能在回答结束后立即断开；回收需脱离请求生命周期继续执行，
 	// 与 Web 端的 WithoutCancel 一致。租户显式注入，避免事件总线上下文
@@ -245,7 +255,16 @@ func (t *aiStreamTranslator) finalizeArtifacts(ctx context.Context, final string
 		collector.BindArtifactsToMessage(collectCtx, t.asstMsg.ID, previous)
 		final = types.ClarifyArtifactVersions(final, attached, previous,
 			types.LanguageFromContextOrDefault(ctx))
+		return attached, final, true
+	}
+	return nil, final, false
+}
 
+// finalizeArtifacts 是 normal 流的产物处理入口：收集产物、重写引用，并在有
+// 产物时推送 artifacts 事件。
+func (t *aiStreamTranslator) finalizeArtifacts(ctx context.Context, final string) string {
+	attached, final, hasAttached := t.collectAndRewriteArtifacts(ctx, final)
+	if hasAttached {
 		t.writeArtifacts(attached, final)
 	}
 	return final
@@ -515,7 +534,7 @@ func (t *aiStreamTranslator) subscribe(bus *event.EventBus) {
 			if final != "" {
 				conversation += "\n\n" + final
 			}
-			if suggestions, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.req.Page, t.req.SearchFields, t.req.SearchBody, t.req.ItemData, conversation); serr == nil && len(suggestions) > 0 {
+			if suggestions, serr := t.h.generateRecommendQuestions(ctx, recommendAgent, t.req.Page, t.req.SearchFields, t.req.SearchBody, t.req.ItemData, t.req.AdditionalItems, conversation); serr == nil && len(suggestions) > 0 {
 				t.writeSuggestions(suggestions)
 			}
 		}
@@ -550,6 +569,11 @@ func buildAIMetadata(req *AIChatRequest) types.JSON {
 	}
 	if len(req.ItemData) > 0 {
 		ctxObj["itemdata"] = req.ItemData
+	}
+	// 额外资讯：与 itemdata 同级的补充数据（数组或 JSON），由 AI 自行分析，
+	// 不携带时不注入，保持与历史请求一致的行为。
+	if len(req.AdditionalItems) > 0 {
+		ctxObj["additionalItems"] = req.AdditionalItems
 	}
 	// processApproval 页：任务索引帮助普通咨询理解用户提及的单号/节点/分组。
 	if len(req.ApprovalTaskIndex) > 0 {

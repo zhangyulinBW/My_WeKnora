@@ -36,6 +36,10 @@ const inlineAIAgentID = "ai-chat-inline-agent"
 // 智能体 ID，作用同 inlineAIAgentID，用于区分签核轮的驱动智能体。
 const inlineApprovalAgentID = "ai-chat-approval-inline-agent"
 
+// inlineSkillAgentID 是 ai_chat.skill 内联定义未声明 id 时使用的合成智能体 ID，
+// 作用同 inlineAIAgentID，用于区分技能执行轮的驱动智能体。
+const inlineSkillAgentID = "ai-chat-skill-inline-agent"
+
 // AIChatHandler 实现自定义 /api/v1/ai/chat 协议。
 // 它是协议入口 + 智能体解析/会话/SSE 输出等基础设施；意图分类与分发见 intent.go，
 // 搜索流程见 search.go，Agent 执行见 agent_turn.go，start 流程见 start.go。
@@ -51,6 +55,11 @@ type AIChatHandler struct {
 	// 保存与内容提取（复用官方会话接口的处理器），见 attachments.go。
 	fileService         interfaces.FileService
 	attachmentProcessor *session.AttachmentProcessor
+
+	// temporaryDocuments 为内联附件建立 temporary document 记录（回填
+	// MessageAttachment.ID），使 AgentQA 的沙箱 staging 能恢复存储 URL 并把
+	// 原始文件（如 xlsx）复制进 /workspace/input。见 attachments.go。
+	temporaryDocuments interfaces.TemporaryDocumentService
 
 	// artifactCollector 在智能体回合结束后把沙箱产物（图表/文件）落盘并
 	// 附到助手消息上，与官方 /agent-chat 流的完成处理保持同一套逻辑。
@@ -76,6 +85,7 @@ func NewAIChatHandler(
 	fileService interfaces.FileService,
 	documentReader interfaces.DocumentReader,
 	imageResolver *docparser.ImageResolver,
+	temporaryDocuments interfaces.TemporaryDocumentService,
 	cfg *config.Config,
 ) *AIChatHandler {
 	h := &AIChatHandler{
@@ -92,14 +102,18 @@ func NewAIChatHandler(
 			imageResolver,
 			modelService,
 		),
-		config:  cfg,
-		intents: newIntentRegistry(),
-		actions: make(map[string]*pendingAction),
+		temporaryDocuments: temporaryDocuments,
+		config:             cfg,
+		intents:            newIntentRegistry(),
+		actions:            make(map[string]*pendingAction),
 	}
-	// 意图注册：normal 作为默认/回退意图最先注册，search、approval 其次。
+	// 意图注册：normal 作为默认/回退意图最先注册，search、approval、
+	// approval_search、skill 其次。
 	h.intents.register(&normalIntentHandler{h: h})
 	h.intents.register(&searchIntentHandler{h: h})
 	h.intents.register(&approvalIntentHandler{h: h})
+	h.intents.register(&approvalSearchIntentHandler{h: h})
+	h.intents.register(&skillIntentHandler{h: h})
 	return h
 }
 
@@ -203,6 +217,39 @@ func (h *AIChatHandler) resolveApprovalAgent(ctx context.Context) (*types.Custom
 			agent, err := h.customAgentService.GetAgentByID(ctx, h.config.AIChat.ApprovalAgentID)
 			if err != nil || agent == nil {
 				return nil, fmt.Errorf("approval agent %s not found", h.config.AIChat.ApprovalAgentID)
+			}
+			return agent, nil
+		}
+	}
+	return h.resolveAgent(ctx)
+}
+
+// resolveApprovalSearchAgent 加载用于签核任务筛选的智能体（其系统提示词
+// 承载 approval_search 意图的筛选规则）。解析顺序：
+// ai_chat.approval_search_agent_id（custom_agents 表）-> 主智能体。
+func (h *AIChatHandler) resolveApprovalSearchAgent(ctx context.Context) (*types.CustomAgent, error) {
+	if h.config != nil && h.config.AIChat != nil && h.config.AIChat.ApprovalSearchAgentID != "" {
+		agent, err := h.customAgentService.GetAgentByID(ctx, h.config.AIChat.ApprovalSearchAgentID)
+		if err != nil || agent == nil {
+			return nil, fmt.Errorf("approval search agent %s not found", h.config.AIChat.ApprovalSearchAgentID)
+		}
+		return agent, nil
+	}
+	return h.resolveAgent(ctx)
+}
+
+// resolveSkillAgent 加载用于技能执行的智能体（其系统提示词承载 skill 意图的
+// 技能运行契约）。解析顺序：config.yaml 内联定义 (ai_chat.skill)
+// -> ai_chat.skill_agent_id（custom_agents 表）-> 主智能体。
+func (h *AIChatHandler) resolveSkillAgent(ctx context.Context) (*types.CustomAgent, error) {
+	if h.config != nil && h.config.AIChat != nil {
+		if agent := h.agentFromInlineConfig(ctx, h.config.AIChat.Skill, inlineSkillAgentID); agent != nil {
+			return agent, nil
+		}
+		if h.config.AIChat.SkillAgentID != "" {
+			agent, err := h.customAgentService.GetAgentByID(ctx, h.config.AIChat.SkillAgentID)
+			if err != nil || agent == nil {
+				return nil, fmt.Errorf("skill agent %s not found", h.config.AIChat.SkillAgentID)
 			}
 			return agent, nil
 		}
