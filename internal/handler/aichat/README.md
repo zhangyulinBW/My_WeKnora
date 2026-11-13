@@ -204,7 +204,7 @@ handleMessage
 - **结构化载荷落库（`ai_chat_payload`）**：`search_draft` / `approval_draft` /
   `approval_task_selection` 三种终止事件在成功发出的同时，把与事件同构的载荷（`intent` +
   `eventType` + `conditions`/`searchBody` / `approvalDrafts` / `selectedTasks` / `suggestions`）
-  随助手消息写入 messages 表的 `ai_chat_payload` JSONB 列（迁移 `000136` / sqlite `000052`）。
+  随助手消息写入 messages 表的 `ai_chat_payload` JSONB 列（迁移 `000137` / sqlite `000053`）。
   官方历史接口 `GET /api/v1/messages/{session_id}/load` 因此能返回结构化 JSON，前端刷新恢复
   会话时按 `eventType` 判别即可复用实时流的渲染逻辑。注意：该列**不进入 LLM 上下文**
   （历史构建器只读 Content），也不写入 Content——approval / approval_search 的 Content 仍只存
